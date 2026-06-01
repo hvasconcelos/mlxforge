@@ -59,6 +59,7 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
   // tokenizers-cpp's Encode does not run the BOS post-processor, so prepend the
   // Llama-3.2 begin-of-text id (128000) to match mlx-lm's tok.encode.
   constexpr int kBosId = 128000;
+  std::lock_guard<std::mutex> lk(*mu_);
   std::vector<int32_t> ids = impl_->Encode(text);
   std::vector<int> out;
   out.reserve(ids.size() + 1);
@@ -75,6 +76,7 @@ std::string Tokenizer::decode(const std::vector<int>& ids) const {
   keep.reserve(ids.size());
   for (int id : ids)
     if (id < kFirstSpecialId) keep.push_back(id);
+  std::lock_guard<std::mutex> lk(*mu_);
   return impl_->Decode(keep);
 }
 

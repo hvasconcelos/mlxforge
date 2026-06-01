@@ -43,4 +43,16 @@ nlohmann::json make_chat_completion(const std::string& id, long created, const s
 // GET /v1/models payload.
 nlohmann::json make_models_list(const std::string& model);
 
+// One streaming chunk object. `delta` is the partial message delta (e.g.
+// {{"content","..."}} or {{"role","assistant"}}); `finish_reason` is the JSON
+// finish reason (null until the final chunk).
+nlohmann::json make_chat_chunk(const std::string& id, long created, const std::string& model,
+                               const nlohmann::json& delta, const nlohmann::json& finish_reason);
+
+// Wrap a JSON payload as an SSE frame: "data: <json>\n\n".
+std::string sse_frame(const nlohmann::json& payload);
+
+// The terminating SSE frame.
+extern const std::string kSseDone;
+
 }  // namespace xllm

@@ -25,6 +25,9 @@ HttpServer::HttpServer(Scheduler* scheduler, const Tokenizer* tokenizer, ModelCo
       tok_(tokenizer),
       cfg_(std::move(config)),
       model_name_(std::move(model_name)) {
+  // Each streaming connection holds a worker thread for its whole lifetime, so
+  // size the pool well above the expected concurrency (default is ~8).
+  svr_.new_task_queue = [] { return new httplib::ThreadPool(64); };
   setup_routes();
 }
 
@@ -69,6 +72,48 @@ nlohmann::json HttpServer::run_blocking(const ChatRequest& cr) {
           {"usage", make_usage(prompt_tokens, completion_tokens)}};
 }
 
+void HttpServer::stream_chat(const ChatRequest& cr, httplib::Response& res) {
+  auto req = make_request(cr);
+  sched_->submit(req);
+  const std::string id = next_id("chatcmpl-");
+  const long created = static_cast<long>(std::time(nullptr));
+  const std::string model = model_name_;
+  const Tokenizer* tok = tok_;
+
+  res.set_chunked_content_provider(
+      "text/event-stream",
+      [req, id, created, model, tok](size_t /*offset*/, httplib::DataSink& sink) -> bool {
+        auto send = [&](const std::string& frame) {
+          if (sink.write(frame.data(), frame.size())) return true;
+          req->cancelled.store(true);  // client disconnected -> worker evicts
+          return false;
+        };
+
+        // First chunk announces the assistant role.
+        if (!send(sse_frame(make_chat_chunk(id, created, model, {{"role", "assistant"}}, nullptr))))
+          return false;
+
+        StreamingDetokenizer detok(*tok);
+        int t = 0;
+        while (req->tokens.pop(t)) {
+          std::string piece = detok.add(t);
+          if (piece.empty()) continue;
+          if (!send(sse_frame(make_chat_chunk(id, created, model, {{"content", piece}}, nullptr))))
+            return false;
+        }
+        std::string tail = detok.finish();
+        if (!tail.empty() &&
+            !send(sse_frame(make_chat_chunk(id, created, model, {{"content", tail}}, nullptr))))
+          return false;
+
+        // Final chunk carries the finish_reason, then the [DONE] sentinel.
+        const std::string finish = finish_reason_of(req->finish_reason);
+        send(sse_frame(make_chat_chunk(id, created, model, json::object(), finish)));
+        send(kSseDone);
+        return false;  // stream complete
+      });
+}
+
 void HttpServer::setup_routes() {
   svr_.Get("/health", [](const httplib::Request&, httplib::Response& res) {
     res.set_content(json{{"status", "ok"}}.dump(), "application/json");
@@ -82,7 +127,11 @@ void HttpServer::setup_routes() {
     try {
       json body = json::parse(req.body);
       ChatRequest cr = chat ? parse_chat_request(body) : parse_completion_request(body);
-      res.set_content(run_blocking(cr).dump(), "application/json");
+      if (chat && cr.stream) {
+        stream_chat(cr, res);
+      } else {
+        res.set_content(run_blocking(cr).dump(), "application/json");
+      }
     } catch (const json::parse_error& e) {
       res.status = 400;
       res.set_content(error_body(e.what(), "invalid_request_error", "bad_json").dump(),

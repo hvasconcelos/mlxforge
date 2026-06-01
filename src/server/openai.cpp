@@ -84,6 +84,20 @@ nlohmann::json make_chat_completion(const std::string& id, long created, const s
   };
 }
 
+nlohmann::json make_chat_chunk(const std::string& id, long created, const std::string& model,
+                               const nlohmann::json& delta, const nlohmann::json& finish_reason) {
+  return {{"id", id},
+          {"object", "chat.completion.chunk"},
+          {"created", created},
+          {"model", model},
+          {"choices",
+           json::array({{{"index", 0}, {"delta", delta}, {"finish_reason", finish_reason}}})}};
+}
+
+std::string sse_frame(const nlohmann::json& payload) { return "data: " + payload.dump() + "\n\n"; }
+
+const std::string kSseDone = "data: [DONE]\n\n";
+
 nlohmann::json make_models_list(const std::string& model) {
   return {{"object", "list"},
           {"data", json::array({{{"id", model},

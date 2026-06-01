@@ -34,6 +34,10 @@ class HttpServer {
   // Run a request to completion (non-streaming) and assemble the response JSON.
   nlohmann::json run_blocking(const ChatRequest& cr);
 
+  // Stream a request as SSE chat.completion.chunk frames. Client disconnect
+  // (sink write fails) sets the Request's cancelled flag so the worker evicts.
+  void stream_chat(const ChatRequest& cr, httplib::Response& res);
+
  private:
   void setup_routes();
   std::string next_id(const char* prefix);

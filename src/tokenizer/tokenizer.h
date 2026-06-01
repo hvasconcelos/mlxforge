@@ -5,6 +5,7 @@
 #pragma once
 
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -44,6 +45,9 @@ class Tokenizer {
 
  private:
   std::shared_ptr<tokenizers::Tokenizer> impl_;
+  // tokenizers-cpp stashes the last encode/decode result inside the handle, so
+  // concurrent calls would race; serialize them. Shared across copies.
+  std::shared_ptr<std::mutex> mu_ = std::make_shared<std::mutex>();
 };
 
 // Incremental detokenizer: feed one new token id at a time; returns only the
