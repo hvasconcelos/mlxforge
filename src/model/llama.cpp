@@ -1,8 +1,8 @@
 #include "model/llama.h"
 
+#include <cmath>
 #include <optional>
 #include <utility>
-#include <vector>
 
 #include "mlx/fast.h"
 #include "mlx/ops.h"
@@ -118,6 +118,35 @@ LlamaModel::QKV LlamaModel::attn_qkv(const mx::array& x, int layer, int offset) 
   mx::array v = to_heads(linear(x_normed, layer_key(layer, "self_attn.v_proj.weight")), cfg_.n_kv_heads);
 
   return {apply_rope(q, offset), apply_rope(k, offset), v};
+}
+
+mx::array LlamaModel::attention(const mx::array& x, int layer) const {
+  const int B = x.shape()[0];
+  const int L = x.shape()[1];
+
+  QKV qkv = attn_qkv(x, layer);  // q (B, n_heads, L, head_dim), k/v use n_kv_heads
+  const float scale = 1.0f / std::sqrt(static_cast<float>(cfg_.head_dim));
+
+  // GQA is handled natively by SDPA when q_heads > kv_heads.
+  mx::array out = mx::fast::scaled_dot_product_attention(qkv.q, qkv.k, qkv.v, scale,
+                                                         /*mask_mode=*/"causal");
+
+  // (B, n_heads, L, head_dim) -> (B, L, n_heads*head_dim)
+  out = mx::reshape(mx::transpose(out, {0, 2, 1, 3}), {B, L, cfg_.n_heads * cfg_.head_dim});
+  return linear(out, layer_key(layer, "self_attn.o_proj.weight"));
+}
+
+mx::array LlamaModel::mlp(const mx::array& x, int layer) const {
+  mx::array gate = linear(x, layer_key(layer, "mlp.gate_proj.weight"));
+  mx::array up = linear(x, layer_key(layer, "mlp.up_proj.weight"));
+  mx::array silu = mx::multiply(gate, mx::sigmoid(gate));
+  return linear(mx::multiply(silu, up), layer_key(layer, "mlp.down_proj.weight"));
+}
+
+mx::array LlamaModel::decoder_block(const mx::array& x, int layer) const {
+  mx::array h = mx::add(x, attention(x, layer));
+  mx::array post = rms_norm(h, layer_w(layer, "post_attention_layernorm.weight"));
+  return mx::add(h, mlp(post, layer));
 }
 
 }  // namespace xllm

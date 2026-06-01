@@ -46,6 +46,16 @@ class LlamaModel {
   };
   QKV attn_qkv(const mx::array& x, int layer, int offset = 0) const;
 
+  // Self-attention sublayer (prefill, causal): QKV -> SDPA -> o_proj.
+  // Input/output are the residual-stream shape (B, L, hidden).
+  mx::array attention(const mx::array& x, int layer) const;
+
+  // SwiGLU MLP sublayer: down(silu(gate(x)) * up(x)).
+  mx::array mlp(const mx::array& x, int layer) const;
+
+  // One full decoder layer (prefill, causal): attention + MLP with residuals.
+  mx::array decoder_block(const mx::array& x, int layer) const;
+
  private:
   // y = x @ W^T for an HF Linear weight W (out, in) stored under `weight_key`.
   mx::array linear(const mx::array& x, const std::string& weight_key) const;
