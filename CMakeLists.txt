@@ -17,6 +17,8 @@ endif()
 
 include(cmake/Dependencies.cmake)
 
+find_package(Threads REQUIRED)
+
 # --- Engine library ----------------------------------------------------------
 # Per-module sources are appended here as each story lands (core/, model/,
 # cache/, sample/, scheduler/, runtime/, server/, tokenizer/).
@@ -29,9 +31,11 @@ add_library(xllm_core STATIC
   src/cache/kv_budget.cpp
   src/sample/sampler.cpp
   src/runtime/single_stream.cpp
+  src/scheduler/scheduler.cpp
+  src/runtime/worker.cpp
 )
 target_include_directories(xllm_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json)
+target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads)
 target_compile_features(xllm_core PUBLIC cxx_std_17)
 
 # --- CLI binary (smoke test for XLLM-001; real generation loop in XLLM-015) ---
