@@ -1,0 +1,17 @@
+# Build output
+/build/
+/cmake-build-*/
+*.o
+*.a
+*.dylib
+
+# Reference tooling (throwaway venv; fixtures are committed, not the venv)
+/reference/.venv/
+__pycache__/
+*.pyc
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+compile_commands.json
