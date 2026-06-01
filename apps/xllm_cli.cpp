@@ -22,8 +22,15 @@
 #include "core/weights.h"
 #include "model/llama.h"
 #include "runtime/single_stream.h"
+#include "tokenizer/tokenizer.h"
 
 namespace mx = mlx::core;
+
+namespace {
+bool ends_with(const std::string& s, const std::string& suffix) {
+  return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+}  // namespace
 
 namespace {
 
@@ -72,24 +79,33 @@ int run_dump_weights(const std::string& dir) {
   return non_fp16 == 0 ? 0 : 1;
 }
 
-int run_generate(const std::string& dir, const std::string& prompt_npy, int max_tokens) {
+int run_generate(const std::string& dir, const std::string& prompt_arg, int max_tokens) {
   xllm::ModelConfig cfg = xllm::ModelConfig::from_file(dir + "/config.json");
   xllm::LlamaModel model(cfg, xllm::load_weights(dir));
+  xllm::Tokenizer tok = xllm::Tokenizer::from_file(dir + "/tokenizer.json");
 
-  // Load the pre-tokenized prompt ids from a .npy int array.
-  mx::array ids_arr = mx::contiguous(mx::astype(mx::load(prompt_npy), mx::int32));
-  mx::eval(ids_arr);
-  std::vector<int> prompt(ids_arr.data<int32_t>(), ids_arr.data<int32_t>() + ids_arr.size());
+  // A .npy argument is a pre-tokenized prompt; anything else is raw text run
+  // through the chat template.
+  std::vector<int> prompt;
+  if (ends_with(prompt_arg, ".npy")) {
+    mx::array ids = mx::contiguous(mx::astype(mx::load(prompt_arg), mx::int32));
+    mx::eval(ids);
+    prompt.assign(ids.data<int32_t>(), ids.data<int32_t>() + ids.size());
+  } else {
+    prompt = tok.apply_chat_template({{"user", prompt_arg}});
+  }
 
-  std::printf("prompt (%zu ids):", prompt.size());
-  for (int id : prompt) std::printf(" %d", id);
-  std::printf("\ngenerated:");
-  xllm::GenerateResult r = xllm::greedy_generate(
-      model, prompt, max_tokens, cfg.eos_token_ids, [](int id) {
-        std::printf(" %d", id);
+  // Stream real detokenized text as tokens are produced.
+  xllm::StreamingDetokenizer detok(tok);
+  xllm::GenerateResult r =
+      xllm::greedy_generate(model, prompt, max_tokens, cfg.eos_token_ids, [&](int id) {
+        std::string piece = detok.add(id);
+        std::fwrite(piece.data(), 1, piece.size(), stdout);
         std::fflush(stdout);
       });
-  std::printf("\n%zu tokens%s\n", r.tokens.size(), r.hit_eos ? " (stopped at EOS)" : "");
+  std::string tail = detok.finish();
+  std::fwrite(tail.data(), 1, tail.size(), stdout);
+  std::printf("\n[%zu tokens%s]\n", r.tokens.size(), r.hit_eos ? ", stopped at EOS" : "");
   return 0;
 }
 

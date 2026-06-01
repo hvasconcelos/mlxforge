@@ -33,6 +33,17 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 
+# --- tokenizers-cpp (HF tokenizer.json via the Rust tokenizers crate) -------
+#   mlc-ai/tokenizers-cpp @ c586c52 (HEAD). Builds the Rust HF tokenizer; the
+#   SentencePiece path is disabled (we only load tokenizer.json). Needs cargo.
+set(MLC_ENABLE_SENTENCEPIECE_TOKENIZER OFF CACHE BOOL "" FORCE)
+set(SPM_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  tokenizers_cpp
+  GIT_REPOSITORY https://github.com/mlc-ai/tokenizers-cpp.git
+  GIT_TAG c586c52f93f7b060753bd2388eb96a105cb7374d
+)
+
 # --- doctest (unit-test framework, header-only) -----------------------------
 set(DOCTEST_WITH_TESTS OFF CACHE BOOL "" FORCE)
 set(DOCTEST_NO_INSTALL ON CACHE BOOL "" FORCE)
@@ -43,7 +54,7 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(mlx httplib doctest)
+FetchContent_MakeAvailable(mlx httplib doctest tokenizers_cpp)
 
 # Provide doctest's CMake helpers (doctest_discover_tests) on the module path.
 list(APPEND CMAKE_MODULE_PATH ${doctest_SOURCE_DIR}/scripts/cmake)

@@ -24,6 +24,7 @@ add_executable(xllm_tests
   scheduler/continuous_batch_test.cpp
   runtime/bucketing_test.cpp
   scheduler/validation_test.cpp
+  tokenizer/tokenizer_test.cpp
 )
 target_include_directories(xllm_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(xllm_tests PRIVATE xllm_core doctest::doctest)

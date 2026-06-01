@@ -34,9 +34,10 @@ add_library(xllm_core STATIC
   src/scheduler/scheduler.cpp
   src/runtime/worker.cpp
   src/runtime/batching.cpp
+  src/tokenizer/tokenizer.cpp
 )
 target_include_directories(xllm_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads)
+target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads tokenizers_cpp)
 target_compile_features(xllm_core PUBLIC cxx_std_17)
 
 # --- CLI binary (smoke test for XLLM-001; real generation loop in XLLM-015) ---
