@@ -11,6 +11,7 @@ add_executable(xllm_tests
   model/llama_front_test.cpp
   model/llama_block_test.cpp
   model/llama_forward_test.cpp
+  model/batched_decode_test.cpp
   cache/kv_cache_test.cpp
   cache/batch_kv_cache_test.cpp
   cache/batch_kv_filter_merge_test.cpp

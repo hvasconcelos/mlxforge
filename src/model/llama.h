@@ -8,6 +8,7 @@
 
 #include "mlx/array.h"
 
+#include "cache/batch_kv_cache.h"
 #include "cache/kv_cache.h"
 #include "core/config.h"
 #include "core/weights.h"
@@ -36,8 +37,11 @@ class LlamaModel {
   // fast::rms_norm with the configured eps.
   mx::array rms_norm(const mx::array& x, const mx::array& weight) const;
 
-  // Apply llama3 RoPE to x (B, n_heads, L, head_dim) at a uniform position offset.
+  // Apply llama3 RoPE to x (B, n_heads, L, head_dim). The uniform overload uses
+  // one position offset for the whole batch; the array overload takes a per-row
+  // offset (B,) for ragged left-padded batches.
   mx::array apply_rope(const mx::array& x, int offset = 0) const;
+  mx::array apply_rope(const mx::array& x, const mx::array& offset) const;
 
   // Front half of a decoder layer: input RMSNorm -> Q/K/V projections ->
   // reshape to heads -> RoPE on Q/K. V is returned un-roped. Each output is
@@ -66,7 +70,23 @@ class LlamaModel {
   // the cache is appended and advanced by L (prefill once, then decode L=1).
   mx::array forward(const mx::array& tokens, KVCache* cache = nullptr) const;
 
+  // Batched forward over a BatchKVCache: per-row RoPE offsets (cache.offset())
+  // and a ragged additive fp16 mask drive correct left-padded attention. tokens
+  // (B, L) -> logits (B, L, vocab). The whole batch is one graph (a single eval
+  // by the caller realizes the step). Used by the continuous-batching scheduler.
+  mx::array forward(const mx::array& tokens, BatchKVCache& cache) const;
+
+  // Per-step additive fp16 attention mask [B, 1, N, T_kv] for a batched step:
+  // 0 where a key is causally valid and not left-padding, -inf otherwise.
+  mx::array batch_mask(int prev_idx, int n_query, const mx::array& left_padding) const;
+
  private:
+  // input RMSNorm -> Q/K/V projections -> reshape to heads, WITHOUT RoPE.
+  QKV project_qkv(const mx::array& x, int layer) const;
+  // Batched self-attention: per-row RoPE offset, cache append, additive mask.
+  mx::array attention_batched(const mx::array& x, int layer, const mx::array& offset,
+                              const mx::array& mask, BatchKVCache& cache) const;
+
   // y = x @ W^T for an HF Linear weight W (out, in) stored under `weight_key`.
   mx::array linear(const mx::array& x, const std::string& weight_key) const;
   // Weight key for layer `i`, suffix e.g. "self_attn.q_proj.weight".

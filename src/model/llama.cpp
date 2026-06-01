@@ -1,6 +1,7 @@
 #include "model/llama.h"
 
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -104,20 +105,27 @@ mx::array LlamaModel::apply_rope(const mx::array& x, int offset) const {
                         /*scale=*/1.0f, offset, rope_freqs_);
 }
 
-LlamaModel::QKV LlamaModel::attn_qkv(const mx::array& x, int layer, int offset) const {
+mx::array LlamaModel::apply_rope(const mx::array& x, const mx::array& offset) const {
+  return mx::fast::rope(x, cfg_.head_dim, /*traditional=*/false, /*base=*/std::nullopt,
+                        /*scale=*/1.0f, offset, rope_freqs_);
+}
+
+LlamaModel::QKV LlamaModel::project_qkv(const mx::array& x, int layer) const {
   const int B = x.shape()[0];
   const int L = x.shape()[1];
-
   mx::array x_normed = rms_norm(x, layer_w(layer, "input_layernorm.weight"));
 
   auto to_heads = [&](const mx::array& proj, int heads) {
     return mx::transpose(mx::reshape(proj, {B, L, heads, cfg_.head_dim}), {0, 2, 1, 3});
   };
-  mx::array q = to_heads(linear(x_normed, layer_key(layer, "self_attn.q_proj.weight")), cfg_.n_heads);
-  mx::array k = to_heads(linear(x_normed, layer_key(layer, "self_attn.k_proj.weight")), cfg_.n_kv_heads);
-  mx::array v = to_heads(linear(x_normed, layer_key(layer, "self_attn.v_proj.weight")), cfg_.n_kv_heads);
+  return {to_heads(linear(x_normed, layer_key(layer, "self_attn.q_proj.weight")), cfg_.n_heads),
+          to_heads(linear(x_normed, layer_key(layer, "self_attn.k_proj.weight")), cfg_.n_kv_heads),
+          to_heads(linear(x_normed, layer_key(layer, "self_attn.v_proj.weight")), cfg_.n_kv_heads)};
+}
 
-  return {apply_rope(q, offset), apply_rope(k, offset), v};
+LlamaModel::QKV LlamaModel::attn_qkv(const mx::array& x, int layer, int offset) const {
+  QKV p = project_qkv(x, layer);
+  return {apply_rope(p.q, offset), apply_rope(p.k, offset), p.v};
 }
 
 mx::array LlamaModel::attention(const mx::array& x, int layer, int offset, KVCache* cache) const {
@@ -155,6 +163,65 @@ mx::array LlamaModel::decoder_block(const mx::array& x, int layer, int offset,
   mx::array h = mx::add(x, attention(x, layer, offset, cache));
   mx::array post = rms_norm(h, layer_w(layer, "post_attention_layernorm.weight"));
   return mx::add(h, mlp(post, layer));
+}
+
+mx::array LlamaModel::batch_mask(int prev_idx, int n_query, const mx::array& left_padding) const {
+  const int t_kv = prev_idx + n_query;
+  const int B = left_padding.shape()[0];
+
+  mx::array kpos = mx::arange(0, t_kv, 1, mx::int32);                  // (T_kv,)
+  mx::array qpos = mx::arange(prev_idx, prev_idx + n_query, 1, mx::int32);  // (N,)
+
+  // causal[q, k] = qpos[q] >= kpos[k]
+  mx::array causal = mx::greater_equal(mx::reshape(qpos, {1, 1, n_query, 1}),
+                                       mx::reshape(kpos, {1, 1, 1, t_kv}));
+  // valid[b, k] = left_padding[b] <= kpos[k]  (drop the left-pad region)
+  mx::array valid = mx::less_equal(mx::reshape(left_padding, {B, 1, 1, 1}),
+                                   mx::reshape(kpos, {1, 1, 1, t_kv}));
+  mx::array keep = mx::logical_and(causal, valid);  // -> (B, 1, N, T_kv)
+
+  // Additive fp16 mask (avoid boolean masks; #2894).
+  const float ninf = -std::numeric_limits<float>::infinity();
+  return mx::where(keep, mx::array(0.0f, mx::float16), mx::array(ninf, mx::float16));
+}
+
+mx::array LlamaModel::attention_batched(const mx::array& x, int layer, const mx::array& offset,
+                                       const mx::array& mask, BatchKVCache& cache) const {
+  const int B = x.shape()[0];
+  const int L = x.shape()[1];
+
+  QKV p = project_qkv(x, layer);
+  mx::array q = apply_rope(p.q, offset);
+  mx::array k = apply_rope(p.k, offset);
+  auto kv = cache.update_and_fetch(layer, k, p.v);  // append roped K, un-roped V
+
+  const float scale = 1.0f / std::sqrt(static_cast<float>(cfg_.head_dim));
+  mx::array out = mx::fast::scaled_dot_product_attention(q, kv.first, kv.second, scale,
+                                                         /*mask_mode=*/"", mask);
+  out = mx::reshape(mx::transpose(out, {0, 2, 1, 3}), {B, L, cfg_.n_heads * cfg_.head_dim});
+  return linear(out, layer_key(layer, "self_attn.o_proj.weight"));
+}
+
+mx::array LlamaModel::forward(const mx::array& tokens, BatchKVCache& cache) const {
+  const int N = tokens.shape()[1];
+  const int prev = cache.idx();
+  mx::array offset = cache.offset();  // per-row, read once before the cache write
+  mx::array mask = batch_mask(prev, N, cache.left_padding());
+
+  mx::array h = embed(tokens);
+  // Same residual structure as decoder_block(), but with the batched attention
+  // path (per-row RoPE offset + additive mask). MLP/norms are shared.
+  for (int layer = 0; layer < cfg_.n_layers; ++layer) {
+    mx::array attended = mx::add(h, attention_batched(h, layer, offset, mask, cache));
+    mx::array post = rms_norm(attended, layer_w(layer, "post_attention_layernorm.weight"));
+    h = mx::add(attended, mlp(post, layer));
+  }
+  cache.advance(N);
+
+  h = rms_norm(h, w_.at("model.norm.weight"));
+  const std::string head_key =
+      w_.has("lm_head.weight") ? "lm_head.weight" : "model.embed_tokens.weight";
+  return linear(h, head_key);
 }
 
 mx::array LlamaModel::forward(const mx::array& tokens, KVCache* cache) const {
