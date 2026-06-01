@@ -105,9 +105,19 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
 
 void Worker::decode_step() {
   const int B = static_cast<int>(reqs_.size());
-  mx::array inputs(feed_.data(), {B, 1}, mx::int32);
-  mx::array logits = model_->forward(inputs, *cache_);  // (B, 1, vocab)
-  mx::array next = Sampler::greedy(mx::reshape(logits, {B, logits.shape()[2]}));  // (B,)
+
+  // XLLM-019: pad the active batch up to a fixed bucket with masked dummy rows
+  // so the decode forward graph shape recurs. Dummy rows are batch-independent
+  // and masked, so they cannot affect the real rows; they are trimmed after.
+  const int bucket = next_bucket(B);
+  const int extra = bucket - B;
+  if (extra > 0) cache_->pad_dummies(extra);
+  std::vector<int> fed = feed_;
+  fed.resize(bucket, 0);  // dummy rows feed a pad token
+
+  mx::array inputs(fed.data(), {bucket, 1}, mx::int32);
+  mx::array logits = model_->forward(inputs, *cache_);  // (bucket, 1, vocab)
+  mx::array next = Sampler::greedy(mx::reshape(logits, {bucket, logits.shape()[2]}));
 
   mx::async_eval(next);  // the ONE eval per decode step, over the whole batch
   std::vector<int> ids = read_ids(next);
@@ -121,6 +131,13 @@ void Worker::decode_step() {
     }
     feed_[b] = ids[b];
     if (consume(*reqs_[b], produced_[b], ids[b])) finished_[b] = true;
+  }
+
+  // Drop the dummy rows so the cache holds only real rows again.
+  if (extra > 0) {
+    std::vector<int> keep(B);
+    for (int b = 0; b < B; ++b) keep[b] = b;
+    cache_->filter(keep);
   }
 }
 

@@ -84,6 +84,25 @@ void BatchKVCache::advance(int n_tokens) {
   mx::eval(offset_);  // keep the per-row bookkeeping materialized
 }
 
+void BatchKVCache::pad_dummies(int extra) {
+  if (extra <= 0) return;
+  for (size_t l = 0; l < keys_.size(); ++l) {
+    if (!keys_[l].has_value()) continue;
+    const auto& k = *keys_[l];
+    const auto& v = *values_[l];
+    mx::array dk = mx::zeros({extra, k.shape()[1], k.shape()[2], k.shape()[3]}, k.dtype());
+    mx::array dv = mx::zeros({extra, v.shape()[1], v.shape()[2], v.shape()[3]}, v.dtype());
+    keys_[l] = mx::concatenate({k, dk}, /*axis=*/0);
+    values_[l] = mx::concatenate({v, dv}, /*axis=*/0);
+  }
+  std::vector<int> doff(extra, 0);
+  std::vector<int> dlp(extra, idx_);  // attend only to own position -> no NaN
+  offset_ = mx::concatenate({offset_, mx::array(doff.data(), {extra}, mx::int32)}, 0);
+  left_padding_ = mx::concatenate({left_padding_, mx::array(dlp.data(), {extra}, mx::int32)}, 0);
+  batch_ += extra;
+  mx::eval(offset_, left_padding_);
+}
+
 void BatchKVCache::eval_state() {
   std::vector<mx::array> state = {offset_, left_padding_};
   for (auto& k : keys_)

@@ -64,6 +64,12 @@ class BatchKVCache {
   // prefilled batch into the decode cache.
   void merge(BatchKVCache& other);
 
+  // XLLM-019: append `extra` masked dummy rows on the batch axis to reach a
+  // decode bucket. Dummy rows attend only to their own position (left_padding =
+  // idx) so they never produce NaNs and — being independent batch rows — cannot
+  // affect the real rows. They are trimmed back with filter() after the step.
+  void pad_dummies(int extra);
+
  private:
   int batch_;
   int idx_ = 0;

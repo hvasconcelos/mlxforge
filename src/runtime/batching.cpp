@@ -7,6 +7,13 @@
 
 namespace xllm {
 
+int next_bucket(int n) {
+  for (int b : {1, 2, 4, 8, 16, 32}) {
+    if (n <= b) return b;
+  }
+  return ((n + 31) / 32) * 32;  // beyond 32, round up to a multiple of 32
+}
+
 PrefillResult prefill(const LlamaModel& model, const std::vector<std::vector<int>>& prompts,
                       int step_size, int pad_id) {
   const int B = static_cast<int>(prompts.size());

@@ -18,6 +18,11 @@ namespace xllm {
 constexpr int kPrefillBatchSize = 8;
 constexpr int kPrefillStepSize = 2048;
 
+// XLLM-019: round an active batch size up to a fixed decode bucket so the
+// forward graph shape recurs (avoiding a per-step regraph). Buckets are
+// {1,2,4,8,16,32}; beyond 32, round up to a multiple of 32.
+int next_bucket(int n);
+
 struct PrefillResult {
   BatchKVCache cache;          // populated, left-padded, ready for decode
   mx::array last_logits;       // (B, vocab): next-token logits for each row
