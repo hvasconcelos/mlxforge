@@ -6,6 +6,7 @@ add_executable(xllm_tests
   doctest_main.cpp
   smoke_test.cpp
   core/config_test.cpp
+  core/weights_test.cpp
 )
 target_link_libraries(xllm_tests PRIVATE xllm_core doctest::doctest)
 target_compile_definitions(xllm_tests PRIVATE

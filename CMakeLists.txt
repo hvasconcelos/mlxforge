@@ -22,6 +22,7 @@ include(cmake/Dependencies.cmake)
 # cache/, sample/, scheduler/, runtime/, server/, tokenizer/).
 add_library(xllm_core STATIC
   src/core/config.cpp
+  src/core/weights.cpp
 )
 target_include_directories(xllm_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json)
