@@ -1,4 +1,4 @@
-// XLLM-012: KV memory admission gate (the real OOM guard).
+// MLXFORGE-012: KV memory admission gate (the real OOM guard).
 //
 // MLX allocates until Metal fails, so before admitting a batch we project its
 // peak KV footprint and refuse/queue if it would exceed a configured budget.
@@ -11,7 +11,7 @@
 
 #include "core/config.h"
 
-namespace xllm {
+namespace mlxforge {
 
 class KVBudget {
  public:
@@ -35,4 +35,4 @@ class KVBudget {
   std::size_t budget_bytes_;
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

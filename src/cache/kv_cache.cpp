@@ -2,7 +2,7 @@
 
 #include "mlx/ops.h"
 
-namespace xllm {
+namespace mlxforge {
 
 std::pair<mx::array, mx::array> KVCache::update_and_fetch(int layer, const mx::array& k,
                                                           const mx::array& v) {
@@ -17,4 +17,4 @@ std::pair<mx::array, mx::array> KVCache::update_and_fetch(int layer, const mx::a
   return {*keys_[layer], *values_[layer]};
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

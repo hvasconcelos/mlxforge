@@ -1,4 +1,4 @@
-// XLLM-004: weight key sanitize + shard-index parsing (pure logic, no GPU/weights).
+// MLXFORGE-004: weight key sanitize + shard-index parsing (pure logic, no GPU/weights).
 #include <doctest/doctest.h>
 
 #include <fstream>
@@ -6,11 +6,11 @@
 
 #include "core/weights.h"
 
-using namespace xllm;
+using namespace mlxforge;
 
 namespace {
 nlohmann::json load_fixture(const char* name) {
-  std::ifstream f(std::string(XLLM_TEST_FIXTURES_DIR) + "/" + name);
+  std::ifstream f(std::string(MLXFORGE_TEST_FIXTURES_DIR) + "/" + name);
   REQUIRE(f.good());
   nlohmann::json j;
   f >> j;

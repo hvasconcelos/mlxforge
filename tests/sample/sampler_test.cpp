@@ -1,4 +1,4 @@
-// XLLM-014: sampling ops on synthetic logits (no model).
+// MLXFORGE-014: sampling ops on synthetic logits (no model).
 #include <doctest/doctest.h>
 
 #include <cmath>
@@ -10,7 +10,7 @@
 #include "mlx/random.h"
 #include "mlx/transforms.h"
 
-using namespace xllm;
+using namespace mlxforge;
 namespace mx = mlx::core;
 
 namespace {
@@ -38,12 +38,12 @@ int count_finite(const std::vector<float>& v) {
 }
 }  // namespace
 
-TEST_CASE("XLLM-014: greedy returns the argmax index") {
+TEST_CASE("MLXFORGE-014: greedy returns the argmax index") {
   mx::array logits = logits2d({{1.0f, 3.0f, 2.0f}, {5.0f, 0.0f, -1.0f}});
   CHECK(ints(Sampler::greedy(logits)) == std::vector<int>{1, 0});
 }
 
-TEST_CASE("XLLM-014: temperature 0 collapses to greedy") {
+TEST_CASE("MLXFORGE-014: temperature 0 collapses to greedy") {
   mx::array logits = logits2d({{0.2f, 0.9f, 0.1f, 0.4f}});
   SamplingParams p;
   p.temperature = 0.0f;
@@ -51,7 +51,7 @@ TEST_CASE("XLLM-014: temperature 0 collapses to greedy") {
   CHECK(ints(r.tokens) == ints(Sampler::greedy(logits)));
 }
 
-TEST_CASE("XLLM-014: top-k keeps exactly k candidates") {
+TEST_CASE("MLXFORGE-014: top-k keeps exactly k candidates") {
   mx::array logits = logits2d({{5.0f, 1.0f, 4.0f, 2.0f, 3.0f}});  // distinct
   std::vector<float> f = floats(Sampler::apply_top_k(logits, 2));
   CHECK(count_finite(f) == 2);
@@ -60,7 +60,7 @@ TEST_CASE("XLLM-014: top-k keeps exactly k candidates") {
   CHECK_FALSE(std::isfinite(f[1]));  // dropped
 }
 
-TEST_CASE("XLLM-014: top-p keeps the smallest prefix whose mass >= p") {
+TEST_CASE("MLXFORGE-014: top-p keeps the smallest prefix whose mass >= p") {
   // probs = [0.5, 0.3, 0.15, 0.05]; p=0.7 keeps {0.5, 0.3} (cum 0.8 >= 0.7).
   std::vector<float> probs = {0.5f, 0.3f, 0.15f, 0.05f};
   std::vector<float> lg(probs.size());
@@ -73,7 +73,7 @@ TEST_CASE("XLLM-014: top-p keeps the smallest prefix whose mass >= p") {
   CHECK_FALSE(std::isfinite(f[3]));
 }
 
-TEST_CASE("XLLM-014: same seed reproduces, different seed diverges") {
+TEST_CASE("MLXFORGE-014: same seed reproduces, different seed diverges") {
   mx::array logits = mx::zeros({64, 16}, mx::float32);  // uniform
   SamplingParams p;  // temperature 1, no top-k/p
   std::vector<int> a1 = ints(Sampler::sample(logits, p, mx::random::key(42)).tokens);
@@ -83,7 +83,7 @@ TEST_CASE("XLLM-014: same seed reproduces, different seed diverges") {
   CHECK(a1 != b);    // different seed -> different draws (overwhelmingly likely)
 }
 
-TEST_CASE("XLLM-014: sample returns batched tokens and logprobs") {
+TEST_CASE("MLXFORGE-014: sample returns batched tokens and logprobs") {
   mx::array logits = logits2d({{1.0f, 2.0f, 3.0f}, {3.0f, 2.0f, 1.0f}});
   SampleResult r = Sampler::sample(logits, SamplingParams{}, mx::random::key(1));
   CHECK(r.tokens.shape() == mx::Shape{2});

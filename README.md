@@ -1,9 +1,9 @@
-# xllm
+# mlxforge
 
 A from-scratch LLaMA inference engine in **C++ on Apple MLX**, served behind an
 **OpenAI-compatible HTTP API** with **continuous batching**.
 
-xllm loads raw safetensors weights, runs a numerically-correct transformer
+mlxforge loads raw safetensors weights, runs a numerically-correct transformer
 forward pass on the Metal GPU, and serves concurrent users through a vLLM-style
 single-worker / three-queue scheduler. Every numerically-sensitive phase is
 validated against an `mlx-lm` golden reference, because the failure mode here is
@@ -53,9 +53,9 @@ cmake --build build --parallel
 The first build compiles MLX's Metal kernels and the Rust tokenizer crate, so it
 takes a few minutes. Outputs:
 
-- `build/xllm` — the OpenAI HTTP server
-- `build/xllm-cli` — CLI (weight dump + single-stream generation)
-- `build/tests/xllm_tests` — the doctest suite
+- `build/mlxforge` — the OpenAI HTTP server
+- `build/mlxforge-cli` — CLI (weight dump + single-stream generation)
+- `build/tests/mlxforge_tests` — the doctest suite
 
 ## Get the model
 
@@ -73,7 +73,7 @@ huggingface-cli download mlx-community/Llama-3.2-1B-Instruct-4bit
 ## Run the server
 
 ```sh
-./build/xllm "$MODEL_DIR" --port 8080 --max-ctx 8192 --max-waiting 256
+./build/mlxforge "$MODEL_DIR" --port 8080 --max-ctx 8192 --max-waiting 256
 ```
 
 Then use the official `openai` client:
@@ -83,33 +83,33 @@ from openai import OpenAI
 c = OpenAI(base_url="http://127.0.0.1:8080/v1", api_key="x")
 
 # non-streaming
-r = c.chat.completions.create(model="xllm",
+r = c.chat.completions.create(model="mlxforge",
     messages=[{"role": "user", "content": "What is the capital of France?"}],
     max_tokens=32)
 print(r.choices[0].message.content)            # "The capital of France is Paris."
 
 # streaming
-for ev in c.chat.completions.create(model="xllm",
+for ev in c.chat.completions.create(model="mlxforge",
         messages=[{"role": "user", "content": "Tell me a joke."}],
         max_tokens=64, stream=True):
     print(ev.choices[0].delta.content or "", end="", flush=True)
 ```
 
-Config knobs are also read from the environment (`XLLM_HOST`, `XLLM_PORT`,
-`XLLM_MAX_CTX`, `XLLM_MAX_WAITING`, `XLLM_KV_BUDGET`). `SIGINT`/`SIGTERM`
+Config knobs are also read from the environment (`MLXFORGE_HOST`, `MLXFORGE_PORT`,
+`MLXFORGE_MAX_CTX`, `MLXFORGE_MAX_WAITING`, `MLXFORGE_KV_BUDGET`). `SIGINT`/`SIGTERM`
 trigger a graceful shutdown that drains in-flight requests.
 
 ## Run the CLI
 
 ```sh
 # stream generated text from a chat prompt
-./build/xllm-cli generate "$MODEL_DIR" "What is the capital of France?" 64
+./build/mlxforge-cli generate "$MODEL_DIR" "What is the capital of France?" 64
 
 # generate from a pre-tokenized .npy prompt (ids printed/streamed)
-./build/xllm-cli generate "$MODEL_DIR" reference/fixtures/prompt_0_ids.npy 20
+./build/mlxforge-cli generate "$MODEL_DIR" reference/fixtures/prompt_0_ids.npy 20
 
 # inspect weights: key -> shape -> dtype, assert fp16, report peak memory
-./build/xllm-cli dump-weights "$MODEL_DIR"
+./build/mlxforge-cli dump-weights "$MODEL_DIR"
 ```
 
 ## Tests

@@ -1,4 +1,4 @@
-# xllm — Technical Specification
+# mlxforge — Technical Specification
 
 > A from-scratch LLaMA inference engine in C++ on Apple **MLX** (the C++ core library, not mlx-lm),
 > served behind an **OpenAI-compatible HTTP API** with **continuous batching** for concurrent users.
@@ -42,7 +42,7 @@ sensitive step.
 - HTTP/2 / HTTP/3 (SSE over HTTP/1.1 is sufficient).
 - Multi-model hosting, LoRA/adapters, speculative decoding, multi-GPU.
 - Tool/function calling, vision/multimodal, embeddings endpoints.
-- Quantization is **optional** (Phase 7 / XLLM-025), not required for v1.
+- Quantization is **optional** (Phase 7 / MLXFORGE-025), not required for v1.
 
 ---
 
@@ -127,7 +127,7 @@ eval, cache mutation) runs on a single worker thread. HTTP threads only touch th
 - **Language:** C++17/20. **Build:** CMake (FetchContent or submodule for deps).
 - **Dependencies:** MLX C++ core (pinned commit), cpp-httplib (header-only HTTP/SSE), `nlohmann/json`,
   a C++ tokenizer (`mlc-ai/tokenizers-cpp` reading HF `tokenizer.json`), and doctest/Catch2 for tests.
-- **Artifacts:** `xllm` (server binary) and `xllm-cli` (local greedy generation, used during bring-up).
+- **Artifacts:** `mlxforge` (server binary) and `mlxforge-cli` (local greedy generation, used during bring-up).
 - **Platform:** Apple Silicon (Metal, unified memory); startup asserts `mx::metal::is_available()`.
 
 ---
@@ -145,7 +145,7 @@ eval, cache mutation) runs on a single worker thread. HTTP threads only touch th
 | `scheduler/scheduler.{h,cpp}` | three-queue state machine; prefill/decode/evict; bucketing; KV gate | — |
 | `runtime/worker.{h,cpp}` | single GPU thread; **only** caller of `mx::eval`/`async_eval` | `mx::async_eval` |
 | `server/http_server.{h,cpp}` | cpp-httplib routes, SSE provider, JSON (de)serialization, cancellation | cpp-httplib, nlohmann/json |
-| `apps/xllm_cli.cpp`, `apps/xllm.cpp` | CLI and server entry points | — |
+| `apps/mlxforge_cli.cpp`, `apps/mlxforge.cpp` | CLI and server entry points | — |
 | `reference/dump_ref.py`, `tests/` | golden-reference dumps + tensor-compare tests | mlx-lm |
 
 ---
@@ -255,11 +255,11 @@ streams continue.
 The work is sequenced in 11 phases (0–10), broken into 25 stories across 6 sprints in
 [`STORIES.md`](./STORIES.md). Milestones:
 
-- **Phase 4 / XLLM-008** — numerically correct model (argmax matches mlx-lm).
-- **Phase 6 / XLLM-015** — it generates text (greedy matches mlx-lm token-for-token).
-- **Phase 8 / XLLM-020** — concurrent batching works (batched output == solo output; throughput scales).
-- **Phase 9 / XLLM-023** — OpenAI server live (streaming + non-streaming verified with the `openai` client).
-- **Phase 7 / XLLM-025** — optional 4-bit quantization (~2.5 GiB → ~0.7 GiB).
+- **Phase 4 / MLXFORGE-008** — numerically correct model (argmax matches mlx-lm).
+- **Phase 6 / MLXFORGE-015** — it generates text (greedy matches mlx-lm token-for-token).
+- **Phase 8 / MLXFORGE-020** — concurrent batching works (batched output == solo output; throughput scales).
+- **Phase 9 / MLXFORGE-023** — OpenAI server live (streaming + non-streaming verified with the `openai` client).
+- **Phase 7 / MLXFORGE-025** — optional 4-bit quantization (~2.5 GiB → ~0.7 GiB).
 
 ---
 

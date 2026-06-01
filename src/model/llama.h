@@ -1,7 +1,7 @@
 // LLaMA decoder model on MLX. Built up across stories:
-//   XLLM-006: embedding, RMSNorm, Q/K/V projections, RoPE (this file's start)
-//   XLLM-007: single decoder block (attention + SwiGLU)
-//   XLLM-008: full 16-layer stack -> logits
+//   MLXFORGE-006: embedding, RMSNorm, Q/K/V projections, RoPE (this file's start)
+//   MLXFORGE-007: single decoder block (attention + SwiGLU)
+//   MLXFORGE-008: full 16-layer stack -> logits
 #pragma once
 
 #include <string>
@@ -13,12 +13,12 @@
 #include "core/config.h"
 #include "core/weights.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace mx = mlx::core;
 
 // Confirms the pinned MLX exposes fast::rope(const array& offset, ...) — the
-// per-row offset overload that batched decode (XLLM-010+) depends on. Returns
+// per-row offset overload that batched decode (MLXFORGE-010+) depends on. Returns
 // true if it ran the overload successfully.
 bool rope_array_offset_overload_available();
 
@@ -99,4 +99,4 @@ class LlamaModel {
   mx::array rope_freqs_;
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

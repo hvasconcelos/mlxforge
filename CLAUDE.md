@@ -4,7 +4,7 @@ Guidance for working in this repo with Claude Code.
 
 ## What this is
 
-`xllm` — a from-scratch LLaMA inference engine in **C++ on Apple MLX** (the C++
+`mlxforge` — a from-scratch LLaMA inference engine in **C++ on Apple MLX** (the C++
 core library, not `mlx-lm`), served behind an **OpenAI-compatible HTTP API** with
 **continuous batching**. Apple Silicon only (Metal backend). C++17.
 
@@ -18,17 +18,17 @@ validated against the `mlx-lm` golden reference, not eyeballed.
 
 ```sh
 cmake -S . -B build                       # configure (fetches + pins deps)
-cmake --build build --parallel            # build xllm, xllm-cli, xllm_tests
-cmake --build build --parallel --target xllm_tests   # tests only (faster)
+cmake --build build --parallel            # build mlxforge, mlxforge-cli, mlxforge_tests
+cmake --build build --parallel --target mlxforge_tests   # tests only (faster)
 ctest --test-dir build --output-on-failure           # run all tests
-ctest --test-dir build -R XLLM-008                   # run one story's tests
-./build/tests/xllm_tests --test-case="XLLM-013:*"    # run by name (verbose)
+ctest --test-dir build -R MLXFORGE-008                   # run one story's tests
+./build/tests/mlxforge_tests --test-case="MLXFORGE-013:*"    # run by name (verbose)
 ```
 
-- The test binary is `build/tests/xllm_tests` (note the `tests/` subdir).
+- The test binary is `build/tests/mlxforge_tests` (note the `tests/` subdir).
 - MLX's Metal kernels and the Rust tokenizer crate make the *first* build slow
-  (minutes); incremental rebuilds of `xllm_tests` are fast.
-- To add a source file: add it to `src/` and to the `xllm_core` list in the
+  (minutes); incremental rebuilds of `mlxforge_tests` are fast.
+- To add a source file: add it to `src/` and to the `mlxforge_core` list in the
   top-level `CMakeLists.txt`; add tests to `tests/` and to `tests/CMakeLists.txt`.
 
 ## Environment / model
@@ -43,7 +43,7 @@ ctest --test-dir build -R XLLM-008                   # run one story's tests
   (cast to fp16 on load). The C++ engine and the Python reference load the
   **same** weights, keeping the golden reference self-consistent.
 - Integration tests find the model by globbing the HF cache in
-  `tests/CMakeLists.txt` (`XLLM_MODEL_DIR`, `XLLM_MODEL_DIR_4BIT`). If the model
+  `tests/CMakeLists.txt` (`MLXFORGE_MODEL_DIR`, `MLXFORGE_MODEL_DIR_4BIT`). If the model
   is absent they **self-skip** (they pass with a `MESSAGE`), so a green
   `ctest` without the model only ran the pure-logic units — download the model
   to exercise the numerical/scheduler paths.
@@ -75,10 +75,10 @@ reference/.venv/bin/python reference/dump_ref.py
   operators for clarity, matching existing code.
 - Match the comment density / naming of surrounding code. Comments explain
   *why* (conventions, gotchas), not *what*.
-- Tests use **doctest**, named `"XLLM-NNN: ..."` so `ctest -R` filters per story.
+- Tests use **doctest**, named `"MLXFORGE-NNN: ..."` so `ctest -R` filters per story.
 - After implementing a change, the repo's habit is: run `code-simplifier` on the
   new code, then verify build + `ctest` before committing. Commit messages start
-  with the story id (`XLLM-NNN: ...`) and the trailer
+  with the story id (`MLXFORGE-NNN: ...`) and the trailer
   `Co-Authored-By: Claude ...`.
 
 ## Hard-won gotchas (read before touching these areas)
@@ -109,6 +109,6 @@ reference/.venv/bin/python reference/dump_ref.py
 ## Where things live
 
 `src/{core,model,cache,sample,scheduler,runtime,server,tokenizer}`, apps in
-`apps/` (`xllm` server, `xllm-cli`), tests mirror the module path under `tests/`,
+`apps/` (`mlxforge` server, `mlxforge-cli`), tests mirror the module path under `tests/`,
 shared test helpers in `tests/support/`. See the table in `README.md` for the
 per-module responsibilities.

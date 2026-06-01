@@ -1,4 +1,4 @@
-// XLLM-017: prefill pass — left-pad, (chunked) dedicated forward, correct
+// MLXFORGE-017: prefill pass — left-pad, (chunked) dedicated forward, correct
 // per-row offsets ready to merge into the decode cache.
 #include <doctest/doctest.h>
 
@@ -12,7 +12,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
 namespace {
 std::vector<int> argmax_rows(const mx::array& logits2d) {  // (B, vocab) -> (B,)
@@ -26,8 +26,8 @@ std::vector<int> read_ints(const mx::array& a) {
   return std::vector<int>(c.data<int32_t>(), c.data<int32_t>() + c.size());
 }
 // First next-token id from a single-sequence prefill.
-int solo_first(xllm::LlamaModel& model, const std::vector<int>& ids) {
-  xllm::KVCache cache(model.config().n_layers);
+int solo_first(mlxforge::LlamaModel& model, const std::vector<int>& ids) {
+  mlxforge::KVCache cache(model.config().n_layers);
   mx::array prompt(ids.data(), {1, static_cast<int>(ids.size())}, mx::int32);
   mx::array logits = model.forward(prompt, &cache);
   const int T = static_cast<int>(ids.size());
@@ -37,17 +37,17 @@ int solo_first(xllm::LlamaModel& model, const std::vector<int>& ids) {
 }
 }  // namespace
 
-TEST_CASE("XLLM-017: ragged prefill matches single-sequence first tokens + offsets") {
+TEST_CASE("MLXFORGE-017: ragged prefill matches single-sequence first tokens + offsets") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
   std::vector<std::vector<int>> prompts = {load_token_ids("prompt_0_ids.npy"),
                                            load_token_ids("prompt_1_ids.npy"),
                                            load_token_ids("prompt_2_ids.npy")};
 
-  xllm::PrefillResult pr = xllm::prefill(model, prompts);
+  mlxforge::PrefillResult pr = mlxforge::prefill(model, prompts);
 
   // Each row's next token equals its solo prefill next token.
   std::vector<int> batched = argmax_rows(pr.last_logits);
@@ -64,15 +64,15 @@ TEST_CASE("XLLM-017: ragged prefill matches single-sequence first tokens + offse
   CHECK(pr.cache.idx() == p_max);
 }
 
-TEST_CASE("XLLM-017: chunked prefill equals a single-shot prefill") {
+TEST_CASE("MLXFORGE-017: chunked prefill equals a single-shot prefill") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
   std::vector<std::vector<int>> prompts = {load_token_ids("prompt_2_ids.npy")};  // 12 tokens
 
-  std::vector<int> one_shot = argmax_rows(xllm::prefill(model, prompts, /*step_size=*/4096).last_logits);
-  std::vector<int> chunked = argmax_rows(xllm::prefill(model, prompts, /*step_size=*/4).last_logits);
+  std::vector<int> one_shot = argmax_rows(mlxforge::prefill(model, prompts, /*step_size=*/4096).last_logits);
+  std::vector<int> chunked = argmax_rows(mlxforge::prefill(model, prompts, /*step_size=*/4).last_logits);
   CHECK(one_shot == chunked);  // 3 chunks vs 1 -> identical next token
 }

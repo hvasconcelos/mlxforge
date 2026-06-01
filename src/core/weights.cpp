@@ -11,7 +11,7 @@
 
 namespace mx = mlx::core;
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 constexpr const char* kLanguageModelPrefix = "language_model.";
@@ -123,4 +123,4 @@ Weights load_weights(const std::string& model_dir) {
   return w;
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

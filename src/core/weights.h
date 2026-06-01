@@ -1,4 +1,4 @@
-// XLLM-004: load, sanitize and fp16-cast model weights from safetensors.
+// MLXFORGE-004: load, sanitize and fp16-cast model weights from safetensors.
 //
 // Handles both single-file (model.safetensors) and sharded
 // (model-0000N-of-*.safetensors + index JSON) layouts. Every tensor is cast to
@@ -16,7 +16,7 @@
 
 #include "mlx/array.h"
 
-namespace xllm {
+namespace mlxforge {
 
 // Canonicalize a raw safetensors key. Returns the canonical key, or nullopt to
 // drop the tensor (buffers we never use). Pure string logic — unit tested.
@@ -45,4 +45,4 @@ struct Weights {
 // to fp16. Throws if neither an index JSON nor model.safetensors is found.
 Weights load_weights(const std::string& model_dir);
 
-}  // namespace xllm
+}  // namespace mlxforge

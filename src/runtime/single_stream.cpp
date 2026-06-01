@@ -8,7 +8,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 // Greedy token id from the last position of (1, L, vocab) logits.
@@ -48,4 +48,4 @@ GenerateResult greedy_generate(const LlamaModel& model, const std::vector<int>& 
   return result;
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

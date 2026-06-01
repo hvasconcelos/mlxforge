@@ -10,7 +10,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 
@@ -255,4 +255,4 @@ mx::array LlamaModel::forward(const mx::array& tokens, KVCache* cache) const {
   return linear(h, head_key);  // (B, L, vocab)
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

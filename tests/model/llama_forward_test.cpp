@@ -1,4 +1,4 @@
-// XLLM-008 (MILESTONE): full forward pass to logits. The hard numerical part is
+// MLXFORGE-008 (MILESTONE): full forward pass to logits. The hard numerical part is
 // done once argmax matches mlx-lm exactly.
 #include <doctest/doctest.h>
 
@@ -9,14 +9,14 @@
 
 #include "mlx/ops.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
-TEST_CASE("XLLM-008: full forward logits + first-token argmax match the reference") {
+TEST_CASE("MLXFORGE-008: full forward logits + first-token argmax match the reference") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping golden-reference check");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping golden-reference check");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
 
   std::vector<int> ids = load_token_ids("prompt_0_ids.npy");
   const int T = static_cast<int>(ids.size());

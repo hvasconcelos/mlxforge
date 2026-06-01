@@ -1,4 +1,4 @@
-// XLLM-016: a Request is the unit of work shared between an HTTP/test thread and
+// MLXFORGE-016: a Request is the unit of work shared between an HTTP/test thread and
 // the GPU worker. The submitting thread touches only its own Request (MLX is not
 // thread-safe for concurrent eval); the worker is the sole producer of tokens.
 #pragma once
@@ -14,10 +14,10 @@
 
 #include "sample/sampler.h"
 
-namespace xllm {
+namespace mlxforge {
 
 // Bounded, blocking, single-producer (worker) / single-consumer (request thread)
-// token queue. push() applies backpressure when full (XLLM-023); the consumer
+// token queue. push() applies backpressure when full (MLXFORGE-023); the consumer
 // pop()s until the producer close()s and the queue drains.
 class TokenQueue {
  public:
@@ -74,10 +74,10 @@ struct Request {
   TokenQueue tokens;                 // worker pushes generated ids, then close()s
   std::string finish_reason;         // "stop" | "length" | "cancel" (worker sets)
 
-  // Metrics (XLLM-024): enqueue stamped on submit, first_token/finish by worker.
+  // Metrics (MLXFORGE-024): enqueue stamped on submit, first_token/finish by worker.
   using Clock = std::chrono::steady_clock;
   Clock::time_point enqueue_time{};
   Clock::time_point first_token_time{};
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

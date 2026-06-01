@@ -1,4 +1,4 @@
-// XLLM-022: OpenAI request parsing + response serialization (pure functions, no
+// MLXFORGE-022: OpenAI request parsing + response serialization (pure functions, no
 // server/GPU — unit tested). The HTTP layer (http_server) tokenizes the parsed
 // messages and assembles responses from these.
 #pragma once
@@ -11,7 +11,7 @@
 #include "sample/sampler.h"
 #include "tokenizer/tokenizer.h"
 
-namespace xllm {
+namespace mlxforge {
 
 // A parsed /v1/chat/completions or /v1/completions request.
 struct ChatRequest {
@@ -55,4 +55,4 @@ std::string sse_frame(const nlohmann::json& payload);
 // The terminating SSE frame.
 extern const std::string kSseDone;
 
-}  // namespace xllm
+}  // namespace mlxforge

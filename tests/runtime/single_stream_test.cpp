@@ -1,4 +1,4 @@
-// XLLM-015: single-stream greedy generation loop.
+// MLXFORGE-015: single-stream greedy generation loop.
 #include <doctest/doctest.h>
 
 #include <vector>
@@ -7,20 +7,20 @@
 #include "support/model_fixture.h"
 #include "support/reference.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
-TEST_CASE("XLLM-015: greedy CLI output matches mlx-lm token-for-token") {
+TEST_CASE("MLXFORGE-015: greedy CLI output matches mlx-lm token-for-token") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
   std::vector<int> prompt = load_token_ids("prompt_0_ids.npy");
   std::vector<int> ref = load_token_ids("greedy_tokens.npy");  // 20 tokens
 
   // Streamed tokens collected via the callback (proves incremental emission).
   std::vector<int> streamed;
-  xllm::GenerateResult r = xllm::greedy_generate(
+  mlxforge::GenerateResult r = mlxforge::greedy_generate(
       model, prompt, /*max_tokens=*/static_cast<int>(ref.size()),
       model.config().eos_token_ids, [&](int id) { streamed.push_back(id); });
 
@@ -29,30 +29,30 @@ TEST_CASE("XLLM-015: greedy CLI output matches mlx-lm token-for-token") {
   CHECK_FALSE(r.hit_eos);
 }
 
-TEST_CASE("XLLM-015: loop terminates on max_tokens") {
+TEST_CASE("MLXFORGE-015: loop terminates on max_tokens") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
   std::vector<int> prompt = load_token_ids("prompt_0_ids.npy");
-  xllm::GenerateResult r =
+  mlxforge::GenerateResult r =
       greedy_generate(model, prompt, /*max_tokens=*/5, model.config().eos_token_ids);
   CHECK(r.tokens.size() == 5);
   CHECK_FALSE(r.hit_eos);
 }
 
-TEST_CASE("XLLM-015: loop terminates on EOS") {
+TEST_CASE("MLXFORGE-015: loop terminates on EOS") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
   std::vector<int> prompt = load_token_ids("prompt_0_ids.npy");
   const int first = load_token_ids("greedy_tokens.npy")[0];
 
   // Make the very first generated token an EOS -> stop immediately, emit nothing.
-  xllm::GenerateResult r = greedy_generate(model, prompt, /*max_tokens=*/20, {first});
+  mlxforge::GenerateResult r = greedy_generate(model, prompt, /*max_tokens=*/20, {first});
   CHECK(r.tokens.empty());
   CHECK(r.hit_eos);
 }

@@ -1,5 +1,5 @@
 // Shared, lazily-loaded LlamaModel for integration tests (loads the real model
-// from XLLM_MODEL_DIR once). Numerically-sensitive stories validate against the
+// from MLXFORGE_MODEL_DIR once). Numerically-sensitive stories validate against the
 // golden reference using this fixture; if the model dir is absent the test
 // short-circuits as a pass with a message.
 #pragma once
@@ -12,9 +12,9 @@
 #include "core/weights.h"
 #include "model/llama.h"
 
-namespace xllm::test {
+namespace mlxforge::test {
 
-inline std::string model_dir() { return XLLM_MODEL_DIR; }
+inline std::string model_dir() { return MLXFORGE_MODEL_DIR; }
 
 inline bool model_available() {
   const std::string d = model_dir();
@@ -31,4 +31,4 @@ inline LlamaModel& shared_model() {
   return model;
 }
 
-}  // namespace xllm::test
+}  // namespace mlxforge::test

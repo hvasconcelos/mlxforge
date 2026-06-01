@@ -1,4 +1,4 @@
-// XLLM-013 (HIGH RISK): batched decode of ragged prompts must produce IDENTICAL
+// MLXFORGE-013 (HIGH RISK): batched decode of ragged prompts must produce IDENTICAL
 // tokens to single-sequence runs, and each batched step is a single eval over
 // the whole batch (never per-row / per-layer).
 #include <doctest/doctest.h>
@@ -14,7 +14,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
 namespace {
 constexpr int kSteps = 8;  // decode steps to compare
@@ -37,8 +37,8 @@ std::vector<int> to_vec(const mx::array& a) {
 }
 
 // Solo greedy run for one prompt via the single-sequence cache.
-std::vector<int> solo_run(xllm::LlamaModel& model, const std::vector<int>& ids, int steps) {
-  xllm::KVCache cache(model.config().n_layers);
+std::vector<int> solo_run(mlxforge::LlamaModel& model, const std::vector<int>& ids, int steps) {
+  mlxforge::KVCache cache(model.config().n_layers);
   mx::array prompt(ids.data(), {1, static_cast<int>(ids.size())}, mx::int32);
   int next = to_vec(greedy_last(model.forward(prompt, &cache)))[0];
   std::vector<int> out = {next};
@@ -51,12 +51,12 @@ std::vector<int> solo_run(xllm::LlamaModel& model, const std::vector<int>& ids, 
 }
 }  // namespace
 
-TEST_CASE("XLLM-013: batched ragged decode matches single-sequence runs") {
+TEST_CASE("MLXFORGE-013: batched ragged decode matches single-sequence runs") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
 
   // Three fixed prompts of different lengths (ragged -> left-padding).
   std::vector<std::vector<int>> prompts = {
@@ -81,7 +81,7 @@ TEST_CASE("XLLM-013: batched ragged decode matches single-sequence runs") {
     for (size_t j = 0; j < prompts[b].size(); ++j) padded[b * p_max + pad + j] = prompts[b][j];
   }
 
-  xllm::BatchKVCache cache(model.config().n_layers, left_padding);
+  mlxforge::BatchKVCache cache(model.config().n_layers, left_padding);
   mx::array tokens(padded.data(), {B, p_max}, mx::int32);
 
   // Prefill: one eval over the whole batch.

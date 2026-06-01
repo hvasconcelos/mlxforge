@@ -1,4 +1,4 @@
-// XLLM-016: the GPU worker picks up a cross-thread request and generates the
+// MLXFORGE-016: the GPU worker picks up a cross-thread request and generates the
 // correct tokens (it is the only thread touching MLX).
 #include <doctest/doctest.h>
 
@@ -13,24 +13,24 @@
 #include "support/model_fixture.h"
 #include "support/reference.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
-TEST_CASE("XLLM-016: worker processes a request submitted from another thread") {
+TEST_CASE("MLXFORGE-016: worker processes a request submitted from another thread") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
   const std::string dir = model_dir();
-  xllm::ModelConfig cfg = xllm::ModelConfig::from_file(dir + "/config.json");  // no MLX
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");  // no MLX
 
-  xllm::Scheduler sched;
-  xllm::Worker worker(
-      [dir] { return std::make_unique<xllm::LlamaModel>(
-                  xllm::ModelConfig::from_file(dir + "/config.json"), xllm::load_weights(dir)); },
+  mlxforge::Scheduler sched;
+  mlxforge::Worker worker(
+      [dir] { return std::make_unique<mlxforge::LlamaModel>(
+                  mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir)); },
       &sched);
   worker.start();  // loads the model on the worker thread
 
-  auto req = std::make_shared<xllm::Request>();
+  auto req = std::make_shared<mlxforge::Request>();
   req->prompt_ids = load_token_ids("prompt_0_ids.npy");
   req->params.temperature = 0.0f;  // greedy -> deterministic, matches reference
   req->max_tokens = 20;

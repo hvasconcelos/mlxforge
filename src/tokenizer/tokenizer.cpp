@@ -8,7 +8,7 @@
 
 #include <tokenizers_cpp.h>
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 std::string load_file(const std::string& path) {
@@ -132,4 +132,4 @@ std::string StreamingDetokenizer::finish() {
   return out;
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

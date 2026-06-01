@@ -4,7 +4,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 using nlohmann::json;
@@ -170,4 +170,4 @@ void HttpServer::listen(const std::string& host, int port) { svr_.listen(host, p
 
 void HttpServer::stop() { svr_.stop(); }
 
-}  // namespace xllm
+}  // namespace mlxforge

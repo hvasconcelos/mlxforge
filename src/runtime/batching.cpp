@@ -5,7 +5,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-namespace xllm {
+namespace mlxforge {
 
 int next_bucket(int n) {
   for (int b : {1, 2, 4, 8, 16, 32}) {
@@ -51,4 +51,4 @@ PrefillResult prefill(const LlamaModel& model, const std::vector<std::vector<int
   return {std::move(cache), last, std::move(left_padding)};
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

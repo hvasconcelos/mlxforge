@@ -1,6 +1,6 @@
-// XLLM-022: the OpenAI-compatible HTTP server (cpp-httplib). Routes parse OpenAI
+// MLXFORGE-022: the OpenAI-compatible HTTP server (cpp-httplib). Routes parse OpenAI
 // requests, tokenize via the chat template, enqueue a Request to the scheduler,
-// and assemble the response. XLLM-022 implements non-streaming; XLLM-023 adds
+// and assemble the response. MLXFORGE-022 implements non-streaming; MLXFORGE-023 adds
 // SSE streaming + cancellation.
 #pragma once
 
@@ -18,7 +18,7 @@
 #include "server/openai.h"
 #include "tokenizer/tokenizer.h"
 
-namespace xllm {
+namespace mlxforge {
 
 class HttpServer {
  public:
@@ -55,4 +55,4 @@ class HttpServer {
   std::atomic<long> counter_{0};
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

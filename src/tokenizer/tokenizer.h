@@ -1,4 +1,4 @@
-// XLLM-021: C++ tokenizer over the HF tokenizer.json (mlc-ai/tokenizers-cpp,
+// MLXFORGE-021: C++ tokenizer over the HF tokenizer.json (mlc-ai/tokenizers-cpp,
 // which wraps the Rust `tokenizers` crate — no hand-rolled BPE). Provides
 // encode, decode, the Llama-3.2 chat template, and a streaming detokenizer that
 // never emits broken multi-byte UTF-8 / partial byte-BPE characters.
@@ -13,7 +13,7 @@ namespace tokenizers {
 class Tokenizer;  // from tokenizers_cpp.h
 }
 
-namespace xllm {
+namespace mlxforge {
 
 class Tokenizer {
  public:
@@ -65,4 +65,4 @@ class StreamingDetokenizer {
   size_t emitted_ = 0;  // bytes already returned
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

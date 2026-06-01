@@ -1,4 +1,4 @@
-// XLLM-003: ModelConfig — the model's architecture, parsed from config.json.
+// MLXFORGE-003: ModelConfig — the model's architecture, parsed from config.json.
 //
 // Only the fields the engine actually consumes are exposed. Required fields
 // (those without a sensible default) raise a clear error when missing; unknown
@@ -11,10 +11,10 @@
 
 #include <nlohmann/json.hpp>
 
-namespace xllm {
+namespace mlxforge {
 
 // Llama-3 RoPE frequency rescaling (config.json "rope_scaling"). Llama-3.2 sets
-// rope_type "llama3"; honoured by the RoPE stage in XLLM-006.
+// rope_type "llama3"; honoured by the RoPE stage in MLXFORGE-006.
 struct RopeScaling {
   std::string rope_type;
   float factor = 1.0f;
@@ -52,4 +52,4 @@ struct ModelConfig {
   static ModelConfig from_file(const std::string& path);
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

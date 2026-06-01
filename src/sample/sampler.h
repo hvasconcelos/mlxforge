@@ -1,4 +1,4 @@
-// XLLM-014: sampling implemented entirely as MLX graph ops (logits stay on the
+// MLXFORGE-014: sampling implemented entirely as MLX graph ops (logits stay on the
 // GPU — pulling them to the CPU would break the decode pipeline). Greedy first
 // for deterministic reference matching, then temperature / top-k / top-p.
 #pragma once
@@ -7,7 +7,7 @@
 
 #include "mlx/array.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace mx = mlx::core;
 
@@ -40,4 +40,4 @@ class Sampler {
   static mx::array apply_top_p(const mx::array& logits, float p);
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

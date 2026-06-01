@@ -1,6 +1,6 @@
 #include "cache/kv_budget.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 constexpr std::size_t kFp16Bytes = 2;
@@ -20,4 +20,4 @@ bool KVBudget::can_admit(int max_len, int max_new, int batch) const {
   return project_bytes(max_len, max_new, batch) <= budget_bytes_;
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

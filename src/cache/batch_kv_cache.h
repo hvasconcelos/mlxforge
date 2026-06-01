@@ -1,4 +1,4 @@
-// XLLM-010: batched KV cache — the layout the continuous-batching server needs.
+// MLXFORGE-010: batched KV cache — the layout the continuous-batching server needs.
 //
 // Ported from mlx_lm/models/cache.py::BatchKVCache. Per layer the cache stores
 // K/V as (B, n_kv_heads, S_cap, head_dim), contiguous and LEFT-padded, grown in
@@ -10,7 +10,7 @@
 //
 // All layers share idx/offset/left_padding (they process the same tokens):
 // update_and_fetch(layer, k, v) writes one layer's slice; advance(n) bumps the
-// shared bookkeeping once per token sweep. filter()/merge() (XLLM-011) do the
+// shared bookkeeping once per token sweep. filter()/merge() (MLXFORGE-011) do the
 // batch-axis surgery the scheduler needs.
 #pragma once
 
@@ -20,7 +20,7 @@
 
 #include "mlx/array.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace mx = mlx::core;
 
@@ -64,7 +64,7 @@ class BatchKVCache {
   // prefilled batch into the decode cache.
   void merge(BatchKVCache& other);
 
-  // XLLM-019: append `extra` masked dummy rows on the batch axis to reach a
+  // MLXFORGE-019: append `extra` masked dummy rows on the batch axis to reach a
   // decode bucket. Dummy rows attend only to their own position (left_padding =
   // idx) so they never produce NaNs and — being independent batch rows — cannot
   // affect the real rows. They are trimmed back with filter() after the step.
@@ -79,4 +79,4 @@ class BatchKVCache {
   mx::array left_padding_;  // (B,)
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

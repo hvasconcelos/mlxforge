@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 
@@ -89,4 +89,4 @@ ModelConfig ModelConfig::from_file(const std::string& path) {
   return from_json(j);
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

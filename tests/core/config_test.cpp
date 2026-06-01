@@ -1,15 +1,15 @@
-// XLLM-003: ModelConfig parsing (pure logic, no GPU / no weights).
+// MLXFORGE-003: ModelConfig parsing (pure logic, no GPU / no weights).
 #include <doctest/doctest.h>
 
 #include <string>
 
 #include "core/config.h"
 
-using xllm::ModelConfig;
+using mlxforge::ModelConfig;
 
 namespace {
 std::string fixture(const char* name) {
-  return std::string(XLLM_TEST_FIXTURES_DIR) + "/" + name;
+  return std::string(MLXFORGE_TEST_FIXTURES_DIR) + "/" + name;
 }
 }  // namespace
 

@@ -1,6 +1,6 @@
 #include "scheduler/scheduler.h"
 
-namespace xllm {
+namespace mlxforge {
 
 bool Scheduler::submit(const std::shared_ptr<Request>& req) {
   {
@@ -52,4 +52,4 @@ bool Scheduler::stopping() const {
   return stop_;
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

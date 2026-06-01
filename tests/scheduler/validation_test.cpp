@@ -1,4 +1,4 @@
-// XLLM-020 (MILESTONE): scheduler correctness & throughput. N concurrent
+// MLXFORGE-020 (MILESTONE): scheduler correctness & throughput. N concurrent
 // requests (identical + distinct, mixed lengths admitted/evicted at different
 // times) each produce the same tokens as a solo run; throughput rises with
 // concurrency; the one-eval-per-decode-step invariant holds under load.
@@ -19,19 +19,19 @@
 #include "support/model_fixture.h"
 #include "support/reference.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
 namespace {
-xllm::Worker::ModelFactory factory_for(const std::string& dir) {
+mlxforge::Worker::ModelFactory factory_for(const std::string& dir) {
   return [dir] {
-    return std::make_unique<xllm::LlamaModel>(
-        xllm::ModelConfig::from_file(dir + "/config.json"), xllm::load_weights(dir));
+    return std::make_unique<mlxforge::LlamaModel>(
+        mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir));
   };
 }
 
-std::shared_ptr<xllm::Request> make_req(const std::vector<int>& prompt, int max_tokens,
+std::shared_ptr<mlxforge::Request> make_req(const std::vector<int>& prompt, int max_tokens,
                                         const std::vector<int>& eos) {
-  auto r = std::make_shared<xllm::Request>();
+  auto r = std::make_shared<mlxforge::Request>();
   r->prompt_ids = prompt;
   r->params.temperature = 0.0f;
   r->max_tokens = max_tokens;
@@ -40,14 +40,14 @@ std::shared_ptr<xllm::Request> make_req(const std::vector<int>& prompt, int max_
 }
 }  // namespace
 
-TEST_CASE("XLLM-020: N concurrent mixed requests each match their solo run") {
+TEST_CASE("MLXFORGE-020: N concurrent mixed requests each match their solo run") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
   const std::string dir = model_dir();
-  xllm::ModelConfig cfg = xllm::ModelConfig::from_file(dir + "/config.json");
-  xllm::LlamaModel& solo = shared_model();
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
+  mlxforge::LlamaModel& solo = shared_model();
 
   std::vector<std::vector<int>> base = {load_token_ids("prompt_0_ids.npy"),
                                         load_token_ids("prompt_1_ids.npy"),
@@ -55,17 +55,17 @@ TEST_CASE("XLLM-020: N concurrent mixed requests each match their solo run") {
 
   // 10 requests (> prefill_batch_size 8 -> admitted in two waves), identical and
   // distinct prompts, varying max_tokens -> eviction at different steps.
-  std::vector<std::shared_ptr<xllm::Request>> reqs;
+  std::vector<std::shared_ptr<mlxforge::Request>> reqs;
   std::vector<std::vector<int>> expected;
   for (int i = 0; i < 10; ++i) {
     const std::vector<int>& p = base[i % base.size()];
     const int max_tokens = 6 + (i % 5);
     reqs.push_back(make_req(p, max_tokens, cfg.eos_token_ids));
-    expected.push_back(xllm::greedy_generate(solo, p, max_tokens, cfg.eos_token_ids).tokens);
+    expected.push_back(mlxforge::greedy_generate(solo, p, max_tokens, cfg.eos_token_ids).tokens);
   }
 
-  xllm::Scheduler sched;
-  xllm::Worker worker(factory_for(dir), &sched);
+  mlxforge::Scheduler sched;
+  mlxforge::Worker worker(factory_for(dir), &sched);
   worker.start();
   for (auto& r : reqs) sched.submit(r);
 
@@ -87,19 +87,19 @@ TEST_CASE("XLLM-020: N concurrent mixed requests each match their solo run") {
   }
 }
 
-TEST_CASE("XLLM-020: throughput rises with concurrency; one eval per decode step") {
+TEST_CASE("MLXFORGE-020: throughput rises with concurrency; one eval per decode step") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
   const std::string dir = model_dir();
-  xllm::ModelConfig cfg = xllm::ModelConfig::from_file(dir + "/config.json");
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
   std::vector<int> prompt = load_token_ids("prompt_0_ids.npy");
   const int kTokens = 24;
 
   auto run_concurrency = [&](int C, long& decode_steps) {
-    xllm::Scheduler sched;
-    xllm::Worker worker(factory_for(dir), &sched);
+    mlxforge::Scheduler sched;
+    mlxforge::Worker worker(factory_for(dir), &sched);
     worker.start();
     // Warm up (model load + graph build) so timing measures steady state.
     {
@@ -111,7 +111,7 @@ TEST_CASE("XLLM-020: throughput rises with concurrency; one eval per decode step
     }
     const long steps_before = worker.decode_steps();
 
-    std::vector<std::shared_ptr<xllm::Request>> reqs;
+    std::vector<std::shared_ptr<mlxforge::Request>> reqs;
     for (int i = 0; i < C; ++i) reqs.push_back(make_req(prompt, kTokens, cfg.eos_token_ids));
     auto t0 = std::chrono::steady_clock::now();
     for (auto& r : reqs) sched.submit(r);

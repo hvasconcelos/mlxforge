@@ -1,4 +1,4 @@
-// XLLM-016: the three-queue state machine. Requests flow
+// MLXFORGE-016: the three-queue state machine. Requests flow
 //   waiting -> prefill_batch -> decode_batch
 // The HTTP/test threads only push to `waiting`; the worker thread owns the
 // prefill/decode sets and is the only thread that touches MLX. Handoff is via a
@@ -13,7 +13,7 @@
 
 #include "scheduler/request.h"
 
-namespace xllm {
+namespace mlxforge {
 
 class Scheduler {
  public:
@@ -46,4 +46,4 @@ class Scheduler {
   bool stop_ = false;
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

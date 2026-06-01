@@ -1,16 +1,16 @@
-// xllm-cli — command-line entry point.
+// mlxforge-cli — command-line entry point.
 //
-//   xllm-cli                      build smoke test (XLLM-001): add two arrays,
+//   mlxforge-cli                      build smoke test (MLXFORGE-001): add two arrays,
 //                                 eval, print the sum.
-//   xllm-cli dump-weights <dir>   load a model dir's weights (XLLM-004): print
+//   mlxforge-cli dump-weights <dir>   load a model dir's weights (MLXFORGE-004): print
 //                                 every key -> shape -> dtype, assert fp16, and
 //                                 report peak resident memory.
-//   xllm-cli generate <dir> <prompt_ids.npy> [max_tokens]
-//                                 greedy single-stream generation (XLLM-015):
+//   mlxforge-cli generate <dir> <prompt_ids.npy> [max_tokens]
+//                                 greedy single-stream generation (MLXFORGE-015):
 //                                 prefill the pre-tokenized prompt and stream
 //                                 generated token ids to stdout until EOS or
 //                                 max_tokens (real text awaits the tokenizer,
-//                                 XLLM-021).
+//                                 MLXFORGE-021).
 
 #include <cstdio>
 #include <string>
@@ -59,7 +59,7 @@ int run_smoke() {
 
 int run_dump_weights(const std::string& dir) {
   mx::reset_peak_memory();
-  xllm::Weights w = xllm::load_weights(dir);
+  mlxforge::Weights w = mlxforge::load_weights(dir);
 
   // Materialize so the fp16 cast and resident-memory figure are real.
   std::vector<mx::array> all;
@@ -80,9 +80,9 @@ int run_dump_weights(const std::string& dir) {
 }
 
 int run_generate(const std::string& dir, const std::string& prompt_arg, int max_tokens) {
-  xllm::ModelConfig cfg = xllm::ModelConfig::from_file(dir + "/config.json");
-  xllm::LlamaModel model(cfg, xllm::load_weights(dir));
-  xllm::Tokenizer tok = xllm::Tokenizer::from_file(dir + "/tokenizer.json");
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
+  mlxforge::LlamaModel model(cfg, mlxforge::load_weights(dir));
+  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(dir + "/tokenizer.json");
 
   // A .npy argument is a pre-tokenized prompt; anything else is raw text run
   // through the chat template.
@@ -96,9 +96,9 @@ int run_generate(const std::string& dir, const std::string& prompt_arg, int max_
   }
 
   // Stream real detokenized text as tokens are produced.
-  xllm::StreamingDetokenizer detok(tok);
-  xllm::GenerateResult r =
-      xllm::greedy_generate(model, prompt, max_tokens, cfg.eos_token_ids, [&](int id) {
+  mlxforge::StreamingDetokenizer detok(tok);
+  mlxforge::GenerateResult r =
+      mlxforge::greedy_generate(model, prompt, max_tokens, cfg.eos_token_ids, [&](int id) {
         std::string piece = detok.add(id);
         std::fwrite(piece.data(), 1, piece.size(), stdout);
         std::fflush(stdout);
@@ -115,14 +115,14 @@ int main(int argc, char** argv) {
   const std::string cmd = argc >= 2 ? argv[1] : "";
   if (cmd == "dump-weights") {
     if (argc < 3) {
-      std::fprintf(stderr, "usage: xllm-cli dump-weights <model_dir>\n");
+      std::fprintf(stderr, "usage: mlxforge-cli dump-weights <model_dir>\n");
       return 2;
     }
     return run_dump_weights(argv[2]);
   }
   if (cmd == "generate") {
     if (argc < 4) {
-      std::fprintf(stderr, "usage: xllm-cli generate <model_dir> <prompt_ids.npy> [max_tokens]\n");
+      std::fprintf(stderr, "usage: mlxforge-cli generate <model_dir> <prompt_ids.npy> [max_tokens]\n");
       return 2;
     }
     const int max_tokens = argc >= 5 ? std::stoi(argv[4]) : 64;

@@ -1,5 +1,5 @@
-// XLLM-009: single-sequence KV cache. Proves the prefill/decode split before
-// the batched cache (XLLM-010) the server needs. Prefill fills the cache once;
+// MLXFORGE-009: single-sequence KV cache. Proves the prefill/decode split before
+// the batched cache (MLXFORGE-010) the server needs. Prefill fills the cache once;
 // each decode step appends one token's K/V and attends over cached history.
 #pragma once
 
@@ -8,7 +8,7 @@
 
 #include "mlx/array.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace mx = mlx::core;
 
@@ -33,4 +33,4 @@ class KVCache {
   int offset_ = 0;
 };
 
-}  // namespace xllm
+}  // namespace mlxforge

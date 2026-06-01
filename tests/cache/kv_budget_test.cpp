@@ -1,10 +1,10 @@
-// XLLM-012: KV memory projection + admission gate (pure arithmetic, no GPU).
+// MLXFORGE-012: KV memory projection + admission gate (pure arithmetic, no GPU).
 #include <doctest/doctest.h>
 
 #include "cache/kv_budget.h"
 #include "core/config.h"
 
-using namespace xllm;
+using namespace mlxforge;
 
 namespace {
 // Llama-3.2-1B shape relevant to KV size.
@@ -19,7 +19,7 @@ constexpr std::size_t kMiB = 1024 * 1024;
 constexpr std::size_t kGiB = 1024 * 1024 * 1024;
 }  // namespace
 
-TEST_CASE("XLLM-012: KV size matches the spec's memory math") {
+TEST_CASE("MLXFORGE-012: KV size matches the spec's memory math") {
   KVBudget budget(llama32_1b(), /*budget_bytes=*/0);
   CHECK(budget.bytes_per_token() == 32 * 1024);  // 32 KiB/token
 
@@ -29,7 +29,7 @@ TEST_CASE("XLLM-012: KV size matches the spec's memory math") {
   CHECK(budget.project_bytes(2048, 0, 32) == 2 * kGiB);
 }
 
-TEST_CASE("XLLM-012: admission is refused when projection exceeds the budget") {
+TEST_CASE("MLXFORGE-012: admission is refused when projection exceeds the budget") {
   KVBudget budget(llama32_1b(), /*budget_bytes=*/2 * kGiB);
 
   CHECK(budget.can_admit(2048, 0, 32));         // exactly 2 GiB, fits
@@ -38,7 +38,7 @@ TEST_CASE("XLLM-012: admission is refused when projection exceeds the budget") {
   CHECK_FALSE(budget.can_admit(2048, 256, 32)); // max_new pushes it over
 }
 
-TEST_CASE("XLLM-012: a zero budget is treated as unbounded") {
+TEST_CASE("MLXFORGE-012: a zero budget is treated as unbounded") {
   KVBudget budget(llama32_1b(), /*budget_bytes=*/0);
   CHECK(budget.can_admit(131072, 4096, 256));
 }

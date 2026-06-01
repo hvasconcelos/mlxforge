@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(xllm LANGUAGES CXX)
+project(mlxforge LANGUAGES CXX)
 
 # --- Global build settings ---------------------------------------------------
 set(CMAKE_CXX_STANDARD 17)
@@ -12,7 +12,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if(NOT APPLE)
-  message(FATAL_ERROR "xllm targets Apple Silicon (MLX Metal backend) only.")
+  message(FATAL_ERROR "mlxforge targets Apple Silicon (MLX Metal backend) only.")
 endif()
 
 include(cmake/Dependencies.cmake)
@@ -22,7 +22,7 @@ find_package(Threads REQUIRED)
 # --- Engine library ----------------------------------------------------------
 # Per-module sources are appended here as each story lands (core/, model/,
 # cache/, sample/, scheduler/, runtime/, server/, tokenizer/).
-add_library(xllm_core STATIC
+add_library(mlxforge_core STATIC
   src/core/config.cpp
   src/core/weights.cpp
   src/model/llama.cpp
@@ -39,16 +39,16 @@ add_library(xllm_core STATIC
   src/server/http_server.cpp
   src/server/config.cpp
 )
-target_include_directories(xllm_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads tokenizers_cpp httplib::httplib)
-target_compile_features(xllm_core PUBLIC cxx_std_17)
+target_include_directories(mlxforge_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(mlxforge_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads tokenizers_cpp httplib::httplib)
+target_compile_features(mlxforge_core PUBLIC cxx_std_17)
 
-# --- CLI binary (smoke test for XLLM-001; real generation loop in XLLM-015) ---
-add_executable(xllm-cli apps/xllm_cli.cpp)
-target_link_libraries(xllm-cli PRIVATE xllm_core)
+# --- CLI binary (smoke test for MLXFORGE-001; real generation loop in MLXFORGE-015) ---
+add_executable(mlxforge-cli apps/mlxforge_cli.cpp)
+target_link_libraries(mlxforge-cli PRIVATE mlxforge_core)
 
-add_executable(xllm apps/xllm.cpp)
-target_link_libraries(xllm PRIVATE xllm_core)
+add_executable(mlxforge apps/mlxforge.cpp)
+target_link_libraries(mlxforge PRIVATE mlxforge_core)
 
 # --- Tests -------------------------------------------------------------------
 enable_testing()

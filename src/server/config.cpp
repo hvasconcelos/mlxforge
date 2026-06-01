@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <stdexcept>
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 // Environment override: returns the env value or `fallback` if unset.
@@ -20,11 +20,11 @@ long env_long(const char* key, long fallback) {
 ServerConfig ServerConfig::parse(const std::vector<std::string>& args) {
   ServerConfig c;
   // Environment defaults first; CLI flags override below.
-  c.host = env_or("XLLM_HOST", c.host);
-  c.port = static_cast<int>(env_long("XLLM_PORT", c.port));
-  c.max_ctx = static_cast<int>(env_long("XLLM_MAX_CTX", c.max_ctx));
-  c.max_waiting = static_cast<int>(env_long("XLLM_MAX_WAITING", c.max_waiting));
-  c.kv_budget_bytes = static_cast<std::size_t>(env_long("XLLM_KV_BUDGET", 0));
+  c.host = env_or("MLXFORGE_HOST", c.host);
+  c.port = static_cast<int>(env_long("MLXFORGE_PORT", c.port));
+  c.max_ctx = static_cast<int>(env_long("MLXFORGE_MAX_CTX", c.max_ctx));
+  c.max_waiting = static_cast<int>(env_long("MLXFORGE_MAX_WAITING", c.max_waiting));
+  c.kv_budget_bytes = static_cast<std::size_t>(env_long("MLXFORGE_KV_BUDGET", 0));
 
   // Accept "--flag value" or "--flag=value"; the first positional is model_dir.
   auto value_of = [&](const std::string& a, size_t& i) -> std::string {
@@ -64,4 +64,4 @@ ServerConfig ServerConfig::parse(const std::vector<std::string>& args) {
   return c;
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

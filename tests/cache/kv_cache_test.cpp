@@ -1,4 +1,4 @@
-// XLLM-009: single-sequence KV cache — prove the prefill/decode split.
+// MLXFORGE-009: single-sequence KV cache — prove the prefill/decode split.
 #include <doctest/doctest.h>
 
 #include <vector>
@@ -9,7 +9,7 @@
 
 #include "mlx/ops.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
 namespace {
 // Argmax token id over the last axis of a (1, vocab) row.
@@ -27,17 +27,17 @@ int last_argmax(const mx::array& logits) {
 }
 }  // namespace
 
-TEST_CASE("XLLM-009: decode-with-cache equals a full recompute") {
+TEST_CASE("MLXFORGE-009: decode-with-cache equals a full recompute") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
   std::vector<int> ids = load_token_ids("prompt_0_ids.npy");
   const int T = static_cast<int>(ids.size());
 
   // Prefill the prompt, then decode the reference next token.
-  xllm::KVCache cache(model.config().n_layers);
+  mlxforge::KVCache cache(model.config().n_layers);
   mx::array prompt(ids.data(), {1, T}, mx::int32);
   mx::array prefill_logits = model.forward(prompt, &cache);
   CHECK(cache.offset() == T);
@@ -64,15 +64,15 @@ TEST_CASE("XLLM-009: decode-with-cache equals a full recompute") {
   CHECK(argmax_row(cached_last) == argmax_row(recompute_last));
 }
 
-TEST_CASE("XLLM-009: greedy stream with cache matches the reference exactly") {
+TEST_CASE("MLXFORGE-009: greedy stream with cache matches the reference exactly") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
   std::vector<int> ids = load_token_ids("prompt_0_ids.npy");
 
-  xllm::KVCache cache(model.config().n_layers);
+  mlxforge::KVCache cache(model.config().n_layers);
   mx::array prompt(ids.data(), {1, static_cast<int>(ids.size())}, mx::int32);
   int next = last_argmax(model.forward(prompt, &cache));
 

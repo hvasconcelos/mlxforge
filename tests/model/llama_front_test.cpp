@@ -1,4 +1,4 @@
-// XLLM-006: embedding + RMSNorm + Q/K/V projections + RoPE, validated against
+// MLXFORGE-006: embedding + RMSNorm + Q/K/V projections + RoPE, validated against
 // the golden reference (fp16 rel ~1e-2). RoPE is the classic silent bug, so the
 // post-RoPE Q/K tensors are asserted, not assumed.
 #include <doctest/doctest.h>
@@ -8,18 +8,18 @@
 #include "support/model_fixture.h"
 #include "support/reference.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
 TEST_CASE("fast::rope(const array& offset, ...) overload exists on the pinned MLX") {
-  CHECK(xllm::rope_array_offset_overload_available());
+  CHECK(mlxforge::rope_array_offset_overload_available());
 }
 
-TEST_CASE("XLLM-006: embedding + RMSNorm + RoPE'd Q/K/V match the reference") {
+TEST_CASE("MLXFORGE-006: embedding + RMSNorm + RoPE'd Q/K/V match the reference") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping golden-reference check");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping golden-reference check");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
 
   // RoPE frequencies (llama3 rescaling) must match before anything downstream.
   assert_close(model.rope_freqs(), load_npy("rope_freqs.npy"));
@@ -41,7 +41,7 @@ TEST_CASE("XLLM-006: embedding + RMSNorm + RoPE'd Q/K/V match the reference") {
 
   // Post-RoPE Q/K and un-roped V, each (1, heads, T, head_dim). V has heavy
   // cancellation, so it is the strictest check that the projection is correct.
-  xllm::LlamaModel::QKV qkv = model.attn_qkv(emb, /*layer=*/0);
+  mlxforge::LlamaModel::QKV qkv = model.attn_qkv(emb, /*layer=*/0);
   assert_close(qkv.q, load_npy("q_rope0.npy"));
   assert_close(qkv.k, load_npy("k_rope0.npy"));
   assert_close(qkv.v, load_npy("v0.npy"));

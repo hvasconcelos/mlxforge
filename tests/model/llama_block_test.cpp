@@ -1,4 +1,4 @@
-// XLLM-007: a single decoder block (prefill) — attention (causal SDPA, GQA) +
+// MLXFORGE-007: a single decoder block (prefill) — attention (causal SDPA, GQA) +
 // SwiGLU MLP with residuals — must match the reference block-0 output.
 #include <doctest/doctest.h>
 
@@ -7,14 +7,14 @@
 #include "support/model_fixture.h"
 #include "support/reference.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
-TEST_CASE("XLLM-007: decoder block 0 output matches the reference") {
+TEST_CASE("MLXFORGE-007: decoder block 0 output matches the reference") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping golden-reference check");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping golden-reference check");
     return;
   }
-  xllm::LlamaModel& model = shared_model();
+  mlxforge::LlamaModel& model = shared_model();
 
   std::vector<int> ids = load_token_ids("prompt_0_ids.npy");
   mx::array tokens(ids.data(), {1, static_cast<int>(ids.size())}, mx::int32);

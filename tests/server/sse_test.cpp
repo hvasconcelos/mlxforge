@@ -1,4 +1,4 @@
-// XLLM-023: SSE chunk framing + bounded token-queue backpressure (no server/GPU).
+// MLXFORGE-023: SSE chunk framing + bounded token-queue backpressure (no server/GPU).
 #include <doctest/doctest.h>
 
 #include <atomic>
@@ -8,11 +8,11 @@
 #include "scheduler/request.h"
 #include "server/openai.h"
 
-using namespace xllm;
+using namespace mlxforge;
 using nlohmann::json;
 
-TEST_CASE("XLLM-023: SSE chunk frame is byte-exact") {
-  json chunk = make_chat_chunk("chatcmpl-1", 1234, "xllm", {{"content", "Paris"}}, nullptr);
+TEST_CASE("MLXFORGE-023: SSE chunk frame is byte-exact") {
+  json chunk = make_chat_chunk("chatcmpl-1", 1234, "mlxforge", {{"content", "Paris"}}, nullptr);
   std::string frame = sse_frame(chunk);
 
   // Framing contract: "data: " prefix, "\n\n" terminator.
@@ -26,12 +26,12 @@ TEST_CASE("XLLM-023: SSE chunk frame is byte-exact") {
   CHECK(parsed["choices"][0]["finish_reason"].is_null());
 
   // Final-chunk finish reason + the [DONE] sentinel.
-  json final = make_chat_chunk("chatcmpl-1", 1234, "xllm", json::object(), "stop");
+  json final = make_chat_chunk("chatcmpl-1", 1234, "mlxforge", json::object(), "stop");
   CHECK(json::parse(sse_frame(final).substr(6))["choices"][0]["finish_reason"] == "stop");
   CHECK(kSseDone == "data: [DONE]\n\n");
 }
 
-TEST_CASE("XLLM-023: bounded token queue applies backpressure at capacity") {
+TEST_CASE("MLXFORGE-023: bounded token queue applies backpressure at capacity") {
   TokenQueue q(/*capacity=*/2);
   q.push(10);
   q.push(20);  // now full

@@ -1,9 +1,9 @@
-// XLLM-005: self-tests for the golden-reference compare harness.
+// MLXFORGE-005: self-tests for the golden-reference compare harness.
 #include "support/reference.h"
 
 #include <doctest/doctest.h>
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
 TEST_CASE("load_npy reads a fixture into an MLX array") {
   mx::array emb = load_npy("embeddings.npy");

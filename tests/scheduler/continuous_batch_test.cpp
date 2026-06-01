@@ -1,4 +1,4 @@
-// XLLM-018: continuous-batching decode — concurrent requests each produce the
+// MLXFORGE-018: continuous-batching decode — concurrent requests each produce the
 // same greedy stream as a solo run; finished/cancelled rows are evicted.
 #include <doctest/doctest.h>
 
@@ -14,39 +14,39 @@
 #include "support/model_fixture.h"
 #include "support/reference.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
-TEST_CASE("XLLM-018: concurrent requests each match their solo greedy run") {
+TEST_CASE("MLXFORGE-018: concurrent requests each match their solo greedy run") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
   const std::string dir = model_dir();
-  xllm::ModelConfig cfg = xllm::ModelConfig::from_file(dir + "/config.json");
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
 
   // Solo expectations (computed with the validated single-stream loop).
-  xllm::LlamaModel& solo_model = shared_model();
+  mlxforge::LlamaModel& solo_model = shared_model();
   std::vector<std::vector<int>> prompts = {load_token_ids("prompt_0_ids.npy"),
                                            load_token_ids("prompt_1_ids.npy"),
                                            load_token_ids("prompt_2_ids.npy")};
   const int kMax = 16;
   std::vector<std::vector<int>> expected;
   for (auto& p : prompts)
-    expected.push_back(xllm::greedy_generate(solo_model, p, kMax, cfg.eos_token_ids).tokens);
+    expected.push_back(mlxforge::greedy_generate(solo_model, p, kMax, cfg.eos_token_ids).tokens);
 
   // Run them concurrently through the continuous-batching worker.
-  xllm::Scheduler sched;
-  xllm::Worker worker(
+  mlxforge::Scheduler sched;
+  mlxforge::Worker worker(
       [dir] {
-        return std::make_unique<xllm::LlamaModel>(
-            xllm::ModelConfig::from_file(dir + "/config.json"), xllm::load_weights(dir));
+        return std::make_unique<mlxforge::LlamaModel>(
+            mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir));
       },
       &sched);
   worker.start();
 
-  std::vector<std::shared_ptr<xllm::Request>> reqs;
+  std::vector<std::shared_ptr<mlxforge::Request>> reqs;
   for (auto& p : prompts) {
-    auto req = std::make_shared<xllm::Request>();
+    auto req = std::make_shared<mlxforge::Request>();
     req->prompt_ids = p;
     req->params.temperature = 0.0f;
     req->max_tokens = kMax;
@@ -69,24 +69,24 @@ TEST_CASE("XLLM-018: concurrent requests each match their solo greedy run") {
   }
 }
 
-TEST_CASE("XLLM-018: a cancelled request is evicted") {
+TEST_CASE("MLXFORGE-018: a cancelled request is evicted") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
   const std::string dir = model_dir();
-  xllm::ModelConfig cfg = xllm::ModelConfig::from_file(dir + "/config.json");
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
 
-  xllm::Scheduler sched;
-  xllm::Worker worker(
+  mlxforge::Scheduler sched;
+  mlxforge::Worker worker(
       [dir] {
-        return std::make_unique<xllm::LlamaModel>(
-            xllm::ModelConfig::from_file(dir + "/config.json"), xllm::load_weights(dir));
+        return std::make_unique<mlxforge::LlamaModel>(
+            mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir));
       },
       &sched);
   worker.start();
 
-  auto req = std::make_shared<xllm::Request>();
+  auto req = std::make_shared<mlxforge::Request>();
   req->prompt_ids = load_token_ids("prompt_0_ids.npy");
   req->params.temperature = 0.0f;
   req->max_tokens = 1000;

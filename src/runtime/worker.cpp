@@ -10,7 +10,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 std::vector<int> read_ids(const mx::array& a) {
@@ -111,7 +111,7 @@ void Worker::decode_step() {
   ++decode_steps_;
   const int B = static_cast<int>(reqs_.size());
 
-  // XLLM-019: pad the active batch up to a fixed bucket with masked dummy rows
+  // MLXFORGE-019: pad the active batch up to a fixed bucket with masked dummy rows
   // so the decode forward graph shape recurs. Dummy rows are batch-independent
   // and masked, so they cannot affect the real rows; they are trimmed after.
   const int bucket = next_bucket(B);
@@ -160,7 +160,7 @@ void Worker::evict_finished() {
       const double tps = gen_s > 0 ? produced_[b] / gen_s : 0.0;
       // Per-request metrics: TTFT, tokens/s, batch occupancy, queue depth.
       std::fprintf(stderr,
-                   "[xllm] done reason=%s prompt=%zu gen=%d ttft=%.1fms tok/s=%.1f "
+                   "[mlxforge] done reason=%s prompt=%zu gen=%d ttft=%.1fms tok/s=%.1f "
                    "batch=%d queue=%zu\n",
                    r.finish_reason.c_str(), r.prompt_ids.size(), produced_[b], ttft, tps,
                    static_cast<int>(reqs_.size()), sched_->waiting_size());
@@ -192,4 +192,4 @@ void Worker::evict_finished() {
   finished_.resize(keep.size());
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

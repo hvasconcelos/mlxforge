@@ -1,4 +1,4 @@
-// XLLM-021: C++ tokenizer — encode/decode round-trip, chat template parity, and
+// MLXFORGE-021: C++ tokenizer — encode/decode round-trip, chat template parity, and
 // streaming UTF-8-safe detokenization, all vs the mlx-lm reference.
 #include <doctest/doctest.h>
 
@@ -9,7 +9,7 @@
 #include "support/reference.h"
 #include "tokenizer/tokenizer.h"
 
-using namespace xllm::test;
+using namespace mlxforge::test;
 
 namespace {
 bool valid_utf8(const std::string& s) {
@@ -34,15 +34,15 @@ bool valid_utf8(const std::string& s) {
   }
   return true;
 }
-std::string tokenizer_path() { return std::string(XLLM_MODEL_DIR) + "/tokenizer.json"; }
+std::string tokenizer_path() { return std::string(MLXFORGE_MODEL_DIR) + "/tokenizer.json"; }
 }  // namespace
 
-TEST_CASE("XLLM-021: encode/decode round-trip matches the reference tokenizer") {
+TEST_CASE("MLXFORGE-021: encode/decode round-trip matches the reference tokenizer") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::Tokenizer tok = xllm::Tokenizer::from_file(tokenizer_path());
+  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(tokenizer_path());
 
   // Encode matches mlx-lm's tokenization (with BOS) for the fixed prompt.
   CHECK(tok.encode("The capital of France is") == load_token_ids("prompt_0_ids.npy"));
@@ -55,13 +55,13 @@ TEST_CASE("XLLM-021: encode/decode round-trip matches the reference tokenizer") 
   }
 }
 
-TEST_CASE("XLLM-021: chat template matches mlx-lm exactly") {
+TEST_CASE("MLXFORGE-021: chat template matches mlx-lm exactly") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::Tokenizer tok = xllm::Tokenizer::from_file(tokenizer_path());
-  std::vector<xllm::Tokenizer::Message> messages = {
+  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(tokenizer_path());
+  std::vector<mlxforge::Tokenizer::Message> messages = {
       {"user", "What is the capital of France?"}};
   // The reference dump was taken on 01 Jun 2026 (the template injects the date).
   std::vector<int> ids = tok.apply_chat_template(messages, /*add_generation_prompt=*/true,
@@ -69,15 +69,15 @@ TEST_CASE("XLLM-021: chat template matches mlx-lm exactly") {
   CHECK(ids == load_token_ids("chat_ids.npy"));
 }
 
-TEST_CASE("XLLM-021: streaming detokenizer never emits broken UTF-8") {
+TEST_CASE("MLXFORGE-021: streaming detokenizer never emits broken UTF-8") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
-  xllm::Tokenizer tok = xllm::Tokenizer::from_file(tokenizer_path());
+  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(tokenizer_path());
   std::vector<int> stream = load_token_ids("greedy_tokens.npy");
 
-  xllm::StreamingDetokenizer detok(tok);
+  mlxforge::StreamingDetokenizer detok(tok);
   std::string assembled;
   for (int id : stream) {
     std::string piece = detok.add(id);

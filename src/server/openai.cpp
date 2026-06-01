@@ -2,7 +2,7 @@
 
 #include <stdexcept>
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 using nlohmann::json;
@@ -17,7 +17,7 @@ std::vector<std::string> parse_stop(const json& body) {
 }
 
 void parse_common(const json& body, ChatRequest& r) {
-  r.model = body.value("model", std::string("xllm"));
+  r.model = body.value("model", std::string("mlxforge"));
   r.max_tokens = body.value("max_tokens", 128);
   if (r.max_tokens <= 0) throw std::runtime_error("'max_tokens' must be positive");
 
@@ -103,7 +103,7 @@ nlohmann::json make_models_list(const std::string& model) {
           {"data", json::array({{{"id", model},
                                  {"object", "model"},
                                  {"created", 0},
-                                 {"owned_by", "xllm"}}})}};
+                                 {"owned_by", "mlxforge"}}})}};
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

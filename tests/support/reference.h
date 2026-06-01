@@ -1,4 +1,4 @@
-// XLLM-005: golden-reference compare harness.
+// MLXFORGE-005: golden-reference compare harness.
 //
 // Loads the .npy fixtures dumped by reference/dump_ref.py into MLX arrays and
 // asserts closeness (fp16 rel ~1e-2) or exact equality for token streams. The
@@ -17,13 +17,13 @@
 
 #include "mlx/mlx.h"
 
-namespace xllm::test {
+namespace mlxforge::test {
 
 namespace mx = mlx::core;
 
 // Path to a committed reference fixture (reference/fixtures/<name>).
 inline std::string ref_path(const std::string& name) {
-  return std::string(XLLM_REF_FIXTURES_DIR) + "/" + name;
+  return std::string(MLXFORGE_REF_FIXTURES_DIR) + "/" + name;
 }
 
 // Load a .npy fixture as an MLX array (dtype preserved).
@@ -137,4 +137,4 @@ inline void assert_tokens_equal(const std::vector<int>& actual, const std::vecto
   CHECK(bad == -1);
 }
 
-}  // namespace xllm::test
+}  // namespace mlxforge::test

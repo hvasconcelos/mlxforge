@@ -7,7 +7,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 // offset starts at -left_padding (per row).
@@ -202,4 +202,4 @@ void BatchKVCache::merge(BatchKVCache& other) {
   mx::eval(offset_, left_padding_);
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

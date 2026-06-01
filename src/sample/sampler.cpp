@@ -5,7 +5,7 @@
 #include "mlx/ops.h"
 #include "mlx/random.h"
 
-namespace xllm {
+namespace mlxforge {
 
 namespace {
 constexpr float kNegInf = -std::numeric_limits<float>::infinity();
@@ -62,4 +62,4 @@ SampleResult Sampler::sample(const mx::array& logits, const SamplingParams& para
   return {tokens, gather_logprob(scaled, tokens)};
 }
 
-}  // namespace xllm
+}  // namespace mlxforge

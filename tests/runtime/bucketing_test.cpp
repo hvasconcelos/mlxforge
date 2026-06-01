@@ -1,4 +1,4 @@
-// XLLM-019: batch-size bucketing + proof that masked dummy rows do not affect
+// MLXFORGE-019: batch-size bucketing + proof that masked dummy rows do not affect
 // real rows' outputs.
 #include <doctest/doctest.h>
 
@@ -11,10 +11,10 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
-using namespace xllm;
-using namespace xllm::test;
+using namespace mlxforge;
+using namespace mlxforge::test;
 
-TEST_CASE("XLLM-019: next_bucket rounds up to {1,2,4,8,16,32} then multiples of 32") {
+TEST_CASE("MLXFORGE-019: next_bucket rounds up to {1,2,4,8,16,32} then multiples of 32") {
   CHECK(next_bucket(1) == 1);
   CHECK(next_bucket(2) == 2);
   CHECK(next_bucket(3) == 4);
@@ -26,9 +26,9 @@ TEST_CASE("XLLM-019: next_bucket rounds up to {1,2,4,8,16,32} then multiples of 
   CHECK(next_bucket(40) == 64);
 }
 
-TEST_CASE("XLLM-019: masked dummy rows do not change real rows' next-token logits") {
+TEST_CASE("MLXFORGE-019: masked dummy rows do not change real rows' next-token logits") {
   if (!model_available()) {
-    MESSAGE("XLLM_MODEL_DIR not present; skipping");
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
   }
   LlamaModel& model = shared_model();
