@@ -35,14 +35,19 @@ add_library(xllm_core STATIC
   src/runtime/worker.cpp
   src/runtime/batching.cpp
   src/tokenizer/tokenizer.cpp
+  src/server/openai.cpp
+  src/server/http_server.cpp
 )
 target_include_directories(xllm_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
-target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads tokenizers_cpp)
+target_link_libraries(xllm_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads tokenizers_cpp httplib::httplib)
 target_compile_features(xllm_core PUBLIC cxx_std_17)
 
 # --- CLI binary (smoke test for XLLM-001; real generation loop in XLLM-015) ---
 add_executable(xllm-cli apps/xllm_cli.cpp)
 target_link_libraries(xllm-cli PRIVATE xllm_core)
+
+add_executable(xllm apps/xllm.cpp)
+target_link_libraries(xllm PRIVATE xllm_core)
 
 # --- Tests -------------------------------------------------------------------
 enable_testing()
