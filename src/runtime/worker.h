@@ -9,6 +9,7 @@
 // row's token, and evicts finished/cancelled rows via filter.
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <thread>
@@ -33,6 +34,10 @@ class Worker {
 
   void start();  // launch the GPU thread (loads the model, then loops)
   void stop();   // signal the scheduler to drain, then join
+
+  // Number of batched decode steps executed (== async_eval calls). Far below the
+  // total tokens generated under load proves one eval covers the whole batch.
+  long decode_steps() const { return decode_steps_.load(); }
 
  private:
   void run();  // the loop; the sole caller of MLX eval/async_eval
@@ -59,6 +64,7 @@ class Worker {
   std::vector<int> feed_;      // next input token per row (host side)
   std::vector<char> finished_;  // row marked for eviction
 
+  std::atomic<long> decode_steps_{0};
   std::thread thread_;
 };
 

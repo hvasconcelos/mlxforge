@@ -104,6 +104,7 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
 }
 
 void Worker::decode_step() {
+  ++decode_steps_;
   const int B = static_cast<int>(reqs_.size());
 
   // XLLM-019: pad the active batch up to a fixed bucket with masked dummy rows
