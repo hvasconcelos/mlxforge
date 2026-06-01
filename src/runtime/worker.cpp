@@ -2,24 +2,37 @@
 
 #include <algorithm>
 
-#include "cache/batch_kv_cache.h"
+#include "runtime/batching.h"
 #include "sample/sampler.h"
 
 #include "mlx/ops.h"
-#include "mlx/random.h"
 #include "mlx/transforms.h"
 
 namespace xllm {
 
 namespace {
-// Sample one token from the last position of (1, L, vocab) logits.
-int sample_last(const mx::array& logits, const SamplingParams& params, const mx::array& key) {
-  const int L = logits.shape()[1];
-  const int V = logits.shape()[2];
-  mx::array last = mx::reshape(mx::slice(logits, {0, L - 1, 0}, {1, L, V}), {1, V});
-  mx::array tok = Sampler::sample(last, params, key).tokens;
-  mx::eval(tok);
-  return tok.item<int>();
+std::vector<int> read_ids(const mx::array& a) {
+  mx::array c = mx::contiguous(mx::astype(a, mx::int32));
+  mx::eval(c);
+  return std::vector<int>(c.data<int32_t>(), c.data<int32_t>() + c.size());
+}
+
+bool is_eos(const Request& req, int id) {
+  return std::find(req.eos_ids.begin(), req.eos_ids.end(), id) != req.eos_ids.end();
+}
+
+// Emit token `id` for a request, returning true if the request is now finished.
+bool consume(Request& req, int& produced, int id) {
+  if (is_eos(req, id)) {
+    req.finish_reason = "stop";
+    return true;
+  }
+  req.tokens.push(id);
+  if (++produced >= req.max_tokens) {
+    req.finish_reason = "length";
+    return true;
+  }
+  return false;
 }
 }  // namespace
 
@@ -36,43 +49,111 @@ void Worker::stop() {
 
 void Worker::run() {
   model_ = factory_();  // load the model on this thread so its arrays live here
+
   while (true) {
-    std::shared_ptr<Request> req = sched_->next_waiting();
-    if (!req) break;  // stopping and drained
-    process_solo(req);
+    std::vector<std::shared_ptr<Request>> incoming;
+    if (reqs_.empty()) {
+      auto r = sched_->next_waiting();  // block until work or stop+drained
+      if (!r) break;
+      incoming.push_back(r);
+      auto more = sched_->take_waiting(kPrefillBatchSize - 1);
+      incoming.insert(incoming.end(), more.begin(), more.end());
+    } else {
+      incoming = sched_->take_waiting(kPrefillBatchSize);  // non-blocking top-up
+    }
+
+    if (!incoming.empty()) admit(incoming);
+    evict_finished();  // a row may finish on its very first token
+    if (reqs_.empty()) continue;
+
+    decode_step();
+    evict_finished();
   }
 }
 
-void Worker::process_solo(const std::shared_ptr<Request>& req) {
-  auto is_eos = [&](int id) {
-    return std::find(req->eos_ids.begin(), req->eos_ids.end(), id) != req->eos_ids.end();
-  };
+void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
+  std::vector<std::vector<int>> prompts;
+  prompts.reserve(incoming.size());
+  for (const auto& r : incoming) prompts.push_back(r->prompt_ids);
 
-  BatchKVCache cache(model_->config().n_layers, /*left_padding=*/{0});  // batch of 1
-  mx::array prompt(req->prompt_ids.data(), {1, static_cast<int>(req->prompt_ids.size())},
-                   mx::int32);
-  mx::array logits = model_->forward(prompt, cache);
+  PrefillResult pr = prefill(*model_, prompts);
+  std::vector<int> first = read_ids(Sampler::greedy(pr.last_logits));  // each row's first token
 
-  std::string reason = "length";
-  for (int step = 0; step < req->max_tokens; ++step) {
-    if (req->cancelled.load()) {
-      reason = "cancel";
-      break;
-    }
-    mx::array key = mx::random::key(req->params.seed + static_cast<uint64_t>(step));
-    int next = sample_last(logits, req->params, key);
-    if (is_eos(next)) {
-      reason = "stop";
-      break;
-    }
-    req->tokens.push(next);
-
-    mx::array step_arr(&next, {1, 1}, mx::int32);
-    logits = model_->forward(step_arr, cache);
+  if (!cache_) {
+    cache_ = std::make_unique<BatchKVCache>(std::move(pr.cache));
+  } else {
+    cache_->merge(pr.cache);
   }
 
-  req->finish_reason = reason;
-  req->tokens.close();
+  const int base = static_cast<int>(reqs_.size());
+  for (size_t i = 0; i < incoming.size(); ++i) {
+    reqs_.push_back(incoming[i]);
+    produced_.push_back(0);
+    feed_.push_back(first[i]);  // feed the first token next step
+    finished_.push_back(false);
+  }
+  for (size_t i = 0; i < incoming.size(); ++i) {
+    const int b = base + static_cast<int>(i);
+    if (reqs_[b]->cancelled.load()) {
+      reqs_[b]->finish_reason = "cancel";
+      finished_[b] = true;
+    } else if (consume(*reqs_[b], produced_[b], first[i])) {
+      finished_[b] = true;
+    }
+  }
+}
+
+void Worker::decode_step() {
+  const int B = static_cast<int>(reqs_.size());
+  mx::array inputs(feed_.data(), {B, 1}, mx::int32);
+  mx::array logits = model_->forward(inputs, *cache_);  // (B, 1, vocab)
+  mx::array next = Sampler::greedy(mx::reshape(logits, {B, logits.shape()[2]}));  // (B,)
+
+  mx::async_eval(next);  // the ONE eval per decode step, over the whole batch
+  std::vector<int> ids = read_ids(next);
+
+  for (int b = 0; b < B; ++b) {
+    if (finished_[b]) continue;
+    if (reqs_[b]->cancelled.load()) {
+      reqs_[b]->finish_reason = "cancel";
+      finished_[b] = true;
+      continue;
+    }
+    feed_[b] = ids[b];
+    if (consume(*reqs_[b], produced_[b], ids[b])) finished_[b] = true;
+  }
+}
+
+void Worker::evict_finished() {
+  std::vector<int> keep;
+  for (int b = 0; b < static_cast<int>(finished_.size()); ++b) {
+    if (finished_[b]) {
+      reqs_[b]->tokens.close();  // signal the consumer
+    } else {
+      keep.push_back(b);
+    }
+  }
+  if (keep.size() == reqs_.size()) return;  // nothing evicted
+
+  if (keep.empty()) {
+    cache_.reset();
+  } else {
+    cache_->filter(keep);
+  }
+
+  // Compact each row-aligned vector down to the kept rows (keep is ascending,
+  // so dst <= src and an in-place gather is safe).
+  for (int dst = 0; dst < static_cast<int>(keep.size()); ++dst) {
+    const int src = keep[dst];
+    reqs_[dst] = std::move(reqs_[src]);
+    produced_[dst] = produced_[src];
+    feed_[dst] = feed_[src];
+    finished_[dst] = finished_[src];
+  }
+  reqs_.resize(keep.size());
+  produced_.resize(keep.size());
+  feed_.resize(keep.size());
+  finished_.resize(keep.size());
 }
 
 }  // namespace xllm
