@@ -1,0 +1,34 @@
+// XLLM-017: the prefill pass. Waiting requests are left-padded to a common
+// P_max and prefilled in a DEDICATED forward (a separate pass, then joined — not
+// chunk-interleaved into the decode batch). Long prompts are chunked at
+// prefill_step_size with eval(cache.state) at each boundary to bound graph
+// growth. The result merges into the decode cache (XLLM-018).
+#pragma once
+
+#include <memory>
+#include <vector>
+
+#include "cache/batch_kv_cache.h"
+#include "model/llama.h"
+#include "scheduler/request.h"
+
+namespace xllm {
+
+// Scheduler sizing knobs (spec values).
+constexpr int kPrefillBatchSize = 8;
+constexpr int kPrefillStepSize = 2048;
+
+struct PrefillResult {
+  BatchKVCache cache;          // populated, left-padded, ready for decode
+  mx::array last_logits;       // (B, vocab): next-token logits for each row
+  std::vector<int> left_padding;
+};
+
+// Left-pad `prompts` to a common P_max and prefill them into a fresh
+// BatchKVCache, chunking at `step_size`. Returns the cache plus the last-real-
+// position logits (rows are left-padded, so every row's last token sits at
+// P_max-1). `pad_id` fills the masked-out left padding.
+PrefillResult prefill(const LlamaModel& model, const std::vector<std::vector<int>>& prompts,
+                      int step_size = kPrefillStepSize, int pad_id = 0);
+
+}  // namespace xllm

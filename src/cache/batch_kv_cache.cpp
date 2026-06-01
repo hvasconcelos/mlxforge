@@ -84,6 +84,15 @@ void BatchKVCache::advance(int n_tokens) {
   mx::eval(offset_);  // keep the per-row bookkeeping materialized
 }
 
+void BatchKVCache::eval_state() {
+  std::vector<mx::array> state = {offset_, left_padding_};
+  for (auto& k : keys_)
+    if (k.has_value()) state.push_back(*k);
+  for (auto& v : values_)
+    if (v.has_value()) state.push_back(*v);
+  mx::eval(state);
+}
+
 namespace {
 int scalar_int(const mx::array& a) {
   mx::array e = mx::astype(a, mx::int32);

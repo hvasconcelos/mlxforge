@@ -1,0 +1,47 @@
+#include "runtime/batching.h"
+
+#include <algorithm>
+
+#include "mlx/ops.h"
+#include "mlx/transforms.h"
+
+namespace xllm {
+
+PrefillResult prefill(const LlamaModel& model, const std::vector<std::vector<int>>& prompts,
+                      int step_size, int pad_id) {
+  const int B = static_cast<int>(prompts.size());
+  int p_max = 0;
+  for (const auto& p : prompts) p_max = std::max(p_max, static_cast<int>(p.size()));
+
+  // Left-pad each prompt to P_max; per-row left_padding = pad count.
+  std::vector<int> left_padding(B);
+  std::vector<int> padded(static_cast<size_t>(B) * p_max, pad_id);
+  for (int b = 0; b < B; ++b) {
+    const int pad = p_max - static_cast<int>(prompts[b].size());
+    left_padding[b] = pad;
+    for (size_t j = 0; j < prompts[b].size(); ++j) padded[b * p_max + pad + j] = prompts[b][j];
+  }
+  mx::array tokens(padded.data(), {B, p_max}, mx::int32);
+
+  BatchKVCache cache(model.config().n_layers, left_padding);
+
+  // Dedicated prefill forward, chunked to bound graph growth on long prompts.
+  mx::array logits = mx::zeros({B, 1, model.config().vocab}, mx::float16);
+  for (int c = 0; c < p_max; c += step_size) {
+    const int n = std::min(step_size, p_max - c);
+    mx::array chunk = mx::slice(tokens, {0, c}, {B, c + n});
+    logits = model.forward(chunk, cache);
+    cache.eval_state();  // eval(cache.state) at each chunk boundary
+  }
+
+  // Every row's last real token is at P_max-1 == the last column of the final
+  // chunk's logits.
+  const int n_last = logits.shape()[1];
+  const int vocab = logits.shape()[2];
+  mx::array last = mx::reshape(mx::slice(logits, {0, n_last - 1, 0}, {B, n_last, vocab}),
+                              {B, vocab});
+  mx::eval(last);
+  return {std::move(cache), last, std::move(left_padding)};
+}
+
+}  // namespace xllm

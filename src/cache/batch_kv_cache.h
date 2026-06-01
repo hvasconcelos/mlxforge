@@ -47,6 +47,10 @@ class BatchKVCache {
   // Advance the shared offset/idx by `n_tokens` (call once after all layers).
   void advance(int n_tokens);
 
+  // Materialize the whole cache (all layers' K/V + offset/left_padding). Called
+  // at chunked-prefill boundaries to bound graph/memory growth.
+  void eval_state();
+
   // Populated K/V slice [..., :idx, :] for a layer (for inspection/tests).
   std::pair<mx::array, mx::array> fetch(int layer) const;
 
