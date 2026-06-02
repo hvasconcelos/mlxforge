@@ -1,4 +1,4 @@
-// MLXFORGE-015: single-stream greedy generation loop.
+// single-stream greedy generation loop.
 #include <doctest/doctest.h>
 
 #include <vector>
@@ -9,7 +9,7 @@
 
 using namespace mlxforge::test;
 
-TEST_CASE("MLXFORGE-015: greedy CLI output matches mlx-lm token-for-token") {
+TEST_CASE("greedy CLI output matches mlx-lm token-for-token") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -29,7 +29,7 @@ TEST_CASE("MLXFORGE-015: greedy CLI output matches mlx-lm token-for-token") {
   CHECK_FALSE(r.hit_eos);
 }
 
-TEST_CASE("MLXFORGE-015: loop terminates on max_tokens") {
+TEST_CASE("loop terminates on max_tokens") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -42,7 +42,7 @@ TEST_CASE("MLXFORGE-015: loop terminates on max_tokens") {
   CHECK_FALSE(r.hit_eos);
 }
 
-TEST_CASE("MLXFORGE-015: loop terminates on EOS") {
+TEST_CASE("loop terminates on EOS") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;

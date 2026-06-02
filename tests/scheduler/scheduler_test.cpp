@@ -1,4 +1,4 @@
-// MLXFORGE-016: three-queue handoff + bounded token queue (no model/GPU).
+// three-queue handoff + bounded token queue (no model/GPU).
 #include <doctest/doctest.h>
 
 #include <memory>
@@ -9,7 +9,7 @@
 
 using namespace mlxforge;
 
-TEST_CASE("MLXFORGE-016: requests enqueue from one thread and are taken by another") {
+TEST_CASE("requests enqueue from one thread and are taken by another") {
   Scheduler sched;
   auto r1 = std::make_shared<Request>();
   auto r2 = std::make_shared<Request>();
@@ -29,7 +29,7 @@ TEST_CASE("MLXFORGE-016: requests enqueue from one thread and are taken by anoth
   CHECK(sched.waiting_size() == 0);
 }
 
-TEST_CASE("MLXFORGE-016: next_waiting blocks then returns; stop drains") {
+TEST_CASE("next_waiting blocks then returns; stop drains") {
   Scheduler sched;
   auto r1 = std::make_shared<Request>();
 
@@ -46,7 +46,7 @@ TEST_CASE("MLXFORGE-016: next_waiting blocks then returns; stop drains") {
   CHECK(sched.stopping());
 }
 
-TEST_CASE("MLXFORGE-016: bounded token queue pushes, pops, and closes") {
+TEST_CASE("bounded token queue pushes, pops, and closes") {
   TokenQueue q(/*capacity=*/4);
   q.push(10);
   q.push(20);

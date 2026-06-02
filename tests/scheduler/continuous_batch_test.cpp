@@ -1,4 +1,4 @@
-// MLXFORGE-018: continuous-batching decode — concurrent requests each produce the
+// continuous-batching decode — concurrent requests each produce the
 // same greedy stream as a solo run; finished/cancelled rows are evicted.
 #include <doctest/doctest.h>
 
@@ -16,7 +16,7 @@
 
 using namespace mlxforge::test;
 
-TEST_CASE("MLXFORGE-018: concurrent requests each match their solo greedy run") {
+TEST_CASE("concurrent requests each match their solo greedy run") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -69,7 +69,7 @@ TEST_CASE("MLXFORGE-018: concurrent requests each match their solo greedy run") 
   }
 }
 
-TEST_CASE("MLXFORGE-018: a cancelled request is evicted") {
+TEST_CASE("a cancelled request is evicted") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;

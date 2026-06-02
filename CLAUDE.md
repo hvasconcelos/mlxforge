@@ -12,7 +12,10 @@ The defining constraint: the failure mode is **silent numerical garbage, not a
 crash**. Anything touching the forward pass, KV cache, or sampling must be
 validated against the `mlx-lm` golden reference, not eyeballed.
 
-`SPECIFICATION.md` is the design; `STORIES.md` is the 25-story plan (all done).
+The `doc/` folder is the design reference: `doc/architecture.md` (engine
+internals + threading), `doc/llm-architecture.md` (the transformer forward
+pass), `doc/supported-models.md`, `doc/applications.md`, and
+`doc/contributing.md` (the maintainer guide).
 
 ## Build / test / run
 
@@ -21,8 +24,8 @@ cmake -S . -B build                       # configure (fetches + pins deps)
 cmake --build build --parallel            # build mlxforge, mlxforge-cli, mlxforge_tests
 cmake --build build --parallel --target mlxforge_tests   # tests only (faster)
 ctest --test-dir build --output-on-failure           # run all tests
-ctest --test-dir build -R MLXFORGE-008                   # run one story's tests
-./build/tests/mlxforge_tests --test-case="MLXFORGE-013:*"    # run by name (verbose)
+ctest --test-dir build -R kv_cache                   # run a subset by ctest name
+./build/tests/mlxforge_tests --test-case="*forward*"     # run by name (verbose)
 ```
 
 - The test binary is `build/tests/mlxforge_tests` (note the `tests/` subdir).
@@ -75,11 +78,10 @@ reference/.venv/bin/python reference/dump_ref.py
   operators for clarity, matching existing code.
 - Match the comment density / naming of surrounding code. Comments explain
   *why* (conventions, gotchas), not *what*.
-- Tests use **doctest**, named `"MLXFORGE-NNN: ..."` so `ctest -R` filters per story.
+- Tests use **doctest**, with descriptive `TEST_CASE` names; `ctest -R <regex>`
+  filters by the discovered test name.
 - After implementing a change, the repo's habit is: run `code-simplifier` on the
-  new code, then verify build + `ctest` before committing. Commit messages start
-  with the story id (`MLXFORGE-NNN: ...`) and the trailer
-  `Co-Authored-By: Claude ...`.
+  new code, then verify build + `ctest` before committing.
 
 ## Hard-won gotchas (read before touching these areas)
 
@@ -110,5 +112,5 @@ reference/.venv/bin/python reference/dump_ref.py
 
 `src/{core,model,cache,sample,scheduler,runtime,server,tokenizer}`, apps in
 `apps/` (`mlxforge` server, `mlxforge-cli`), tests mirror the module path under `tests/`,
-shared test helpers in `tests/support/`. See the table in `README.md` for the
-per-module responsibilities.
+shared test helpers in `tests/support/`. See the module table in `README.md` and
+`doc/architecture.md` for the per-module responsibilities.

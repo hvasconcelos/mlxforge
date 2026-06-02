@@ -1,4 +1,4 @@
-// MLXFORGE-025: optional 4-bit quantization — quantized greedy output stays coherent
+// optional 4-bit quantization — quantized greedy output stays coherent
 // and the resident footprint drops well below the fp16 model.
 #include <doctest/doctest.h>
 
@@ -22,7 +22,7 @@ bool available() {
 }
 }  // namespace
 
-TEST_CASE("MLXFORGE-025: 4-bit quantization is detected from config") {
+TEST_CASE("4-bit quantization is detected from config") {
   if (!available()) {
     MESSAGE("4-bit model not present; skipping");
     return;
@@ -33,7 +33,7 @@ TEST_CASE("MLXFORGE-025: 4-bit quantization is detected from config") {
   CHECK(cfg.quant_group_size == 64);
 }
 
-TEST_CASE("MLXFORGE-025: quantized greedy output stays coherent; footprint ~0.7 GiB") {
+TEST_CASE("quantized greedy output stays coherent; footprint ~0.7 GiB") {
   if (!available()) {
     MESSAGE("4-bit model not present; skipping");
     return;

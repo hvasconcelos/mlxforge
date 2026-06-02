@@ -1,4 +1,4 @@
-// MLXFORGE-005: golden-reference compare harness.
+// golden-reference compare harness.
 //
 // Loads the .npy fixtures dumped by reference/dump_ref.py into MLX arrays and
 // asserts closeness (fp16 rel ~1e-2) or exact equality for token streams. The

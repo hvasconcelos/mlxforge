@@ -1,4 +1,4 @@
-// MLXFORGE-010: BatchKVCache layout, update_and_fetch, offset/left-padding
+// BatchKVCache layout, update_and_fetch, offset/left-padding
 // bookkeeping (tiny tensors, no model/GPU eval required beyond a single step).
 #include <doctest/doctest.h>
 
@@ -31,7 +31,7 @@ mx::array filled(int B, int H, int L, int D, float value) {
 }
 }  // namespace
 
-TEST_CASE("MLXFORGE-010: offset/left_padding/idx track per-row values across writes") {
+TEST_CASE("offset/left_padding/idx track per-row values across writes") {
   BatchKVCache cache(/*n_layers=*/1, /*left_padding=*/{1, 0});  // B=2
   CHECK(cache.idx() == 0);
   CHECK(cache.s_cap() == 0);
@@ -54,7 +54,7 @@ TEST_CASE("MLXFORGE-010: offset/left_padding/idx track per-row values across wri
   CHECK(read_ints(cache.offset()) == std::vector<int>{3, 4});
 }
 
-TEST_CASE("MLXFORGE-010: crossing a 256 boundary grows once and preserves contents") {
+TEST_CASE("crossing a 256 boundary grows once and preserves contents") {
   BatchKVCache cache(/*n_layers=*/1, /*left_padding=*/{0});  // B=1, H=1, D=1
 
   cache.update_and_fetch(0, filled(1, 1, 200, 1, 1.0f), filled(1, 1, 200, 1, 1.0f));

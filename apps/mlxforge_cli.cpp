@@ -1,16 +1,16 @@
 // mlxforge-cli — command-line entry point.
 //
-//   mlxforge-cli                      build smoke test (MLXFORGE-001): add two arrays,
-//                                 eval, print the sum.
-//   mlxforge-cli dump-weights <dir>   load a model dir's weights (MLXFORGE-004): print
-//                                 every key -> shape -> dtype, assert fp16, and
-//                                 report peak resident memory.
-//   mlxforge-cli generate <dir> <prompt_ids.npy> [max_tokens]
-//                                 greedy single-stream generation (MLXFORGE-015):
-//                                 prefill the pre-tokenized prompt and stream
-//                                 generated token ids to stdout until EOS or
-//                                 max_tokens (real text awaits the tokenizer,
-//                                 MLXFORGE-021).
+//   mlxforge-cli                      build smoke test: add two arrays, eval,
+//                                 print the sum.
+//   mlxforge-cli dump-weights <dir>   load a model dir's weights: print every
+//                                 key -> shape -> dtype, assert fp16, and report
+//                                 peak resident memory.
+//   mlxforge-cli generate <dir> <prompt> [max_tokens]
+//                                 greedy single-stream generation: prefill the
+//                                 prompt (raw text via the chat template, or a
+//                                 pre-tokenized .npy of ids) and stream the
+//                                 detokenized text to stdout until EOS or
+//                                 max_tokens.
 
 #include <cstdio>
 #include <string>

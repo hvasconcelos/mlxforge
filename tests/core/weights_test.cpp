@@ -1,4 +1,4 @@
-// MLXFORGE-004: weight key sanitize + shard-index parsing (pure logic, no GPU/weights).
+// weight key sanitize + shard-index parsing (pure logic, no GPU/weights).
 #include <doctest/doctest.h>
 
 #include <fstream>

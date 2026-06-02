@@ -1,6 +1,6 @@
-// MLXFORGE-013 (HIGH RISK): batched decode of ragged prompts must produce IDENTICAL
-// tokens to single-sequence runs, and each batched step is a single eval over
-// the whole batch (never per-row / per-layer).
+// Batched decode of ragged prompts must produce IDENTICAL tokens to
+// single-sequence runs, and each batched step is a single eval over the whole
+// batch (never per-row / per-layer).
 #include <doctest/doctest.h>
 
 #include <algorithm>
@@ -51,7 +51,7 @@ std::vector<int> solo_run(mlxforge::LlamaModel& model, const std::vector<int>& i
 }
 }  // namespace
 
-TEST_CASE("MLXFORGE-013: batched ragged decode matches single-sequence runs") {
+TEST_CASE("batched ragged decode matches single-sequence runs") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;

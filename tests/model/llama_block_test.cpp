@@ -1,4 +1,4 @@
-// MLXFORGE-007: a single decoder block (prefill) — attention (causal SDPA, GQA) +
+// a single decoder block (prefill) — attention (causal SDPA, GQA) +
 // SwiGLU MLP with residuals — must match the reference block-0 output.
 #include <doctest/doctest.h>
 
@@ -9,7 +9,7 @@
 
 using namespace mlxforge::test;
 
-TEST_CASE("MLXFORGE-007: decoder block 0 output matches the reference") {
+TEST_CASE("decoder block 0 output matches the reference") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping golden-reference check");
     return;

@@ -1,4 +1,4 @@
-// MLXFORGE-021: C++ tokenizer — encode/decode round-trip, chat template parity, and
+// C++ tokenizer — encode/decode round-trip, chat template parity, and
 // streaming UTF-8-safe detokenization, all vs the mlx-lm reference.
 #include <doctest/doctest.h>
 
@@ -37,7 +37,7 @@ bool valid_utf8(const std::string& s) {
 std::string tokenizer_path() { return std::string(MLXFORGE_MODEL_DIR) + "/tokenizer.json"; }
 }  // namespace
 
-TEST_CASE("MLXFORGE-021: encode/decode round-trip matches the reference tokenizer") {
+TEST_CASE("encode/decode round-trip matches the reference tokenizer") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -55,7 +55,7 @@ TEST_CASE("MLXFORGE-021: encode/decode round-trip matches the reference tokenize
   }
 }
 
-TEST_CASE("MLXFORGE-021: chat template matches mlx-lm exactly") {
+TEST_CASE("chat template matches mlx-lm exactly") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -69,7 +69,7 @@ TEST_CASE("MLXFORGE-021: chat template matches mlx-lm exactly") {
   CHECK(ids == load_token_ids("chat_ids.npy"));
 }
 
-TEST_CASE("MLXFORGE-021: Mistral chat template renders the [INST] format (no model needed)") {
+TEST_CASE("Mistral chat template renders the [INST] format (no model needed)") {
   using mlxforge::ChatFormat;
   using Msg = mlxforge::Tokenizer::Message;
 
@@ -93,7 +93,7 @@ TEST_CASE("MLXFORGE-021: Mistral chat template renders the [INST] format (no mod
         " [INST] Be brief.\n\nHi [/INST]Hello</s>[INST] Bye [/INST]");
 }
 
-TEST_CASE("MLXFORGE-021: streaming detokenizer never emits broken UTF-8") {
+TEST_CASE("streaming detokenizer never emits broken UTF-8") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;

@@ -1,7 +1,7 @@
-// MLXFORGE-022: the OpenAI-compatible HTTP server (cpp-httplib). Routes parse OpenAI
-// requests, tokenize via the chat template, enqueue a Request to the scheduler,
-// and assemble the response. MLXFORGE-022 implements non-streaming; MLXFORGE-023 adds
-// SSE streaming + cancellation.
+// The OpenAI-compatible HTTP server (cpp-httplib). Routes parse OpenAI requests,
+// tokenize via the chat template, enqueue a Request to the scheduler, and
+// assemble the response — both the non-streaming (blocking) path and the SSE
+// streaming path with cancellation on client disconnect.
 #pragma once
 
 #include <atomic>

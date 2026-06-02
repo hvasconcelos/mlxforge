@@ -20,8 +20,9 @@ include(cmake/Dependencies.cmake)
 find_package(Threads REQUIRED)
 
 # --- Engine library ----------------------------------------------------------
-# Per-module sources are appended here as each story lands (core/, model/,
-# cache/, sample/, scheduler/, runtime/, server/, tokenizer/).
+# One static library holding every engine module (core/, model/, cache/,
+# sample/, scheduler/, runtime/, server/, tokenizer/); the binaries and the test
+# suite all link against it.
 add_library(mlxforge_core STATIC
   src/core/config.cpp
   src/core/weights.cpp
@@ -43,7 +44,7 @@ target_include_directories(mlxforge_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(mlxforge_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads tokenizers_cpp httplib::httplib)
 target_compile_features(mlxforge_core PUBLIC cxx_std_17)
 
-# --- CLI binary (smoke test for MLXFORGE-001; real generation loop in MLXFORGE-015) ---
+# --- CLI binary (weight dump + single-stream generation) --------------------
 add_executable(mlxforge-cli apps/mlxforge_cli.cpp)
 target_link_libraries(mlxforge-cli PRIVATE mlxforge_core)
 

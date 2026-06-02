@@ -1,5 +1,5 @@
-// MLXFORGE-008 (MILESTONE): full forward pass to logits. The hard numerical part is
-// done once argmax matches mlx-lm exactly.
+// Full forward pass to logits. The hard numerical part is done once the
+// first-token argmax matches mlx-lm exactly.
 #include <doctest/doctest.h>
 
 #include <vector>
@@ -11,7 +11,7 @@
 
 using namespace mlxforge::test;
 
-TEST_CASE("MLXFORGE-008: full forward logits + first-token argmax match the reference") {
+TEST_CASE("full forward logits + first-token argmax match the reference") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping golden-reference check");
     return;

@@ -1,4 +1,4 @@
-// MLXFORGE-022: OpenAI request parsing + response serialization (pure, no GPU).
+// OpenAI request parsing + response serialization (pure, no GPU).
 #include <doctest/doctest.h>
 
 #include "server/openai.h"
@@ -6,7 +6,7 @@
 using namespace mlxforge;
 using nlohmann::json;
 
-TEST_CASE("MLXFORGE-022: parse_chat_request maps fields and applies defaults") {
+TEST_CASE("parse_chat_request maps fields and applies defaults") {
   json body = json::parse(R"({
     "model": "mlxforge",
     "messages": [{"role": "system", "content": "be brief"},
@@ -34,7 +34,7 @@ TEST_CASE("MLXFORGE-022: parse_chat_request maps fields and applies defaults") {
   CHECK_FALSE(d.stream);
 }
 
-TEST_CASE("MLXFORGE-022: parse_chat_request rejects malformed/out-of-range requests") {
+TEST_CASE("parse_chat_request rejects malformed/out-of-range requests") {
   CHECK_THROWS_AS(parse_chat_request(json::parse(R"({})")), std::runtime_error);  // no messages
   CHECK_THROWS_AS(parse_chat_request(json::parse(R"({"messages":[]})")), std::runtime_error);
   CHECK_THROWS_AS(
@@ -48,7 +48,7 @@ TEST_CASE("MLXFORGE-022: parse_chat_request rejects malformed/out-of-range reque
                   std::runtime_error);
 }
 
-TEST_CASE("MLXFORGE-022: make_chat_completion emits the OpenAI chat.completion shape") {
+TEST_CASE("make_chat_completion emits the OpenAI chat.completion shape") {
   json c = make_chat_completion("chatcmpl-1", 1234, "mlxforge", "Paris.", "stop",
                                 /*prompt_tokens=*/10, /*completion_tokens=*/3);
   CHECK(c["id"] == "chatcmpl-1");
@@ -64,7 +64,7 @@ TEST_CASE("MLXFORGE-022: make_chat_completion emits the OpenAI chat.completion s
   CHECK(c["usage"]["total_tokens"] == 13);
 }
 
-TEST_CASE("MLXFORGE-022: parse_completion_request reads a prompt string") {
+TEST_CASE("parse_completion_request reads a prompt string") {
   ChatRequest r = parse_completion_request(json::parse(R"({"prompt":"once upon","max_tokens":8})"));
   CHECK_FALSE(r.is_chat);
   CHECK(r.messages.front().content == "once upon");

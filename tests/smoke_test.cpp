@@ -1,4 +1,4 @@
-// MLXFORGE-001: trivial test proving the doctest + ctest wiring works, plus a
+// trivial test proving the doctest + ctest wiring works, plus a
 // minimal MLX add/eval check so the GPU path is exercised under ctest.
 #include <doctest/doctest.h>
 

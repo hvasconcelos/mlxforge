@@ -1,7 +1,7 @@
-// MLXFORGE-015: single-stream greedy generation loop (the CLI's core).
+// Single-stream greedy generation loop (the CLI's core).
 // prefill -> sample -> append -> stream -> until EOS or max_tokens. Token ids
-// are produced incrementally via the on_token callback (the CLI prints them; a
-// real tokenizer arrives in MLXFORGE-021).
+// are produced incrementally via the on_token callback (the CLI detokenizes and
+// prints each piece).
 #pragma once
 
 #include <functional>

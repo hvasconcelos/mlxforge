@@ -1,4 +1,4 @@
-// mlxforge — the OpenAI-compatible server binary (MLXFORGE-022/023/024).
+// mlxforge — the OpenAI-compatible server binary.
 //   mlxforge <model_dir> [--host H] [--port P] [--max-ctx N] [--max-waiting N]
 // Loads the tokenizer/config, starts the GPU worker, and serves the HTTP API.
 // Config knobs also read from env (MLXFORGE_HOST, MLXFORGE_PORT, ...). SIGINT/SIGTERM

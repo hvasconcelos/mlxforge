@@ -1,7 +1,7 @@
-// MLXFORGE-020 (MILESTONE): scheduler correctness & throughput. N concurrent
-// requests (identical + distinct, mixed lengths admitted/evicted at different
-// times) each produce the same tokens as a solo run; throughput rises with
-// concurrency; the one-eval-per-decode-step invariant holds under load.
+// Scheduler correctness & throughput. N concurrent requests (identical +
+// distinct, mixed lengths admitted/evicted at different times) each produce the
+// same tokens as a solo run; throughput rises with concurrency; the
+// one-eval-per-decode-step invariant holds under load.
 #include <doctest/doctest.h>
 
 #include <chrono>
@@ -40,7 +40,7 @@ std::shared_ptr<mlxforge::Request> make_req(const std::vector<int>& prompt, int 
 }
 }  // namespace
 
-TEST_CASE("MLXFORGE-020: N concurrent mixed requests each match their solo run") {
+TEST_CASE("N concurrent mixed requests each match their solo run") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -87,7 +87,7 @@ TEST_CASE("MLXFORGE-020: N concurrent mixed requests each match their solo run")
   }
 }
 
-TEST_CASE("MLXFORGE-020: throughput rises with concurrency; one eval per decode step") {
+TEST_CASE("throughput rises with concurrency; one eval per decode step") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;

@@ -1,4 +1,4 @@
-// MLXFORGE-016: the GPU worker picks up a cross-thread request and generates the
+// the GPU worker picks up a cross-thread request and generates the
 // correct tokens (it is the only thread touching MLX).
 #include <doctest/doctest.h>
 
@@ -15,7 +15,7 @@
 
 using namespace mlxforge::test;
 
-TEST_CASE("MLXFORGE-016: worker processes a request submitted from another thread") {
+TEST_CASE("worker processes a request submitted from another thread") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;

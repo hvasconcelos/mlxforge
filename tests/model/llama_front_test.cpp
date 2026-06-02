@@ -1,4 +1,4 @@
-// MLXFORGE-006: embedding + RMSNorm + Q/K/V projections + RoPE, validated against
+// embedding + RMSNorm + Q/K/V projections + RoPE, validated against
 // the golden reference (fp16 rel ~1e-2). RoPE is the classic silent bug, so the
 // post-RoPE Q/K tensors are asserted, not assumed.
 #include <doctest/doctest.h>
@@ -14,7 +14,7 @@ TEST_CASE("fast::rope(const array& offset, ...) overload exists on the pinned ML
   CHECK(mlxforge::rope_array_offset_overload_available());
 }
 
-TEST_CASE("MLXFORGE-006: embedding + RMSNorm + RoPE'd Q/K/V match the reference") {
+TEST_CASE("embedding + RMSNorm + RoPE'd Q/K/V match the reference") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping golden-reference check");
     return;

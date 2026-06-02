@@ -1,5 +1,5 @@
-// MLXFORGE-021: C++ tokenizer over the HF tokenizer.json (mlc-ai/tokenizers-cpp,
-// which wraps the Rust `tokenizers` crate — no hand-rolled BPE). Provides
+// C++ tokenizer over the HF tokenizer.json (mlc-ai/tokenizers-cpp, which wraps
+// the Rust `tokenizers` crate — no hand-rolled BPE). Provides
 // encode, decode, the chat template (Llama-3.2 or Mistral), and a streaming
 // detokenizer that never emits broken multi-byte UTF-8 / partial byte-BPE
 // characters.
