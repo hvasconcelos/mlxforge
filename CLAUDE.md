@@ -37,8 +37,8 @@ ctest --test-dir build -R kv_cache                   # run a subset by ctest nam
 ## Environment / model
 
 - Dependencies are pinned in `cmake/Dependencies.cmake` (MLX v0.31.2,
-  cpp-httplib, doctest, tokenizers-cpp; nlohmann/json comes transitively from
-  MLX). Bump deliberately.
+  cpp-httplib, doctest, tokenizers-cpp, spdlog v1.15.3; nlohmann/json comes
+  transitively from MLX). Bump deliberately.
 - Needs the Xcode **Metal Toolchain** (`xcodebuild -downloadComponent
   MetalToolchain`) and `cargo`/Rust (tokenizers-cpp builds a Rust crate).
 - Model: `mlx-community/Llama-3.2-1B-Instruct-bf16` (fp16) or `-4bit`. The fp16
@@ -80,6 +80,12 @@ reference/.venv/bin/python reference/dump_ref.py
   *why* (conventions, gotchas), not *what*.
 - Tests use **doctest**, with descriptive `TEST_CASE` names; `ctest -R <regex>`
   filters by the discovered test name.
+- Logging goes through `core/logging.h` (`mlxforge::log::{debug,info,warn,error}`,
+  spdlog with fmt-style `{}`), not `printf`/`fprintf` — those stay only for
+  actual program output on **stdout** (the CLI's generated text / weight dump).
+  Logs go to **stderr**; level/file/pattern are env-driven (`MLXFORGE_LOG_LEVEL`,
+  `MLXFORGE_LOG_FILE`, `MLXFORGE_LOG_PATTERN`). Hot-path detail is `debug`. Call
+  `log::init()` once at the top of `main()`; it's idempotent.
 - After implementing a change, the repo's habit is: run `code-simplifier` on the
   new code, then verify build + `ctest` before committing.
 

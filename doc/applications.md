@@ -35,6 +35,24 @@ with environment-variable fallbacks (`server/config`):
 | `--max-waiting` | `MLXFORGE_MAX_WAITING` | `256` | Bounded waiting queue → `429` on overflow. |
 | `--kv-budget` | `MLXFORGE_KV_BUDGET` | `0` (unbounded) | KV-memory admission budget in bytes. |
 
+### Logging
+
+Both binaries log through spdlog (`core/logging`) to **stderr**, leaving stdout
+for program output (the CLI's streamed text / weight dump). The logger is
+initialized once at the top of `main()` from environment variables; an unset
+variable uses the default shown:
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `MLXFORGE_LOG_LEVEL` | `info` | `trace`/`debug`/`info`/`warn`/`error`/`critical`/`off`; an unrecognized value falls back to `info`. |
+| `MLXFORGE_LOG_FILE` | _(unset)_ | If set, logs are **appended** to this file in addition to the console. |
+| `MLXFORGE_LOG_PATTERN` | `[%H:%M:%S.%e] [%^%l%$] %v` | spdlog message pattern. |
+
+Levels in use: `info` for lifecycle (model load, server listen/stop) and the
+per-request metrics below; `debug` for hot-path detail (per decode step, request
+admit, HTTP request lines, encode sizes); `warn` for rejections (queue full,
+non-fp16 weights); `error` for caught exceptions in the worker loop.
+
 ### Endpoints (OpenAI-compatible)
 
 | Method | Path | Purpose |
@@ -69,9 +87,10 @@ other streams continue.
 malformed JSON; `429` when the waiting queue is full; `503` while the model is
 still loading.
 
-**Metrics.** Each finished request logs per-request metrics to stderr: TTFT
-(time to first token), tokens/s, the active batch size, and the waiting-queue
-depth.
+**Metrics.** Each finished request logs per-request metrics at `info` level
+(stderr by default): TTFT (time to first token), tokens/s, the active batch
+size, and the waiting-queue depth. Raise `MLXFORGE_LOG_LEVEL` to `warn`/`error`
+to suppress them (see [Logging](#logging)).
 
 ### Example client
 
