@@ -24,8 +24,9 @@ using namespace mlxforge::test;
 namespace {
 mlxforge::Worker::ModelFactory factory_for(const std::string& dir) {
   return [dir] {
-    return std::make_unique<mlxforge::LlamaModel>(
-        mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir));
+    mlxforge::ModelConfig c = mlxforge::ModelConfig::from_file(dir + "/config.json");
+    auto w = mlxforge::load_weights(dir, c);
+    return std::make_unique<mlxforge::LlamaModel>(std::move(c), std::move(w));
   };
 }
 

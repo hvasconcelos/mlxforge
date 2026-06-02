@@ -236,8 +236,9 @@ Source layout (`src/`):
 | Module | Responsibility |
 |---|---|
 | `core/config` | parse `config.json` into `ModelConfig` (incl. rope_scaling, quantization) |
-| `core/weights` | load safetensors (single/sharded), sanitize keys, fp16-cast |
-| `core/model_source` | resolve a model spec (local dir or HF repo id) to a snapshot dir; HF-cache reuse + download |
+| `core/weights` | load safetensors (single/sharded), sanitize keys, fp16-cast, tag per-weight quant params |
+| `core/gguf` | load a self-contained `.gguf` (config + tokenizer + weights from metadata); own file parser (no `mx::load_gguf`), ggml→HF name remap, q/k un-permute, own Q4_0/Q4_1/Q8_0 + Q4_K/Q5_K/Q6_K readers |
+| `core/model_source` | resolve a model spec (local dir, `.gguf` file, or HF repo id) to a path; HF-cache reuse + download |
 | `core/hf_download` | download HF repos via libcurl (list, filter, fetch through CDN redirect, atomic rename) |
 | `core/env` | `env_or`/`env_long` environment-variable helpers |
 | `model/llama` | the transformer: embedding, RMSNorm, RoPE, GQA SDPA, SwiGLU, LM head; fp16 + quantized paths; single-stream and batched forward |

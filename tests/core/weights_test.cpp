@@ -5,8 +5,10 @@
 #include <string>
 
 #include "core/weights.h"
+#include "mlx/array.h"
 
 using namespace mlxforge;
+namespace mx = mlx::core;
 
 namespace {
 nlohmann::json load_fixture(const char* name) {
@@ -53,4 +55,38 @@ TEST_CASE("parse_shard_index resolves the file each tensor key lives in") {
 TEST_CASE("parse_shard_index rejects an index without a weight_map") {
   auto j = nlohmann::json::parse(R"({"metadata": {"total_size": 1}})");
   CHECK_THROWS_AS(parse_shard_index(j), std::runtime_error);
+}
+
+TEST_CASE("Weights::is_quantized detects quantization per-weight") {
+  Weights w;
+  const mx::array dummy = mx::array(0.0f);  // shape doesn't matter for detection
+
+  // A quantized weight carries a "<base>.scales" sibling; its params come from
+  // the `quant` map.
+  w.tensors.emplace("model.layers.0.mlp.down_proj.weight", dummy);
+  w.tensors.emplace("model.layers.0.mlp.down_proj.scales", dummy);
+  w.tensors.emplace("model.layers.0.mlp.down_proj.biases", dummy);
+  w.quant.emplace("model.layers.0.mlp.down_proj", QuantParams{32, 8});
+
+  // A dense weight in the same model has no ".scales".
+  w.tensors.emplace("model.layers.0.input_layernorm.weight", dummy);
+
+  // A quantized weight absent from `quant` falls back to QuantParams defaults.
+  w.tensors.emplace("model.embed_tokens.weight", dummy);
+  w.tensors.emplace("model.embed_tokens.scales", dummy);
+
+  QuantParams qp;
+  CHECK(w.is_quantized("model.layers.0.mlp.down_proj.weight", qp));
+  CHECK(qp.group_size == 32);
+  CHECK(qp.bits == 8);
+
+  CHECK_FALSE(w.is_quantized("model.layers.0.input_layernorm.weight", qp));
+
+  QuantParams def;
+  CHECK(w.is_quantized("model.embed_tokens.weight", def));
+  CHECK(def.group_size == 64);  // QuantParams default
+  CHECK(def.bits == 4);
+
+  // A key that doesn't end in ".weight" is never quantized.
+  CHECK_FALSE(w.is_quantized("model.layers.0.mlp.down_proj.scales", qp));
 }

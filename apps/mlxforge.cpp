@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "core/config.h"
+#include "core/gguf.h"
 #include "core/logging.h"
 #include "core/model_source.h"
 #include "core/weights.h"
@@ -94,25 +95,38 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  // Load model and tokenizer configuration from the resolved directory.
-  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
-  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(
-      dir + "/tokenizer.json",
-      cfg.bos_token_id,
-      mlxforge::chat_format_from_model_type(cfg.model_type)
-  );
+  // Load the config + tokenizer on the main thread. For GGUF this parses only
+  // the metadata (no weight tensors): MLX arrays are thread-bound, so the worker
+  // must create the weights itself.
+  const bool is_gguf = mlxforge::is_gguf_path(dir);
+  mlxforge::ModelConfig cfg;
+  mlxforge::Tokenizer tok;
+  if (is_gguf) {
+    mlxforge::GgufModel head = mlxforge::load_gguf_config_and_tokenizer(dir);
+    cfg = std::move(head.config);
+    tok = mlxforge::Tokenizer::from_gguf(head.tokens, head.merges, head.token_types, head.pre,
+                                         head.bos_id);
+  } else {
+    cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
+    tok = mlxforge::Tokenizer::from_file(dir + "/tokenizer.json", cfg.bos_token_id,
+                                         mlxforge::chat_format_from_model_type(cfg.model_type));
+  }
 
   // Create inference scheduler and set waiting queue bound.
   mlxforge::Scheduler scheduler;
   scheduler.set_max_waiting(sc.max_waiting);
 
-  // Construct and start the GPU worker thread (loads model; performs evals)
+  // Construct and start the GPU worker thread (loads weights + builds the model
+  // on the worker thread, where the MLX arrays must live).
   mlxforge::Worker worker(
-      [dir] {
-        // Loads weights and constructs model on the worker thread.
-        return std::make_unique<mlxforge::LlamaModel>(
-            mlxforge::ModelConfig::from_file(dir + "/config.json"),
-            mlxforge::load_weights(dir));
+      [dir, is_gguf] {
+        if (is_gguf) {
+          mlxforge::GgufModel g = mlxforge::load_gguf_model(dir);
+          return std::make_unique<mlxforge::LlamaModel>(std::move(g.config), std::move(g.weights));
+        }
+        mlxforge::ModelConfig wcfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
+        auto weights = mlxforge::load_weights(dir, wcfg);
+        return std::make_unique<mlxforge::LlamaModel>(std::move(wcfg), std::move(weights));
       },
       &scheduler);
   worker.start();

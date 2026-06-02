@@ -71,6 +71,20 @@ Tokenizer Tokenizer::from_file(const std::string& tokenizer_json_path, int bos_i
   return t;
 }
 
+Tokenizer Tokenizer::from_gguf(const std::vector<std::string>& tokens,
+                               const std::vector<std::string>& merges,
+                               const std::vector<int>& token_types, const std::string& pre,
+                               int bos_id, ChatFormat fmt) {
+  Tokenizer t;
+  t.impl_ = std::make_shared<BpeTokenizer>(
+      BpeTokenizer::from_gguf(tokens, merges, token_types, pre));
+  t.bos_id_ = bos_id;
+  t.chat_format_ = fmt;
+  log::info("tokenizer: loaded from gguf vocab={} special_tokens={} bos_id={}",
+            t.impl_->vocab_size(), t.impl_->special_ids().size(), bos_id);
+  return t;
+}
+
 std::vector<int> Tokenizer::encode(const std::string& text) const {
   // BpeTokenizer::encode does not run the BOS post-processor, so prepend the
   // configured begin-of-text id to match mlx-lm's tok.encode (none if < 0).

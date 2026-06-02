@@ -38,8 +38,9 @@ TEST_CASE("concurrent requests each match their solo greedy run") {
   mlxforge::Scheduler sched;
   mlxforge::Worker worker(
       [dir] {
-        return std::make_unique<mlxforge::LlamaModel>(
-            mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir));
+        mlxforge::ModelConfig c = mlxforge::ModelConfig::from_file(dir + "/config.json");
+        auto w = mlxforge::load_weights(dir, c);
+        return std::make_unique<mlxforge::LlamaModel>(std::move(c), std::move(w));
       },
       &sched);
   worker.start();
@@ -80,8 +81,9 @@ TEST_CASE("a cancelled request is evicted") {
   mlxforge::Scheduler sched;
   mlxforge::Worker worker(
       [dir] {
-        return std::make_unique<mlxforge::LlamaModel>(
-            mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir));
+        mlxforge::ModelConfig c = mlxforge::ModelConfig::from_file(dir + "/config.json");
+        auto w = mlxforge::load_weights(dir, c);
+        return std::make_unique<mlxforge::LlamaModel>(std::move(c), std::move(w));
       },
       &sched);
   worker.start();

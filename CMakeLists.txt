@@ -29,6 +29,7 @@ add_library(mlxforge_core STATIC
   src/core/env.cpp
   src/core/logging.cpp
   src/core/weights.cpp
+  src/core/gguf.cpp
   src/core/model_source.cpp
   src/core/hf_download.cpp
   src/model/llama.cpp
