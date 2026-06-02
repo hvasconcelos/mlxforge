@@ -212,6 +212,14 @@ void HttpServer::setup_routes() {
     try {
       json body = json::parse(http_req.body);
       ChatRequest cr = chat ? parse_chat_request(body) : parse_completion_request(body);
+      // The server hosts a single model: a request may omit "model" (served as-is)
+      // but if it names one it must be the loaded model, else 404 (OpenAI's code).
+      if (!cr.model.empty() && cr.model != model_name_) {
+        fail(res, 404,
+             "model '" + cr.model + "' is not available; this server serves '" + model_name_ + "'",
+             "invalid_request_error", "model_not_found");
+        return;
+      }
       auto req = make_request(cr);
       if (max_ctx_ > 0 && static_cast<int>(req->prompt_ids.size()) > max_ctx_) {
         fail(res, 400, "prompt exceeds the maximum context length", "invalid_request_error",

@@ -121,12 +121,15 @@ int main(int argc, char** argv) {
   //   - Scheduler handles queuing/batching of inference requests.
   //   - Tokenizer used for prompt/input processing and token streaming.
   //   - cfg names the currently loaded model.
+  //   - The model spec the user passed is the served model name: it is echoed in
+  //     responses and /v1/models, and requests naming a different model are
+  //     rejected (an OpenAI client must target the loaded model).
   //   - Readiness/metrics checks are lambda-captured from worker.
   mlxforge::HttpServer server(
       &scheduler,
       &tok,
       cfg,
-      "mlxforge",
+      sc.model_dir,
       [&worker] { return worker.ready(); },
       sc.max_ctx,
       [&worker] { return worker.metrics(); }

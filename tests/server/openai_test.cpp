@@ -32,6 +32,9 @@ TEST_CASE("parse_chat_request maps fields and applies defaults") {
   CHECK(d.max_tokens == 128);
   CHECK(d.params.temperature == doctest::Approx(1.0f));
   CHECK_FALSE(d.stream);
+  // An omitted "model" parses as empty, so the server serves the loaded model
+  // without a name check (a non-empty name it would validate against).
+  CHECK(d.model.empty());
 }
 
 TEST_CASE("parse_chat_request rejects malformed/out-of-range requests") {

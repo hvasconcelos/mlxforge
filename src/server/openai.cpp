@@ -82,7 +82,9 @@ Tokenizer::Message parse_message(const json& m) {
 }
 
 void parse_common(const json& body, ChatRequest& r) {
-  r.model = body.value("model", std::string("mlxforge"));
+  // Empty when omitted, so the server can tell "no model named" (serve the
+  // loaded model) apart from an explicit name that must match it.
+  r.model = body.value("model", std::string());
   r.max_tokens = body.value("max_tokens", 128);
   if (r.max_tokens <= 0) throw std::runtime_error("'max_tokens' must be positive");
 
