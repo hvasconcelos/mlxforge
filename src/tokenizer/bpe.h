@@ -23,8 +23,8 @@ class BpeTokenizer {
  public:
   // Whether this tokenizer.json is a byte-level BPE we can handle (Llama-3.2
   // style: model.type == "BPE" with a ByteLevel decoder). Returns false for
-  // e.g. Mistral's Metaspace/SentencePiece tokenizer, which the caller should
-  // route to a different backend.
+  // a Metaspace/SentencePiece tokenizer, which the caller should route to a
+  // different backend.
   static bool is_supported(const std::string& tokenizer_json);
 
   // Parse a tokenizer.json blob. Throws std::runtime_error if the file is

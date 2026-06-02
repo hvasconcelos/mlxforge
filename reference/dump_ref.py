@@ -10,11 +10,11 @@ The C++ side loads the SAME repo and casts to fp16, so this reference is
 self-consistent: any divergence in C++ is a real bug, not a model mismatch.
 
 Usage:
-    reference/.venv/bin/python reference/dump_ref.py [--model llama|mistral]
+    reference/.venv/bin/python reference/dump_ref.py [--model llama]
 
-Outputs land in reference/fixtures/ (llama) or reference/fixtures_mistral/
-(committed; tiny). A manifest.json records every array's shape + dtype for the
-C++ loader, and the resolved model revision for reproducibility.
+Outputs land in reference/fixtures/ (committed; tiny). A manifest.json records
+every array's shape + dtype for the C++ loader, and the resolved model revision
+for reproducibility.
 """
 
 import argparse
@@ -30,8 +30,6 @@ from mlx_lm.models.base import create_attention_mask
 # is self-consistent: any divergence in C++ is a real bug, not a model mismatch.
 #   - llama: public bf16 repo (the gated fp16 repo needs a license); cast to fp16
 #     to match the C++ engine, which loads bf16 and casts on load.
-#   - mistral: a 4-bit repo with no system role in its chat template; keep the
-#     weights quantized (no cast) so both sides use identical 4-bit weights.
 MODELS = {
     "llama": {
         "repo": "mlx-community/Llama-3.2-1B-Instruct-bf16",
@@ -39,14 +37,6 @@ MODELS = {
         # Cast bf16 -> fp16 to mirror the C++ engine's load.
         "compute_dtype": mx.float16,
         # The Llama-3.2 chat template has a system role with a date preamble.
-        "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
-    },
-    "mistral": {
-        "repo": "mlx-community/Mistral-7B-Instruct-v0.3-4bit",
-        "fixtures": "fixtures_mistral",
-        # Keep the 4-bit weights quantized (the C++ engine loads them as-is).
-        "compute_dtype": None,
-        # Mistral's [INST] template supports only user/assistant (no system role).
         "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
     },
 }
@@ -172,8 +162,8 @@ def main():
     k = attn.k_proj(x_normed).reshape(B, T, attn.n_kv_heads, -1).transpose(0, 2, 1, 3)
     v = attn.v_proj(x_normed).reshape(B, T, attn.n_kv_heads, -1).transpose(0, 2, 1, 3)
     # The precomputed `_freqs` and the front-half RoPE intermediates are specific
-    # to the llama3-rescaled RoPE; plain-RoPE models (e.g. Mistral) lack `_freqs`
-    # and are covered end-to-end by the block-0/logits/greedy fixtures below.
+    # to the llama3-rescaled RoPE; plain-RoPE models lack `_freqs` and are covered
+    # end-to-end by the block-0/logits/greedy fixtures below.
     if hasattr(attn.rope, "_freqs"):
         save("rope_freqs", attn.rope._freqs)  # (head_dim/2,) llama3-rescaled freqs
         save("q_pre0", q)  # pre-RoPE queries (1, 32, T, 64)

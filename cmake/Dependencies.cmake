@@ -37,7 +37,7 @@ FetchContent_Declare(
 # tokenizers-cpp (the Rust HF tokenizer) has been removed: the engine now uses
 # its own from-scratch byte-level BPE (src/tokenizer/bpe.cpp), validated against
 # committed mlx-lm golden ids. This also drops the cargo/Rust build requirement.
-# A SentencePiece tokenizer (e.g. Mistral) is not yet reimplemented.
+# A SentencePiece tokenizer is not yet reimplemented.
 
 # --- doctest (unit-test framework, header-only) -----------------------------
 set(DOCTEST_WITH_TESTS OFF CACHE BOOL "" FORCE)

@@ -7,8 +7,8 @@ numerically-sensitive part of the codebase: every stage below is gated against a
 [contributing.md](./contributing.md)).
 
 All of this lives in `model/llama.{h,cpp}` in a single `LlamaModel` class. The
-architecture is **shared across the supported families** — adding Mistral needed
-no forward-pass changes, only tokenizer/chat-format work.
+architecture is **shared across the LLaMA family** — onboarding a new family
+generally needs no forward-pass changes, only tokenizer/chat-format work.
 
 ## The decoder, end to end
 
@@ -53,8 +53,8 @@ The primary target is `Llama-3.2-1B-Instruct`:
 | Embeddings | tied (the LM head reuses the embedding weights) |
 
 These values are read from `config.json` into `ModelConfig`, never hard-coded, so
-the same code runs other LLaMA-family decoders (e.g. Mistral-7B, which has a
-separate `lm_head.weight` and a larger intermediate size).
+the same code runs other LLaMA-family decoders (e.g. variants with a separate
+`lm_head.weight` or a larger intermediate size).
 
 ## Stage by stage
 

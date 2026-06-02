@@ -55,8 +55,8 @@ class Worker {
   // close their token queues).
   void evict_finished();
 
-  ModelFactory factory_;
-  Scheduler* sched_;
+  ModelFactory      factory_;
+  Scheduler*        sched_;
   std::unique_ptr<LlamaModel> model_;  // constructed and owned on the worker thread
 
   // Decode-batch state (worker thread only). All vectors are row-aligned with

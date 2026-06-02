@@ -11,8 +11,10 @@
 
 namespace mlxforge {
 
-ChatFormat chat_format_from_model_type(const std::string& model_type) {
-  return model_type == "mistral" ? ChatFormat::Mistral : ChatFormat::Llama3;
+// Returns the chat format for a given model_type string. Only Llama-3.2 is
+// supported today; this seam is kept so new families can be mapped here later.
+ChatFormat chat_format_from_model_type(const std::string& /*model_type*/) {
+  return ChatFormat::Llama3;
 }
 
 namespace {
@@ -59,7 +61,7 @@ Tokenizer Tokenizer::from_file(const std::string& tokenizer_json_path, int bos_i
   if (!BpeTokenizer::is_supported(blob))
     throw std::runtime_error("tokenizer: '" + tokenizer_json_path +
                              "' is not a byte-level BPE tokenizer (only Llama-3.2-style is "
-                             "supported; e.g. Mistral's SentencePiece is not yet implemented)");
+                             "supported)");
   Tokenizer t;
   t.impl_ = std::make_shared<BpeTokenizer>(BpeTokenizer::from_blob(blob));
   t.bos_id_ = bos_id;
@@ -123,43 +125,11 @@ std::string render_llama3(const std::vector<Tokenizer::Message>& messages,
   return os.str();
 }
 
-// Mistral [INST] template. The <s> BOS is added by the encoder; </s> (eos) ends
-// each assistant turn; the model generates right after the final [/INST], so
-// add_generation_prompt needs no extra marker. The canonical template has no
-// system role, so a leading system message is folded into the first user turn.
-//
-// The leading space matches the SentencePiece prefix metaspace that mlx-lm emits
-// (it tokenizes to a standalone "▁" before the first [INST]); tokenizers-cpp's
-// Encode does not add it on its own, so it is part of the rendered string here.
-std::string render_mistral(const std::vector<Tokenizer::Message>& messages) {
-  std::string system;
-  std::ostringstream os;
-  os << " ";
-  bool first_user = true;
-  for (const auto& m : messages) {
-    if (m.role == "system") {
-      system = m.content;
-    } else if (m.role == "assistant") {
-      os << m.content << "</s>";
-    } else {  // user (default)
-      std::string content = m.content;
-      if (first_user && !system.empty()) {
-        content = system + "\n\n" + content;
-        system.clear();
-      }
-      first_user = false;
-      os << "[INST] " << content << " [/INST]";
-    }
-  }
-  return os.str();
-}
-
 }  // namespace
 
 std::string Tokenizer::render_chat_template(const std::vector<Message>& messages,
                                             bool add_generation_prompt,
-                                            const std::string& today_date, ChatFormat fmt) {
-  if (fmt == ChatFormat::Mistral) return render_mistral(messages);
+                                            const std::string& today_date, ChatFormat /*fmt*/) {
   return render_llama3(messages, add_generation_prompt, today_date);
 }
 

@@ -1,9 +1,9 @@
 // C++ tokenizer over the HF tokenizer.json. encode/decode use our own
 // from-scratch byte-level BPE (BpeTokenizer, src/tokenizer/bpe.h) — no Rust /
 // tokenizers-cpp. Currently supports Llama-3.2-style byte-level BPE only
-// (from_file throws on anything else). Also provides the chat template
-// (Llama-3.2 or Mistral) and a streaming detokenizer that never emits broken
-// multi-byte UTF-8 / partial byte-BPE characters.
+// (from_file throws on anything else). Also provides the Llama-3.2 chat template
+// and a streaming detokenizer that never emits broken multi-byte UTF-8 /
+// partial byte-BPE characters.
 #pragma once
 
 #include <memory>
@@ -18,10 +18,11 @@ namespace mlxforge {
 
 // Which chat template to render. Selected from config.json's model_type so the
 // forward pass (shared) and the prompt formatting (per-family) stay decoupled.
-enum class ChatFormat { Llama3, Mistral };
+// Only Llama-3.2 is supported today; new families will add values here.
+enum class ChatFormat { Llama3 };
 
-// Map a config.json model_type to a chat format ("mistral" -> Mistral, else
-// Llama3, which is the engine's original default).
+// Map a config.json model_type to a chat format. Currently always Llama3; the
+// seam is kept so new families can be mapped here when they are re-onboarded.
 ChatFormat chat_format_from_model_type(const std::string& model_type);
 
 class Tokenizer {

@@ -13,10 +13,9 @@ Primary model: `mlx-community/Llama-3.2-1B-Instruct` (fp16 by default; optional
 4-bit). 16 layers, hidden 2048, 32 query / 8 KV heads (GQA), head_dim 64,
 RMSNorm, RoPE (llama3 scaling), SwiGLU, tied embeddings.
 
-The forward pass is architecture-shared across the LLaMA family, so
-**Mistral-7B-Instruct-v0.3** is also supported (RMSNorm + SwiGLU + plain RoPE +
-GQA + separate LM head, no attention bias, no sliding window). See
-[Supported models](#supported-models).
+The forward pass is architecture-shared across the LLaMA family. Support is
+currently focused on Llama-3.2 to stabilize first; other families will be
+re-onboarded later. See [Supported models](#supported-models).
 
 ## Features
 
@@ -30,8 +29,8 @@ GQA + separate LM head, no attention bias, no sliding window). See
 - **Sampling as graph ops** — greedy, temperature, top-k, top-p (no host
   readback of logits).
 - **C++ tokenizer** — a from-scratch byte-level BPE over HF `tokenizer.json`
-  (no Rust), the chat template (Llama-3.2 or Mistral, selected from
-  `config.json`'s `model_type`), and UTF-8-safe incremental detokenization.
+  (no Rust), the Llama-3.2 chat template (selected from `config.json`'s
+  `model_type`), and UTF-8-safe incremental detokenization.
 - **OpenAI server** (cpp-httplib) — `/v1/chat/completions`, `/v1/completions`,
   `/v1/models`, `/health`; non-streaming and SSE streaming; cancellation on
   client disconnect; per-request metrics; OpenAI-shaped errors (400/429/503).
@@ -108,30 +107,20 @@ huggingface-cli download mlx-community/Llama-3.2-1B-Instruct-4bit   # 4-bit
 | Family | Example repo | Chat format |
 | --- | --- | --- |
 | Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-bf16` / `-4bit` | `<|start_header_id|>…` |
-| Mistral | `mlx-community/Mistral-7B-Instruct-v0.3-4bit` | `<s>[INST] … [/INST]` |
 
-The transformer (`model/llama`) is shared — adding the Mistral family needed no
-forward-pass changes, only tokenizer/chat-format work. The chat template is
-selected automatically from `config.json`'s `model_type`, and BOS / special-token
-handling is driven by `config.json` + `tokenizer.json` (no hard-coded ids), so
-pointing the server or CLI at a Mistral snapshot just works:
+The transformer (`model/llama`) is family-shared, and the chat template is
+selected from `config.json`'s `model_type` with BOS / special-token handling
+driven by `config.json` + `tokenizer.json` (no hard-coded ids). Support is
+currently limited to Llama-3.2 while the engine stabilizes; other families
+(which mostly need tokenizer/chat-format work, not forward-pass changes) will be
+re-onboarded later.
 
-```sh
-./build/mlxforge-cli generate mlx-community/Mistral-7B-Instruct-v0.3-4bit "What is the capital of France?"
-```
-
-Each model is gated against its own `mlx-lm` golden reference. Regenerate the
+The model is gated against its `mlx-lm` golden reference. Regenerate the
 fixtures (rarely needed) with:
 
 ```sh
 reference/.venv/bin/python reference/dump_ref.py --model llama     # -> reference/fixtures/
-reference/.venv/bin/python reference/dump_ref.py --model mistral   # -> reference/fixtures_mistral/
 ```
-
-**Limitations.** Mistral's `[INST]` template has no system role, so a leading
-system message is folded into the first user turn. Sliding-window attention
-(Mistral v0.1) and tool/function-calling tokens are not implemented; v0.2/v0.3
-disable the sliding window and so run as plain causal attention.
 
 ## Run the server
 
@@ -285,5 +274,4 @@ For the full design see the [`doc/`](./doc) folder:
 mlxforge is released under the [MIT License](./LICENSE).
 
 Model weights are **not** covered by this license and remain subject to their
-own terms (e.g. the Llama Community License for the Llama-3.2 weights, and the
-Apache-2.0 license for Mistral-7B-Instruct-v0.3).
+own terms (e.g. the Llama Community License for the Llama-3.2 weights).
