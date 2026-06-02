@@ -73,6 +73,56 @@ TEST_CASE("top-p keeps the smallest prefix whose mass >= p") {
   CHECK_FALSE(std::isfinite(f[3]));
 }
 
+TEST_CASE("min-p keeps tokens with prob >= min_p * max_prob") {
+  // probs = [0.5, 0.3, 0.15, 0.05]; min_p=0.4 keeps prob >= 0.2 => {0.5, 0.3}.
+  std::vector<float> probs = {0.5f, 0.3f, 0.15f, 0.05f};
+  std::vector<float> lg(probs.size());
+  for (size_t i = 0; i < probs.size(); ++i) lg[i] = std::log(probs[i]);
+  std::vector<float> f = floats(Sampler::apply_min_p(logits2d({lg}), 0.4f));
+  CHECK(count_finite(f) == 2);
+  CHECK(std::isfinite(f[0]));
+  CHECK(std::isfinite(f[1]));
+  CHECK_FALSE(std::isfinite(f[2]));
+  CHECK_FALSE(std::isfinite(f[3]));
+}
+
+TEST_CASE("repetition penalty pushes a seen token below an unseen one") {
+  // Token 0 leads but is in the history; a strong penalty should drop it under 1.
+  mx::array logits = logits2d({{2.0f, 1.0f, 0.5f}});
+  mx::array history = mx::array(std::vector<int>{0}.data(), {1, 1}, mx::int32);
+  std::vector<float> f = floats(Sampler::apply_repetition_penalty(logits, history, 4.0f));
+  CHECK(f[0] == doctest::Approx(0.5f));  // 2.0 / 4.0
+  CHECK(f[1] == doctest::Approx(1.0f));  // untouched
+  CHECK(f[0] < f[1]);                    // argmax moved off the repeated token
+}
+
+TEST_CASE("frequency penalty scales with count, presence is flat") {
+  // History: token 1 twice, token 2 once.
+  mx::array logits = logits2d({{0.0f, 0.0f, 0.0f, 0.0f}});
+  mx::array history = mx::array(std::vector<int>{1, 1, 2}.data(), {1, 3}, mx::int32);
+
+  std::vector<float> freq = floats(Sampler::apply_frequency_presence(logits, history, 0.5f, 0.0f));
+  CHECK(freq[0] == doctest::Approx(0.0f));   // unseen
+  CHECK(freq[1] == doctest::Approx(-1.0f));  // 2 * 0.5
+  CHECK(freq[2] == doctest::Approx(-0.5f));  // 1 * 0.5
+  CHECK(freq[3] == doctest::Approx(0.0f));
+
+  std::vector<float> pres = floats(Sampler::apply_frequency_presence(logits, history, 0.0f, 0.7f));
+  CHECK(pres[0] == doctest::Approx(0.0f));   // unseen
+  CHECK(pres[1] == doctest::Approx(-0.7f));  // flat, regardless of count
+  CHECK(pres[2] == doctest::Approx(-0.7f));
+}
+
+TEST_CASE("repetition penalty changes greedy choice via sample()") {
+  mx::array logits = logits2d({{2.0f, 1.0f, 0.5f}});
+  SamplingParams p;
+  p.temperature = 0.0f;            // greedy
+  p.repetition_penalty = 4.0f;     // demote the repeated token
+  mx::array history = mx::array(std::vector<int>{0}.data(), {1, 1}, mx::int32);
+  SampleResult r = Sampler::sample(logits, p, mx::random::key(0), history);
+  CHECK(ints(r.tokens) == std::vector<int>{1});  // not 0, which greedy would pick
+}
+
 TEST_CASE("same seed reproduces, different seed diverges") {
   mx::array logits = mx::zeros({64, 16}, mx::float32);  // uniform
   SamplingParams p;  // temperature 1, no top-k/p

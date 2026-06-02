@@ -8,6 +8,7 @@
 #include "sample/sampler.h"
 
 #include "mlx/ops.h"
+#include "mlx/random.h"
 #include "mlx/transforms.h"
 
 namespace mlxforge {
@@ -96,7 +97,6 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
   log::debug("worker: admitting {} request(s) (batch {} -> {})", incoming.size(), reqs_.size(),
              reqs_.size() + incoming.size());
   PrefillResult pr = prefill(*model_, prompts);
-  std::vector<int> first = read_ids(Sampler::greedy(pr.last_logits));  // each row's first token
 
   if (!cache_) {
     cache_ = std::make_unique<BatchKVCache>(std::move(pr.cache));
@@ -104,15 +104,25 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
     cache_->merge(pr.cache);
   }
 
+  // Register the new rows before sampling so sample_rows() can read their params,
+  // penalty history (seeded with the prompt) and RNG key.
   const int base = static_cast<int>(reqs_.size());
   for (size_t i = 0; i < incoming.size(); ++i) {
     reqs_.push_back(incoming[i]);
     produced_.push_back(0);
-    feed_.push_back(first[i]);  // feed the first token next step
+    feed_.push_back(0);  // set to the first token below
     finished_.push_back(false);
+    history_.push_back(incoming[i]->prompt_ids);
+    rng_keys_.push_back(mx::random::key(incoming[i]->params.seed));
   }
+
+  std::vector<int> first =
+      read_ids(sample_rows(pr.last_logits, base, static_cast<int>(incoming.size())));
+
   for (size_t i = 0; i < incoming.size(); ++i) {
     const int b = base + static_cast<int>(i);
+    feed_[b] = first[i];               // feed the first token next step
+    history_[b].push_back(first[i]);   // and let later penalties see it
     if (reqs_[b]->cancelled.load()) {
       reqs_[b]->finish_reason = "cancel";
       finished_[b] = true;
@@ -120,6 +130,31 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
       finished_[b] = true;
     }
   }
+}
+
+mx::array Worker::sample_rows(const mx::array& logits, int row_offset, int count) {
+  const int vocab = logits.shape()[1];
+  std::vector<mx::array> tokens;
+  tokens.reserve(count);
+  for (int i = 0; i < count; ++i) {
+    const int r = row_offset + i;
+    mx::array row = mx::slice(logits, {i, 0}, {i + 1, vocab});  // (1, vocab)
+    const SamplingParams& p = reqs_[r]->params;
+
+    // Advance the per-row key so successive steps draw independently but
+    // reproducibly for a fixed seed; greedy rows still split (cheap, keeps state).
+    std::pair<mx::array, mx::array> ks = mx::random::split(rng_keys_[r]);
+    rng_keys_[r] = ks.first;
+
+    SampleResult res = [&] {
+      if (!p.has_penalties() || history_[r].empty()) return Sampler::sample(row, p, ks.second);
+      const std::vector<int>& h = history_[r];
+      mx::array history(h.data(), {1, static_cast<int>(h.size())}, mx::int32);
+      return Sampler::sample(row, p, ks.second, history);
+    }();
+    tokens.push_back(res.tokens);  // (1,)
+  }
+  return mx::concatenate(tokens, /*axis=*/0);  // (count,)
 }
 
 void Worker::decode_step() {
@@ -138,7 +173,8 @@ void Worker::decode_step() {
 
   mx::array inputs(fed.data(), {bucket, 1}, mx::int32);
   mx::array logits = model_->forward(inputs, *cache_);  // (bucket, 1, vocab)
-  mx::array next = Sampler::greedy(mx::reshape(logits, {bucket, logits.shape()[2]}));
+  // Sample only the B real rows (dummy rows are excluded from the graph).
+  mx::array next = sample_rows(mx::reshape(logits, {bucket, logits.shape()[2]}), 0, B);
 
   mx::async_eval(next);  // the ONE eval per decode step, over the whole batch
   std::vector<int> ids = read_ids(next);
@@ -151,6 +187,7 @@ void Worker::decode_step() {
       continue;
     }
     feed_[b] = ids[b];
+    history_[b].push_back(ids[b]);  // penalties see the full sequence so far
     if (consume(*reqs_[b], produced_[b], ids[b])) finished_[b] = true;
   }
 
@@ -209,11 +246,17 @@ void Worker::evict_finished() {
     produced_[dst] = produced_[src];
     feed_[dst] = feed_[src];
     finished_[dst] = finished_[src];
+    history_[dst] = std::move(history_[src]);
+    rng_keys_[dst] = rng_keys_[src];
   }
   reqs_.resize(keep.size());
   produced_.resize(keep.size());
   feed_.resize(keep.size());
   finished_.resize(keep.size());
+  history_.resize(keep.size());
+  // mx::array is not default-constructible, so resize() won't compile; erase the
+  // tail instead (only needs move-assignment).
+  rng_keys_.erase(rng_keys_.begin() + keep.size(), rng_keys_.end());
 }
 
 WorkerMetrics Worker::metrics() const {
