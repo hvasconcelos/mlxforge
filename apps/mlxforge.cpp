@@ -26,10 +26,24 @@ mlxforge::HttpServer* g_server = nullptr;
 void on_signal(int) {
   if (g_server) g_server->stop();  // unblocks listen(); main then drains
 }
+
+// Decorative startup banner. Goes to stdout (program output), not the logs.
+void print_banner() {
+  std::puts(R"(
+▗▖  ▗▖▗▖   ▗▖  ▗▖▗▄▄▄▖ ▗▄▖ ▗▄▄▖  ▗▄▄▖▗▄▄▄▖
+▐▛▚▞▜▌▐▌    ▝▚▞▘ ▐▌   ▐▌ ▐▌▐▌ ▐▌▐▌   ▐▌
+▐▌  ▐▌▐▌     ▐▌  ▐▛▀▀▘▐▌ ▐▌▐▛▀▚▖▐▌▝▜▌▐▛▀▀▘
+▐▌  ▐▌▐▙▄▄▖▗▞▘▝▚▖▐▌   ▝▚▄▞▘▐▌ ▐▌▝▚▄▞▘▐▙▄▄▖ ⚒️
+
+   LLaMA inference on Apple MLX · OpenAI-compatible API
+)");
+  std::fflush(stdout);
+}
 }  // namespace
 
 int main(int argc, char** argv) {
   mlxforge::log::init();
+  print_banner();
 
   mlxforge::ServerConfig sc;
   try {
