@@ -25,6 +25,7 @@ add_executable(mlxforge_tests
   runtime/bucketing_test.cpp
   scheduler/validation_test.cpp
   tokenizer/tokenizer_test.cpp
+  tokenizer/bpe_test.cpp
   server/openai_test.cpp
   server/sse_test.cpp
   server/hardening_test.cpp
@@ -32,6 +33,8 @@ add_executable(mlxforge_tests
   model/mistral_forward_test.cpp
 )
 target_include_directories(mlxforge_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# tokenizers_cpp comes transitively from mlxforge_core (PUBLIC); the parity test
+# (tokenizer/bpe_test.cpp) uses it directly as the oracle for BpeTokenizer.
 target_link_libraries(mlxforge_tests PRIVATE mlxforge_core doctest::doctest)
 
 # Resolve the local HF snapshot dir for integration tests (empty -> tests skip).

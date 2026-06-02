@@ -36,6 +36,7 @@ add_library(mlxforge_core STATIC
   src/scheduler/scheduler.cpp
   src/runtime/worker.cpp
   src/runtime/batching.cpp
+  src/tokenizer/bpe.cpp
   src/tokenizer/tokenizer.cpp
   src/server/openai.cpp
   src/server/http_server.cpp

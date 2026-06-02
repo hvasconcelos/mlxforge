@@ -37,6 +37,10 @@ FetchContent_Declare(
 # --- tokenizers-cpp (HF tokenizer.json via the Rust tokenizers crate) -------
 #   mlc-ai/tokenizers-cpp @ c586c52 (HEAD). Builds the Rust HF tokenizer; the
 #   SentencePiece path is disabled (we only load tokenizer.json). Needs cargo.
+#   NOTE: Llama-3.2 now uses our own byte-level BPE (src/tokenizer/bpe.cpp); this
+#   is the FALLBACK backend for other families (e.g. Mistral's Metaspace
+#   tokenizer) and the oracle for the parity test. Once those are reimplemented
+#   it (and the cargo/Rust build requirement) can be dropped.
 set(MLC_ENABLE_SENTENCEPIECE_TOKENIZER OFF CACHE BOOL "" FORCE)
 set(SPM_ENABLE_SHARED OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(

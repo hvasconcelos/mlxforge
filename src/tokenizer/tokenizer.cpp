@@ -10,6 +10,7 @@
 #include <tokenizers_cpp.h>
 
 #include "core/logging.h"
+#include "tokenizer/bpe.h"
 
 namespace mlxforge {
 
@@ -27,8 +28,8 @@ std::string load_file(const std::string& path) {
 }
 
 // Collect the ids of every special token declared in a tokenizer.json blob
-// (added_tokens[*] with "special": true). These are skipped on decode, which
-// generalizes across model families (Llama reserves high ids, Mistral low ones).
+// (added_tokens[*] with "special": true). Used for the tokenizers-cpp fallback
+// path; the BpeTokenizer backend reports its own via special_ids().
 std::unordered_set<int> parse_special_ids(const std::string& blob) {
   std::unordered_set<int> ids;
   nlohmann::json j = nlohmann::json::parse(blob, /*cb=*/nullptr, /*allow_exceptions=*/false);
@@ -73,20 +74,33 @@ size_t utf8_complete_len(const std::string& s) {
 Tokenizer Tokenizer::from_file(const std::string& tokenizer_json_path, int bos_id, ChatFormat fmt) {
   const std::string blob = load_file(tokenizer_json_path);
   Tokenizer t;
-  t.impl_ = tokenizers::Tokenizer::FromBlobJSON(blob);
   t.bos_id_ = bos_id;
   t.chat_format_ = fmt;
-  *t.special_ids_ = parse_special_ids(blob);
-  log::info("tokenizer: loaded vocab={} special_tokens={} bos_id={}", t.impl_->GetVocabSize(),
-            t.special_ids_->size(), bos_id);
+  if (BpeTokenizer::is_supported(blob)) {
+    t.bpe_ = std::make_shared<BpeTokenizer>(BpeTokenizer::from_blob(blob));
+    *t.special_ids_ = t.bpe_->special_ids();
+    log::info("tokenizer: loaded vocab={} special_tokens={} bos_id={} (own byte-level BPE)",
+              t.bpe_->vocab_size(), t.special_ids_->size(), bos_id);
+  } else {
+    t.hf_ = tokenizers::Tokenizer::FromBlobJSON(blob);
+    *t.special_ids_ = parse_special_ids(blob);
+    log::info("tokenizer: loaded vocab={} special_tokens={} bos_id={} (tokenizers-cpp fallback)",
+              t.hf_->GetVocabSize(), t.special_ids_->size(), bos_id);
+  }
   return t;
 }
 
 std::vector<int> Tokenizer::encode(const std::string& text) const {
-  // tokenizers-cpp's Encode does not run the BOS post-processor, so prepend the
+  // Neither backend's encode runs the BOS post-processor, so prepend the
   // configured begin-of-text id to match mlx-lm's tok.encode (none if < 0).
-  std::lock_guard<std::mutex> lk(*mu_);
-  std::vector<int32_t> ids = impl_->Encode(text);
+  std::vector<int> ids;
+  if (bpe_) {
+    ids = bpe_->encode(text);
+  } else {
+    std::lock_guard<std::mutex> lk(*mu_);
+    std::vector<int32_t> e = hf_->Encode(text);
+    ids.assign(e.begin(), e.end());
+  }
   std::vector<int> out;
   out.reserve(ids.size() + 1);
   if (bos_id_ >= 0) out.push_back(bos_id_);
@@ -97,13 +111,15 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
 
 std::string Tokenizer::decode(const std::vector<int>& ids) const {
   // Drop the model's special tokens (parsed from tokenizer.json), matching
-  // mlx-lm's skip_special_tokens default, since tokenizers-cpp Decode renders them.
-  std::vector<int32_t> keep;
+  // mlx-lm's skip_special_tokens default.
+  std::vector<int> keep;
   keep.reserve(ids.size());
   for (int id : ids)
     if (!special_ids_->count(id)) keep.push_back(id);
+  if (bpe_) return bpe_->decode(keep);
+  std::vector<int32_t> keep32(keep.begin(), keep.end());
   std::lock_guard<std::mutex> lk(*mu_);
-  return impl_->Decode(keep);
+  return hf_->Decode(keep32);
 }
 
 namespace {
