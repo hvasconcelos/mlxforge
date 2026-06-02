@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
   worker.start();
 
   mlxforge::HttpServer server(&scheduler, &tok, cfg, "mlxforge", [&worker] { return worker.ready(); },
-                          sc.max_ctx);
+                          sc.max_ctx, [&worker] { return worker.metrics(); });
   g_server = &server;
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);

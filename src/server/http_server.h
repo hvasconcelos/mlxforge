@@ -5,6 +5,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -13,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/config.h"
+#include "runtime/metrics.h"
 #include "scheduler/request.h"
 #include "scheduler/scheduler.h"
 #include "server/openai.h"
@@ -23,9 +25,11 @@ namespace mlxforge {
 class HttpServer {
  public:
   // `ready` reports whether the model has finished loading (else 503); `max_ctx`
-  // bounds the prompt length (else 400).
+  // bounds the prompt length (else 400); `metrics` provides the live decode
+  // snapshot for /health (reads only atomics, so it is safe off the worker thread).
   HttpServer(Scheduler* scheduler, const Tokenizer* tokenizer, ModelConfig config,
-             std::string model_name, std::function<bool()> ready, int max_ctx);
+             std::string model_name, std::function<bool()> ready, int max_ctx,
+             std::function<WorkerMetrics()> metrics);
 
   void listen(const std::string& host, int port);
   void stop();
@@ -53,6 +57,8 @@ class HttpServer {
   std::string model_name_;
   std::function<bool()> ready_;
   int max_ctx_;
+  std::function<WorkerMetrics()> metrics_;
+  std::chrono::steady_clock::time_point start_time_{std::chrono::steady_clock::now()};
   httplib::Server svr_;
   std::atomic<long> counter_{0};
 };

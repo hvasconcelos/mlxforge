@@ -17,6 +17,7 @@
 
 #include "cache/batch_kv_cache.h"
 #include "model/llama.h"
+#include "runtime/metrics.h"
 #include "scheduler/scheduler.h"
 
 namespace mlxforge {
@@ -41,6 +42,10 @@ class Worker {
 
   // True once the model has finished loading on the worker thread (else 503).
   bool ready() const { return ready_.load(); }
+
+  // Snapshot of live decode metrics for /health. Reads only atomics, so it is
+  // safe to call from the HTTP threads (never touches the worker-owned batch).
+  WorkerMetrics metrics() const;
 
  private:
   void run();  // the loop; the sole caller of MLX eval/async_eval
@@ -69,6 +74,18 @@ class Worker {
 
   std::atomic<long> decode_steps_{0};
   std::atomic<bool> ready_{false};
+
+  // Live metrics (worker writes, HTTP threads read via metrics()). active_/peak_
+  // track batch occupancy; the *_sum_ accumulators feed the computed averages.
+  std::atomic<int> active_batch_{0};
+  std::atomic<int> peak_batch_{0};
+  std::atomic<long> requests_completed_{0};
+  std::atomic<long long> prompt_tokens_total_{0};
+  std::atomic<long long> completion_tokens_total_{0};
+  std::atomic<long long> ttft_us_sum_{0};
+  std::atomic<long long> gen_us_sum_{0};
+  std::atomic<long long> request_us_sum_{0};
+
   std::thread thread_;
 };
 

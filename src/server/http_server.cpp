@@ -22,13 +22,15 @@ json error_body(const std::string& message, const std::string& type, const std::
 }  // namespace
 
 HttpServer::HttpServer(Scheduler* scheduler, const Tokenizer* tokenizer, ModelConfig config,
-                       std::string model_name, std::function<bool()> ready, int max_ctx)
+                       std::string model_name, std::function<bool()> ready, int max_ctx,
+                       std::function<WorkerMetrics()> metrics)
     : sched_(scheduler),
       tok_(tokenizer),
       cfg_(std::move(config)),
       model_name_(std::move(model_name)),
       ready_(std::move(ready)),
-      max_ctx_(max_ctx) {
+      max_ctx_(max_ctx),
+      metrics_(std::move(metrics)) {
   // Each streaming connection holds a worker thread for its whole lifetime, so
   // size the pool well above the expected concurrency (default is ~8).
   svr_.new_task_queue = [] { return new httplib::ThreadPool(64); };
@@ -156,8 +158,38 @@ void HttpServer::stream_chat(const std::shared_ptr<Request>& req, httplib::Respo
 }
 
 void HttpServer::setup_routes() {
-  svr_.Get("/health", [](const httplib::Request&, httplib::Response& res) {
-    res.set_content(json{{"status", "ok"}}.dump(), "application/json");
+  svr_.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
+    const bool ready = !ready_ || ready_();
+    const WorkerMetrics m = metrics_ ? metrics_() : WorkerMetrics{};
+    const long uptime = std::chrono::duration_cast<std::chrono::seconds>(
+                            std::chrono::steady_clock::now() - start_time_)
+                            .count();
+    const json body = {
+        {"status", ready ? "ok" : "loading"},
+        {"uptime_seconds", uptime},
+        {"model",
+         {{"name", model_name_},
+          {"type", cfg_.model_type},
+          {"context_size", cfg_.max_position_embeddings},
+          {"max_context", max_ctx_},
+          {"num_layers", cfg_.n_layers},
+          {"num_heads", cfg_.n_heads},
+          {"num_kv_heads", cfg_.n_kv_heads},
+          {"vocab_size", cfg_.vocab},
+          {"quantized", cfg_.quantized},
+          {"quant_bits", cfg_.quant_bits}}},
+        {"queue", {{"waiting", sched_->waiting_size()}, {"max_waiting", sched_->max_waiting()}}},
+        {"batch", {{"active", m.active_batch}, {"peak", m.peak_batch}}},
+        {"decode",
+         {{"steps", m.decode_steps},
+          {"requests_completed", m.requests_completed},
+          {"prompt_tokens_total", m.prompt_tokens_total},
+          {"completion_tokens_total", m.completion_tokens_total},
+          {"avg_ttft_ms", m.avg_ttft_ms},
+          {"avg_request_ms", m.avg_request_ms},
+          {"avg_tokens_per_second", m.avg_tokens_per_second}}},
+    };
+    res.set_content(body.dump(), "application/json");
   });
 
   svr_.Get("/v1/models", [this](const httplib::Request&, httplib::Response& res) {

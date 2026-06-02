@@ -20,6 +20,9 @@ class Scheduler {
   // Bound the waiting queue (0 = unbounded); submit() rejects beyond this.
   void set_max_waiting(int max) { max_waiting_ = max; }
 
+  // The configured waiting-queue bound (0 = unbounded). For /health reporting.
+  int max_waiting() const { return max_waiting_; }
+
   // Submit a request from any thread; wakes the worker. Returns false if the
   // waiting queue is full (the caller should reply 429).
   bool submit(const std::shared_ptr<Request>& req);

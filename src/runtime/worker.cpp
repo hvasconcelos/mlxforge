@@ -79,6 +79,11 @@ void Worker::run() {
       log::error("worker: decode loop error: {}", e.what());
       throw;
     }
+
+    // Publish batch occupancy for /health (single writer -> plain load-max-store).
+    const int active = static_cast<int>(reqs_.size());
+    active_batch_.store(active);
+    if (active > peak_batch_.load()) peak_batch_.store(active);
   }
   log::info("worker: stopped after {} decode steps", decode_steps_.load());
 }
@@ -160,6 +165,7 @@ void Worker::decode_step() {
 void Worker::evict_finished() {
   using ms = std::chrono::duration<double, std::milli>;
   using sec = std::chrono::duration<double>;
+  using us = std::chrono::duration<double, std::micro>;
   const auto now = Request::Clock::now();
 
   std::vector<int> keep;
@@ -173,6 +179,15 @@ void Worker::evict_finished() {
       log::info("done reason={} prompt={} gen={} ttft={:.1f}ms tok/s={:.1f} batch={} queue={}",
                 r.finish_reason, r.prompt_ids.size(), produced_[b], ttft, tps,
                 static_cast<int>(reqs_.size()), sched_->waiting_size());
+
+      // Accumulate the same numbers for /health (sums + counts -> averages).
+      ++requests_completed_;
+      prompt_tokens_total_ += static_cast<long long>(r.prompt_ids.size());
+      completion_tokens_total_ += produced_[b];
+      ttft_us_sum_ += static_cast<long long>(ttft * 1000.0);
+      gen_us_sum_ += static_cast<long long>(gen_s * 1e6);
+      request_us_sum_ += static_cast<long long>(us(now - r.enqueue_time).count());
+
       reqs_[b]->tokens.close();  // signal the consumer
     } else {
       keep.push_back(b);
@@ -199,6 +214,25 @@ void Worker::evict_finished() {
   produced_.resize(keep.size());
   feed_.resize(keep.size());
   finished_.resize(keep.size());
+}
+
+WorkerMetrics Worker::metrics() const {
+  WorkerMetrics m;
+  m.decode_steps = decode_steps_.load();
+  m.active_batch = active_batch_.load();
+  m.peak_batch = peak_batch_.load();
+  m.requests_completed = requests_completed_.load();
+  m.prompt_tokens_total = prompt_tokens_total_.load();
+  m.completion_tokens_total = completion_tokens_total_.load();
+
+  const long completed = m.requests_completed;
+  if (completed > 0) {
+    m.avg_ttft_ms = ttft_us_sum_.load() / 1000.0 / completed;
+    m.avg_request_ms = request_us_sum_.load() / 1000.0 / completed;
+  }
+  const long long gen_us = gen_us_sum_.load();
+  if (gen_us > 0) m.avg_tokens_per_second = m.completion_tokens_total * 1e6 / gen_us;
+  return m;
 }
 
 }  // namespace mlxforge
