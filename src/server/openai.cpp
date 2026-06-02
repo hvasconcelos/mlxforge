@@ -92,6 +92,20 @@ void parse_common(const json& body, ChatRequest& r) {
   if (r.params.top_p <= 0.0f || r.params.top_p > 1.0f)
     throw std::runtime_error("'top_p' must be in (0, 1]");
   r.params.top_k = body.value("top_k", 0);
+  r.params.min_p = body.value("min_p", 0.0f);
+  if (r.params.min_p < 0.0f || r.params.min_p > 1.0f)
+    throw std::runtime_error("'min_p' must be in [0, 1]");
+  r.params.repetition_penalty = body.value("repetition_penalty", 1.0f);
+  if (r.params.repetition_penalty <= 0.0f)
+    throw std::runtime_error("'repetition_penalty' must be > 0");
+  // OpenAI defines frequency/presence penalties over [-2, 2] (negatives encourage
+  // repetition); we keep the same admissible range.
+  r.params.frequency_penalty = body.value("frequency_penalty", 0.0f);
+  r.params.presence_penalty = body.value("presence_penalty", 0.0f);
+  if (r.params.frequency_penalty < -2.0f || r.params.frequency_penalty > 2.0f)
+    throw std::runtime_error("'frequency_penalty' must be in [-2, 2]");
+  if (r.params.presence_penalty < -2.0f || r.params.presence_penalty > 2.0f)
+    throw std::runtime_error("'presence_penalty' must be in [-2, 2]");
   if (body.contains("seed") && !body["seed"].is_null())
     r.params.seed = body["seed"].get<uint64_t>();
 

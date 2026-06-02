@@ -20,6 +20,8 @@
 #include "runtime/metrics.h"
 #include "scheduler/scheduler.h"
 
+#include "mlx/array.h"
+
 namespace mlxforge {
 
 class Worker {
@@ -56,6 +58,11 @@ class Worker {
   // One decode step over the whole batch: forward -> sample -> async_eval ->
   // push each row's token, marking finished rows.
   void decode_step();
+  // Sample one token for `count` rows of `logits`, where logits row i belongs to
+  // request reqs_[row_offset + i]. Applies each request's SamplingParams + penalty
+  // history and advances its RNG key. Builds one graph (no eval) so the caller
+  // keeps the single-async_eval-per-step invariant. Returns a (count,) int32 array.
+  mx::array sample_rows(const mx::array& logits, int row_offset, int count);
   // Drop rows marked finished (filter the cache, compact the row vectors,
   // close their token queues).
   void evict_finished();
@@ -71,6 +78,8 @@ class Worker {
   std::vector<int> produced_;  // tokens emitted per row
   std::vector<int> feed_;      // next input token per row (host side)
   std::vector<char> finished_;  // row marked for eviction
+  std::vector<std::vector<int>> history_;  // prompt+generated ids per row (penalties)
+  std::vector<mx::array> rng_keys_;        // per-row RNG key, advanced each step
 
   std::atomic<long> decode_steps_{0};
   std::atomic<bool> ready_{false};
