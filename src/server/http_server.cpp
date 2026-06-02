@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <vector>
 
+#include "core/logging.h"
+
 namespace mlxforge {
 
 namespace {
@@ -124,11 +126,13 @@ void HttpServer::setup_routes() {
 
   auto fail = [](httplib::Response& res, int status, const std::string& msg, const std::string& type,
                  const std::string& code) {
+    log::warn("request failed: {} {} ({})", status, code, msg);
     res.status = status;
     res.set_content(error_body(msg, type, code).dump(), "application/json");
   };
 
   auto handle = [this, fail](bool chat, const httplib::Request& http_req, httplib::Response& res) {
+    log::debug("{} {} ({} bytes)", http_req.method, http_req.path, http_req.body.size());
     if (ready_ && !ready_()) {
       fail(res, 503, "model is still loading", "server_error", "model_loading");
       return;
@@ -166,8 +170,14 @@ void HttpServer::setup_routes() {
   });
 }
 
-void HttpServer::listen(const std::string& host, int port) { svr_.listen(host, port); }
+void HttpServer::listen(const std::string& host, int port) {
+  log::info("http: listening on {}:{}", host, port);
+  svr_.listen(host, port);
+}
 
-void HttpServer::stop() { svr_.stop(); }
+void HttpServer::stop() {
+  log::info("http: stopping");
+  svr_.stop();
+}
 
 }  // namespace mlxforge

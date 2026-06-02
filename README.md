@@ -37,6 +37,9 @@ GQA + separate LM head, no attention bias, no sliding window). See
   client disconnect; per-request metrics; OpenAI-shaped errors (400/429/503).
 - **Optional 4-bit quantization** — `quantized_matmul` (group_size 64), ~0.65
   GiB resident vs ~2.3 GiB fp16.
+- **Configurable logging** (spdlog) — `debug`/`info`/`warn`/`error` across the
+  engine, with the level, output file, and format controlled by `MLXFORGE_LOG_*`
+  environment variables.
 
 ## Requirements
 
@@ -46,8 +49,8 @@ GQA + separate LM head, no attention bias, no sliding window). See
 - `cargo` / Rust — `tokenizers-cpp` builds the Rust HF `tokenizers` crate.
 - (Optional, for regenerating golden fixtures) Python 3.12 + `mlx-lm`.
 
-All C++ dependencies (MLX, cpp-httplib, nlohmann/json, doctest, tokenizers-cpp)
-are fetched and pinned by CMake — see `cmake/Dependencies.cmake`.
+All C++ dependencies (MLX, cpp-httplib, nlohmann/json, doctest, tokenizers-cpp,
+spdlog) are fetched and pinned by CMake — see `cmake/Dependencies.cmake`.
 
 ## Build
 
@@ -148,6 +151,31 @@ trigger a graceful shutdown that drains in-flight requests.
 # inspect weights: key -> shape -> dtype, assert fp16, report peak memory
 ./build/mlxforge-cli dump-weights "$MODEL_DIR"
 ```
+
+## Logging
+
+Both binaries log through [spdlog](https://github.com/gabime/spdlog) to
+**stderr** (so stdout stays clean for the CLI's generated text / weight dumps).
+Verbosity and output are controlled by environment variables; an unset variable
+uses the default shown:
+
+| Env | Default | Meaning |
+| --- | --- | --- |
+| `MLXFORGE_LOG_LEVEL` | `info` | `trace` \| `debug` \| `info` \| `warn` \| `error` \| `critical` \| `off`. An unrecognized value falls back to `info`. |
+| `MLXFORGE_LOG_FILE` | _(unset)_ | If set, logs are **appended** to this file in addition to the console. |
+| `MLXFORGE_LOG_PATTERN` | `[%H:%M:%S.%e] [%^%l%$] %v` | spdlog [format pattern](https://github.com/gabime/spdlog/wiki/Custom-formatting). |
+
+```sh
+# verbose decode-loop / scheduler / request tracing
+MLXFORGE_LOG_LEVEL=debug ./build/mlxforge "$MODEL_DIR"
+
+# errors only, also tee'd to a file
+MLXFORGE_LOG_LEVEL=error MLXFORGE_LOG_FILE=/var/log/mlxforge.log ./build/mlxforge "$MODEL_DIR"
+```
+
+`info` includes lifecycle events (model load, server listen/stop) and the
+per-request metrics (TTFT, tokens/s, batch size, queue depth). See
+[`.env.example`](./.env.example) for all runtime environment variables.
 
 ## Tests
 

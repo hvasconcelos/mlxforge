@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdio>
 
+#include "core/logging.h"
 #include "runtime/batching.h"
 #include "sample/sampler.h"
 
@@ -51,8 +51,10 @@ void Worker::stop() {
 }
 
 void Worker::run() {
+  log::info("worker: loading model...");
   model_ = factory_();  // load the model on this thread so its arrays live here
   ready_.store(true);
+  log::info("worker: model loaded, ready");
 
   while (true) {
     std::vector<std::shared_ptr<Request>> incoming;
@@ -66,13 +68,19 @@ void Worker::run() {
       incoming = sched_->take_waiting(kPrefillBatchSize);  // non-blocking top-up
     }
 
-    if (!incoming.empty()) admit(incoming);
-    evict_finished();  // a row may finish on its very first token
-    if (reqs_.empty()) continue;
+    try {
+      if (!incoming.empty()) admit(incoming);
+      evict_finished();  // a row may finish on its very first token
+      if (reqs_.empty()) continue;
 
-    decode_step();
-    evict_finished();
+      decode_step();
+      evict_finished();
+    } catch (const std::exception& e) {
+      log::error("worker: decode loop error: {}", e.what());
+      throw;
+    }
   }
+  log::info("worker: stopped after {} decode steps", decode_steps_.load());
 }
 
 void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
@@ -80,6 +88,8 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
   prompts.reserve(incoming.size());
   for (const auto& r : incoming) prompts.push_back(r->prompt_ids);
 
+  log::debug("worker: admitting {} request(s) (batch {} -> {})", incoming.size(), reqs_.size(),
+             reqs_.size() + incoming.size());
   PrefillResult pr = prefill(*model_, prompts);
   std::vector<int> first = read_ids(Sampler::greedy(pr.last_logits));  // each row's first token
 
@@ -110,6 +120,7 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
 void Worker::decode_step() {
   ++decode_steps_;
   const int B = static_cast<int>(reqs_.size());
+  log::debug("worker: decode step {} (batch={})", decode_steps_.load(), B);
 
   // Pad the active batch up to a fixed bucket with masked dummy rows so the
   // decode forward graph shape recurs. Dummy rows are batch-independent and
@@ -159,11 +170,9 @@ void Worker::evict_finished() {
       const double gen_s = sec(now - r.first_token_time).count();
       const double tps = gen_s > 0 ? produced_[b] / gen_s : 0.0;
       // Per-request metrics: TTFT, tokens/s, batch occupancy, queue depth.
-      std::fprintf(stderr,
-                   "[mlxforge] done reason=%s prompt=%zu gen=%d ttft=%.1fms tok/s=%.1f "
-                   "batch=%d queue=%zu\n",
-                   r.finish_reason.c_str(), r.prompt_ids.size(), produced_[b], ttft, tps,
-                   static_cast<int>(reqs_.size()), sched_->waiting_size());
+      log::info("done reason={} prompt={} gen={} ttft={:.1f}ms tok/s={:.1f} batch={} queue={}",
+                r.finish_reason, r.prompt_ids.size(), produced_[b], ttft, tps,
+                static_cast<int>(reqs_.size()), sched_->waiting_size());
       reqs_[b]->tokens.close();  // signal the consumer
     } else {
       keep.push_back(b);

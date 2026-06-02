@@ -19,6 +19,7 @@
 #include "mlx/mlx.h"
 
 #include "core/config.h"
+#include "core/logging.h"
 #include "core/weights.h"
 #include "model/llama.h"
 #include "runtime/single_stream.h"
@@ -37,10 +38,10 @@ namespace {
 int run_smoke() {
   // MLX is lazy: ops build a graph; nothing runs until eval() is called.
   if (!mx::metal::is_available()) {
-    std::fprintf(stderr, "error: Metal GPU is not available on this machine\n");
+    mlxforge::log::error("Metal GPU is not available on this machine");
     return 1;
   }
-  std::printf("Metal available: yes\n");
+  mlxforge::log::info("Metal available: yes");
 
   mx::array a({1.0f, 2.0f, 3.0f, 4.0f});
   mx::array b({10.0f, 20.0f, 30.0f, 40.0f});
@@ -74,8 +75,9 @@ int run_dump_weights(const std::string& dir) {
     if (a.dtype() != mx::float16) ++non_fp16;
   }
   const double gib = static_cast<double>(mx::get_peak_memory()) / (1024.0 * 1024.0 * 1024.0);
-  std::printf("\n%zu tensors loaded; %zu non-fp16; peak memory %.2f GiB\n", w.size(), non_fp16,
-              gib);
+  mlxforge::log::info("{} tensors loaded; {} non-fp16; peak memory {:.2f} GiB", w.size(), non_fp16,
+                      gib);
+  if (non_fp16 > 0) mlxforge::log::warn("{} tensors are not fp16", non_fp16);
   return non_fp16 == 0 ? 0 : 1;
 }
 
@@ -107,13 +109,17 @@ int run_generate(const std::string& dir, const std::string& prompt_arg, int max_
       });
   std::string tail = detok.finish();
   std::fwrite(tail.data(), 1, tail.size(), stdout);
-  std::printf("\n[%zu tokens%s]\n", r.tokens.size(), r.hit_eos ? ", stopped at EOS" : "");
+  std::fputc('\n', stdout);
+  mlxforge::log::info("generated {} tokens{}", r.tokens.size(),
+                      r.hit_eos ? " (stopped at EOS)" : "");
   return 0;
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+  mlxforge::log::init();
+
   const std::string cmd = argc >= 2 ? argv[1] : "";
   if (cmd == "dump-weights") {
     if (argc < 3) {

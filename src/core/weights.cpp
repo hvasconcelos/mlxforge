@@ -6,6 +6,7 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "core/logging.h"
 #include "mlx/io.h"
 #include "mlx/ops.h"
 
@@ -110,7 +111,10 @@ Weights load_weights(const std::string& model_dir) {
     nlohmann::json index_json;
     index_file >> index_json;
     auto weight_map = parse_shard_index(index_json);
-    for (const auto& file : shard_files(weight_map)) {
+    const auto files = shard_files(weight_map);
+    log::debug("weights: sharded checkpoint, {} files", files.size());
+    for (const auto& file : files) {
+      log::debug("weights: loading shard {}", file);
       absorb(w.tensors, mx::load_safetensors(model_dir + "/" + file).first);
     }
   } else {
@@ -118,8 +122,17 @@ Weights load_weights(const std::string& model_dir) {
     if (!std::ifstream(single)) {
       throw std::runtime_error("weights: no model.safetensors[.index.json] in '" + model_dir + "'");
     }
+    log::debug("weights: single-file checkpoint");
     absorb(w.tensors, mx::load_safetensors(single).first);
   }
+
+  std::size_t non_fp16 = 0;
+  for (const auto& [_, a] : w.tensors)
+    if (a.dtype() != mx::float16) ++non_fp16;
+  log::info("weights: loaded {} tensors from '{}' ({} non-fp16)", w.tensors.size(), model_dir,
+            non_fp16);
+  if (non_fp16 > 0)
+    log::warn("weights: {} tensors are not fp16 (expected for quantized models)", non_fp16);
   return w;
 }
 

@@ -6,6 +6,7 @@
 #include <string_view>
 #include <utility>
 
+#include "core/logging.h"
 #include "mlx/fast.h"
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
@@ -79,7 +80,11 @@ bool rope_array_offset_overload_available() {
 }
 
 LlamaModel::LlamaModel(ModelConfig config, Weights weights)
-    : cfg_(std::move(config)), w_(std::move(weights)), rope_freqs_(compute_rope_freqs(cfg_)) {}
+    : cfg_(std::move(config)), w_(std::move(weights)), rope_freqs_(compute_rope_freqs(cfg_)) {
+  log::debug("LlamaModel: type={} layers={} hidden={} heads={}/{} head_dim={} vocab={} quantized={}",
+             cfg_.model_type, cfg_.n_layers, cfg_.hidden, cfg_.n_heads, cfg_.n_kv_heads,
+             cfg_.head_dim, cfg_.vocab, cfg_.quantized);
+}
 
 std::string LlamaModel::layer_key(int i, const std::string& suffix) const {
   return "model.layers." + std::to_string(i) + "." + suffix;

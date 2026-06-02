@@ -4,6 +4,7 @@
 #   MLX C++ core   v0.31.2  68cf2fddd8de5edd8ab3d926391772b2e2cedad8
 #   cpp-httplib    v0.46.1  44215e23e92c473a3553d24ae634aed6eefc7dd0
 #   doctest        v2.5.2   6804767ee637789db8a5cb281381cae98dc36906
+#   spdlog         v1.15.3  3335c380a08c5e0f5117a66622df6afdb3d74959
 #   nlohmann/json           (vendored transitively by MLX; reused, not re-fetched)
 
 include(FetchContent)
@@ -54,7 +55,17 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 
-FetchContent_MakeAvailable(mlx httplib doctest tokenizers_cpp)
+# --- spdlog (fast C++ logging; uses its bundled fmt) ------------------------
+set(SPDLOG_BUILD_SHARED OFF CACHE BOOL "" FORCE)
+set(SPDLOG_FMT_EXTERNAL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  spdlog
+  GIT_REPOSITORY https://github.com/gabime/spdlog.git
+  GIT_TAG v1.15.3
+  GIT_SHALLOW TRUE
+)
+
+FetchContent_MakeAvailable(mlx httplib doctest tokenizers_cpp spdlog)
 
 # Provide doctest's CMake helpers (doctest_discover_tests) on the module path.
 list(APPEND CMAKE_MODULE_PATH ${doctest_SOURCE_DIR}/scripts/cmake)

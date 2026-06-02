@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/config.h"
+#include "core/logging.h"
 #include "core/weights.h"
 #include "model/llama.h"
 #include "runtime/worker.h"
@@ -26,11 +27,13 @@ void on_signal(int) {
 }  // namespace
 
 int main(int argc, char** argv) {
+  mlxforge::log::init();
+
   mlxforge::ServerConfig sc;
   try {
     sc = mlxforge::ServerConfig::parse(std::vector<std::string>(argv + 1, argv + argc));
   } catch (const std::exception& e) {
-    std::fprintf(stderr, "config error: %s\n", e.what());
+    mlxforge::log::error("config error: {}", e.what());
     return 2;
   }
   if (sc.model_dir.empty()) {
@@ -59,11 +62,11 @@ int main(int argc, char** argv) {
   std::signal(SIGINT, on_signal);
   std::signal(SIGTERM, on_signal);
 
-  std::printf("mlxforge serving on http://%s:%d (max_ctx=%d max_waiting=%d)\n", sc.host.c_str(),
-              sc.port, sc.max_ctx, sc.max_waiting);
+  mlxforge::log::info("mlxforge serving on http://{}:{} (max_ctx={} max_waiting={})", sc.host,
+                      sc.port, sc.max_ctx, sc.max_waiting);
   server.listen(sc.host, sc.port);  // blocks until stop()
 
-  std::printf("draining in-flight requests...\n");
+  mlxforge::log::info("draining in-flight requests...");
   worker.stop();  // drains the active batch before exit
   return 0;
 }

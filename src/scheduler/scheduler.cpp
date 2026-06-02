@@ -1,15 +1,20 @@
 #include "scheduler/scheduler.h"
 
+#include "core/logging.h"
+
 namespace mlxforge {
 
 bool Scheduler::submit(const std::shared_ptr<Request>& req) {
   {
     std::lock_guard<std::mutex> lk(m_);
     if (max_waiting_ > 0 && static_cast<int>(waiting_.size()) >= max_waiting_) {
+      log::warn("scheduler: queue full ({}/{}), rejecting request", waiting_.size(), max_waiting_);
       return false;  // queue full -> 429
     }
     req->enqueue_time = Request::Clock::now();
     waiting_.push_back(req);
+    log::debug("scheduler: enqueued request (prompt={} tokens, queue={})", req->prompt_ids.size(),
+               waiting_.size());
   }
   cv_.notify_one();
   return true;

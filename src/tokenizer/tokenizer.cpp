@@ -9,6 +9,8 @@
 #include <nlohmann/json.hpp>
 #include <tokenizers_cpp.h>
 
+#include "core/logging.h"
+
 namespace mlxforge {
 
 ChatFormat chat_format_from_model_type(const std::string& model_type) {
@@ -75,6 +77,8 @@ Tokenizer Tokenizer::from_file(const std::string& tokenizer_json_path, int bos_i
   t.bos_id_ = bos_id;
   t.chat_format_ = fmt;
   *t.special_ids_ = parse_special_ids(blob);
+  log::info("tokenizer: loaded vocab={} special_tokens={} bos_id={}", t.impl_->GetVocabSize(),
+            t.special_ids_->size(), bos_id);
   return t;
 }
 
@@ -87,6 +91,7 @@ std::vector<int> Tokenizer::encode(const std::string& text) const {
   out.reserve(ids.size() + 1);
   if (bos_id_ >= 0) out.push_back(bos_id_);
   out.insert(out.end(), ids.begin(), ids.end());
+  log::debug("tokenizer: encoded {} chars -> {} tokens", text.size(), out.size());
   return out;
 }
 
