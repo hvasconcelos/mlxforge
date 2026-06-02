@@ -20,7 +20,12 @@ jobs:
   build-and-test:
     name: Build & test (Apple Silicon)
     runs-on: macos-15  # ARM64 Apple Silicon runner — required for the Metal backend
-    timeout-minutes: 60
+    # The GitHub macos-15 arm64 runner is only 3 vCPU / 7GB, so a *cold* build
+    # (compiling MLX's Metal kernels from scratch) can take ~an hour. The cache
+    # below makes every later run fast, but the cache is only written when a run
+    # finishes — so the first run must be allowed to complete. Hence the generous
+    # timeout; subsequent cache-warm runs finish in a few minutes.
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,23 +47,7 @@ jobs:
           sw_vers
           clang --version
           cmake --version
-          cargo --version
           xcodebuild -version
-
-      # tokenizers-cpp builds a Rust crate; cargo ships with the runner image,
-      # but ensure a toolchain is present and cache the registry/build artifacts.
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-          key: cargo-${{ runner.os }}-${{ hashFiles('cmake/Dependencies.cmake') }}
-          restore-keys: |
-            cargo-${{ runner.os }}-
 
       # MLX's Metal kernels need the Metal Toolchain component (the first build
       # compiles them — this is the slow part). Requires Xcode 16+; on some
@@ -69,7 +58,7 @@ jobs:
           # the Build step fails at the Metal kernel compile with a clear error.
           xcodebuild -downloadComponent MetalToolchain || echo "Metal Toolchain already present or download skipped"
 
-      # Cache the fetched + built third-party deps (MLX, tokenizers, etc.).
+      # Cache the fetched + built third-party deps (MLX, spdlog, doctest, etc.).
       # Keyed on the pinned-deps file so a deliberate bump busts the cache.
       - name: Cache CMake dependencies
         uses: actions/cache@v4
