@@ -38,9 +38,18 @@ ctest --test-dir build -R kv_cache                   # run a subset by ctest nam
 
 - Dependencies are pinned in `cmake/Dependencies.cmake` (MLX v0.31.2,
   cpp-httplib, doctest, tokenizers-cpp, spdlog v1.15.3; nlohmann/json comes
-  transitively from MLX). Bump deliberately.
+  transitively from MLX). Bump deliberately. System **libcurl** is a
+  `find_package(CURL)` (not FetchContent), linked PRIVATE into `mlxforge_core`
+  for HuggingFace downloads.
 - Needs the Xcode **Metal Toolchain** (`xcodebuild -downloadComponent
   MetalToolchain`) and `cargo`/Rust (tokenizers-cpp builds a Rust crate).
+- Model spec resolution: the CLI/server take a model **spec** (local dir *or* HF
+  repo id) and call `mlxforge::resolve_model_dir` (`src/core/model_source.{h,cpp}`)
+  once before loading. It uses a local dir as-is, auto-resolves an HF cache parent
+  (`models--org--name`) to its `snapshots/<rev>/`, reuses the HF hub cache, then
+  falls back to downloading via `src/core/hf_download.{h,cpp}` (libcurl, the only
+  HTTP *client* in the tree) into `$MLXFORGE_CACHE` (default `~/.cache/mlxforge`).
+  Env helpers live in `src/core/env.{h,cpp}` (`env_or`/`env_long`).
 - Model: `mlx-community/Llama-3.2-1B-Instruct-bf16` (fp16) or `-4bit`. The fp16
   HF repo is **gated**; the `-bf16` repo is public and used as the fp16 source
   (cast to fp16 on load). The C++ engine and the Python reference load the

@@ -49,6 +49,35 @@ MLX runs, so there is nothing to contend over.
         ╚═══════════════════════════════════════════════════════════════════════════┝
 ```
 
+## Model source resolution
+
+Before anything is loaded, both binaries turn the user-supplied model **spec**
+into a concrete local directory via `mlxforge::resolve_model_dir`
+(`src/core/model_source.{h,cpp}`). A spec is either a local directory or a
+HuggingFace repo id (`org/name`), giving llama.cpp-style ergonomics. Resolution
+is tiered, cheapest first:
+
+1. an existing dir containing `config.json` → used as-is;
+2. an existing HF cache parent (`…/models--org--name`) → its `snapshots/<rev>/`
+   is read from `refs/main` (this is why passing the cache parent now works
+   instead of failing on a missing `config.json`);
+3. a repo id already in the HF hub cache (`HF_HUB_CACHE`/`HF_HOME`/`~/.cache/huggingface/hub`)
+   → that snapshot is reused;
+4. a repo id already downloaded by mlxforge → that download is reused;
+5. otherwise the repo is **downloaded** into `$MLXFORGE_CACHE`
+   (default `~/.cache/mlxforge`).
+
+Downloading lives in `src/core/hf_download.{h,cpp}` — the only HTTP **client** in
+the tree (cpp-httplib is server-only). It lists the repo's files via the HF
+model-info API, filters to the inference set (config/tokenizer JSON +
+`*.safetensors`, excluding PyTorch/GGUF/ONNX weights), and fetches each with
+system libcurl, following the cross-host 302 redirect to the LFS CDN. Files are
+staged in a sibling `.incomplete-<pid>` directory and the whole directory is
+renamed into place only after every file succeeds, so a half-finished pull never
+looks like a usable model and a re-run resumes cleanly. The server resolves
+**once** on the main thread before constructing the worker, so the
+network/cache lookup never touches the GPU thread.
+
 ## The request lifecycle
 
 A request moves through three logical states: **waiting → prefill → decode**, and
@@ -151,6 +180,9 @@ path under `tests/`.
 | --- | --- |
 | `core/config` | Parse `config.json` into a `ModelConfig` (hyperparameters, `rope_scaling`, quantization, EOS/BOS ids). |
 | `core/weights` | Load safetensors (single-file or sharded + index JSON), sanitize key names, cast every tensor to fp16. |
+| `core/model_source` | Resolve a model spec (local dir or HF repo id) to a local snapshot dir; HF-cache reuse + download fallback. |
+| `core/hf_download` | Download HF repos via libcurl (the only HTTP client): list files, filter, fetch through the CDN redirect, atomic rename. |
+| `core/env` | Tiny `env_or`/`env_long` helpers for environment-variable overrides. |
 | `model/llama` | The transformer: embedding, RMSNorm, RoPE, GQA SDPA, SwiGLU, LM head. fp16 and quantized paths; single-stream and batched forward. |
 | `cache/kv_cache` | Single-sequence KV cache (the simplest prefill/decode split). |
 | `cache/batch_kv_cache` | Batched, left-padded KV cache: `update_and_fetch`, `filter` (evict), `merge` (admit), `pad_dummies` (bucketing). |

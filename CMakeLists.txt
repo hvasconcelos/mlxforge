@@ -18,6 +18,7 @@ endif()
 include(cmake/Dependencies.cmake)
 
 find_package(Threads REQUIRED)
+find_package(CURL REQUIRED)  # system libcurl (macOS SDK): HuggingFace model downloads
 
 # --- Engine library ----------------------------------------------------------
 # One static library holding every engine module (core/, model/, cache/,
@@ -25,8 +26,11 @@ find_package(Threads REQUIRED)
 # suite all link against it.
 add_library(mlxforge_core STATIC
   src/core/config.cpp
+  src/core/env.cpp
   src/core/logging.cpp
   src/core/weights.cpp
+  src/core/model_source.cpp
+  src/core/hf_download.cpp
   src/model/llama.cpp
   src/cache/kv_cache.cpp
   src/cache/batch_kv_cache.cpp
@@ -43,6 +47,7 @@ add_library(mlxforge_core STATIC
 )
 target_include_directories(mlxforge_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 target_link_libraries(mlxforge_core PUBLIC mlx nlohmann_json::nlohmann_json Threads::Threads tokenizers_cpp httplib::httplib spdlog::spdlog)
+target_link_libraries(mlxforge_core PRIVATE CURL::libcurl)  # client-only; no curl types in public headers
 target_compile_features(mlxforge_core PUBLIC cxx_std_17)
 
 # --- CLI binary (weight dump + single-stream generation) --------------------

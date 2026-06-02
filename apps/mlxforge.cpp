@@ -1,6 +1,7 @@
 // mlxforge — the OpenAI-compatible server binary.
-//   mlxforge <model_dir> [--host H] [--port P] [--max-ctx N] [--max-waiting N]
-// Loads the tokenizer/config, starts the GPU worker, and serves the HTTP API.
+//   mlxforge <model> [--host H] [--port P] [--max-ctx N] [--max-waiting N]
+// <model> is a local model directory or a HuggingFace repo id (downloaded on
+// first use). Loads the tokenizer/config, starts the GPU worker, serves the HTTP API.
 // Config knobs also read from env (MLXFORGE_HOST, MLXFORGE_PORT, ...). SIGINT/SIGTERM
 // trigger a graceful shutdown that drains in-flight requests.
 #include <csignal>
@@ -11,6 +12,7 @@
 
 #include "core/config.h"
 #include "core/logging.h"
+#include "core/model_source.h"
 #include "core/weights.h"
 #include "model/llama.h"
 #include "runtime/worker.h"
@@ -37,19 +39,29 @@ int main(int argc, char** argv) {
     return 2;
   }
   if (sc.model_dir.empty()) {
-    std::fprintf(stderr, "usage: mlxforge <model_dir> [--host H] [--port P] [--max-ctx N]\n");
+    std::fprintf(stderr, "usage: mlxforge <model> [--host H] [--port P] [--max-ctx N]\n");
     return 2;
   }
 
-  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(sc.model_dir + "/config.json");
+  // Resolve the spec (local dir or HF repo id) to a concrete local dir once, up
+  // front, so the network/cache lookup never happens on the worker thread.
+  std::string dir;
+  try {
+    dir = mlxforge::resolve_model_dir(sc.model_dir);
+  } catch (const std::exception& e) {
+    mlxforge::log::error("model error: {}", e.what());
+    return 2;
+  }
+
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
   mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(
-      sc.model_dir + "/tokenizer.json", cfg.bos_token_id,
+      dir + "/tokenizer.json", cfg.bos_token_id,
       mlxforge::chat_format_from_model_type(cfg.model_type));
 
   mlxforge::Scheduler scheduler;
   scheduler.set_max_waiting(sc.max_waiting);
   mlxforge::Worker worker(
-      [dir = sc.model_dir] {
+      [dir] {
         return std::make_unique<mlxforge::LlamaModel>(
             mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir));
       },

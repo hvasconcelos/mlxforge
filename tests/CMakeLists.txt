@@ -7,6 +7,7 @@ add_executable(mlxforge_tests
   smoke_test.cpp
   core/config_test.cpp
   core/weights_test.cpp
+  core/model_source_test.cpp
   support/reference_test.cpp
   model/llama_front_test.cpp
   model/llama_block_test.cpp

@@ -2,15 +2,18 @@
 //
 //   mlxforge-cli                      build smoke test: add two arrays, eval,
 //                                 print the sum.
-//   mlxforge-cli dump-weights <dir>   load a model dir's weights: print every
+//   mlxforge-cli dump-weights <dir>   load a model's weights: print every
 //                                 key -> shape -> dtype, assert fp16, and report
 //                                 peak resident memory.
-//   mlxforge-cli generate <dir> <prompt> [max_tokens]
+//   mlxforge-cli generate <model> <prompt> [max_tokens]
 //                                 greedy single-stream generation: prefill the
 //                                 prompt (raw text via the chat template, or a
 //                                 pre-tokenized .npy of ids) and stream the
 //                                 detokenized text to stdout until EOS or
 //                                 max_tokens.
+//
+// <dir>/<model> is either a local model directory or a HuggingFace repo id
+// (e.g. mlx-community/Llama-3.2-1B-Instruct-4bit), downloaded on first use.
 
 #include <cstdio>
 #include <string>
@@ -20,6 +23,7 @@
 
 #include "core/config.h"
 #include "core/logging.h"
+#include "core/model_source.h"
 #include "core/weights.h"
 #include "model/llama.h"
 #include "runtime/single_stream.h"
@@ -58,7 +62,8 @@ int run_smoke() {
   return 0;
 }
 
-int run_dump_weights(const std::string& dir) {
+int run_dump_weights(const std::string& spec) {
+  const std::string dir = mlxforge::resolve_model_dir(spec);
   mx::reset_peak_memory();
   mlxforge::Weights w = mlxforge::load_weights(dir);
 
@@ -81,7 +86,8 @@ int run_dump_weights(const std::string& dir) {
   return non_fp16 == 0 ? 0 : 1;
 }
 
-int run_generate(const std::string& dir, const std::string& prompt_arg, int max_tokens) {
+int run_generate(const std::string& spec, const std::string& prompt_arg, int max_tokens) {
+  const std::string dir = mlxforge::resolve_model_dir(spec);
   mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
   mlxforge::LlamaModel model(cfg, mlxforge::load_weights(dir));
   mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(

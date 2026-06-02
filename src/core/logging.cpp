@@ -1,6 +1,5 @@
 #include "core/logging.h"
 
-#include <cstdlib>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -8,16 +7,12 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 
+#include "core/env.h"
+
 namespace mlxforge {
 namespace log {
 
 namespace {
-// Environment override: returns the env value or `fallback` if unset/empty.
-std::string env_or(const char* key, const std::string& fallback) {
-  const char* v = std::getenv(key);
-  return (v && *v) ? std::string(v) : fallback;
-}
-
 std::once_flag g_once;
 }  // namespace
 
