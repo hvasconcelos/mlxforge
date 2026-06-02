@@ -39,7 +39,9 @@ class HttpServer {
 
   // Stream an already-submitted request as SSE chat.completion.chunk frames.
   // Client disconnect (sink write fails) sets cancelled so the worker evicts.
-  void stream_chat(const std::shared_ptr<Request>& req, httplib::Response& res);
+  // When `allow_tools`, output that begins as a JSON object is buffered and, if
+  // it parses as a tool call, emitted as a single tool_calls delta.
+  void stream_chat(const std::shared_ptr<Request>& req, httplib::Response& res, bool allow_tools);
 
  private:
   void setup_routes();

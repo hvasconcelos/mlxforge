@@ -97,10 +97,20 @@ std::string Tokenizer::decode(const std::vector<int>& ids) const {
 
 namespace {
 
+// The preamble Llama-3.2 expects ahead of the tool schemas in the first user
+// turn (mirrors mlx-lm's `tools_in_user_message` rendering).
+constexpr const char* kToolPreamble =
+    "Given the following functions, please respond with a JSON for a function call "
+    "with its proper arguments that best answers the given prompt.\n\n"
+    "Respond in the format {\"name\": function name, \"parameters\": dictionary of "
+    "argument name and its value}. Do not use variables.\n\n";
+
 // Llama-3.2 chat template. The <|begin_of_text|> BOS is added by the encoder, so
 // it is omitted here; the system block carries the default knowledge/date preamble.
+// `tools` (each a function's JSON schema) is injected into the first user turn.
 std::string render_llama3(const std::vector<Tokenizer::Message>& messages,
-                          bool add_generation_prompt, const std::string& today_date) {
+                          bool add_generation_prompt, const std::string& today_date,
+                          const std::vector<std::string>& tools) {
   const std::string date = today_date.empty() ? current_date() : today_date;
   std::string sys_content;
   std::vector<Tokenizer::Message> rest;
@@ -117,9 +127,26 @@ std::string render_llama3(const std::vector<Tokenizer::Message>& messages,
   if (!sys_content.empty()) os << sys_content;
   os << "<|eot_id|>";
 
+  bool tools_injected = false;
   for (const auto& m : rest) {
-    os << "<|start_header_id|>" << m.role << "<|end_header_id|>\n\n"
-       << m.content << "<|eot_id|>";
+    // A tool result is fed back under the model's "ipython" role.
+    if (m.role == "tool") {
+      os << "<|start_header_id|>ipython<|end_header_id|>\n\n" << m.content << "<|eot_id|>";
+      continue;
+    }
+    // Replay a prior assistant tool call as the raw JSON the model emitted.
+    if (m.role == "assistant" && !m.tool_call.empty()) {
+      os << "<|start_header_id|>assistant<|end_header_id|>\n\n" << m.tool_call << "<|eot_id|>";
+      continue;
+    }
+    os << "<|start_header_id|>" << m.role << "<|end_header_id|>\n\n";
+    // Tool schemas precede the content of the first user turn.
+    if (m.role == "user" && !tools.empty() && !tools_injected) {
+      tools_injected = true;
+      os << kToolPreamble;
+      for (const auto& t : tools) os << t << "\n\n";
+    }
+    os << m.content << "<|eot_id|>";
   }
   if (add_generation_prompt) os << "<|start_header_id|>assistant<|end_header_id|>\n\n";
   return os.str();
@@ -129,14 +156,17 @@ std::string render_llama3(const std::vector<Tokenizer::Message>& messages,
 
 std::string Tokenizer::render_chat_template(const std::vector<Message>& messages,
                                             bool add_generation_prompt,
-                                            const std::string& today_date, ChatFormat /*fmt*/) {
-  return render_llama3(messages, add_generation_prompt, today_date);
+                                            const std::string& today_date, ChatFormat /*fmt*/,
+                                            const std::vector<std::string>& tools) {
+  return render_llama3(messages, add_generation_prompt, today_date, tools);
 }
 
 std::vector<int> Tokenizer::apply_chat_template(const std::vector<Message>& messages,
                                                 bool add_generation_prompt,
-                                                const std::string& today_date) const {
-  return encode(render_chat_template(messages, add_generation_prompt, today_date, chat_format_));
+                                                const std::string& today_date,
+                                                const std::vector<std::string>& tools) const {
+  return encode(
+      render_chat_template(messages, add_generation_prompt, today_date, chat_format_, tools));
 }
 
 std::string StreamingDetokenizer::add(int id) {

@@ -1,5 +1,6 @@
 #include "server/openai.h"
 
+#include <sstream>
 #include <stdexcept>
 
 namespace mlxforge {
@@ -14,6 +15,70 @@ std::vector<std::string> parse_stop(const json& body) {
   if (it->is_string()) return {it->get<std::string>()};
   if (it->is_array()) return it->get<std::vector<std::string>>();
   throw std::runtime_error("'stop' must be a string or array of strings");
+}
+
+// Each OpenAI tool is `{"type":"function","function":{name,description,parameters}}`;
+// we render just the function schema (what the model was trained on), tolerating
+// a bare schema (no "function" wrapper).
+std::vector<std::string> parse_tools(const json& body) {
+  auto it = body.find("tools");
+  if (it == body.end() || it->is_null()) return {};
+  if (!it->is_array()) throw std::runtime_error("'tools' must be an array");
+  std::vector<std::string> out;
+  for (const auto& t : *it) {
+    const json& fn = t.contains("function") ? t["function"] : t;
+    if (!fn.contains("name")) throw std::runtime_error("each tool needs a function 'name'");
+    out.push_back(fn.dump(4));  // pretty-printed, matching the reference template
+  }
+  return out;
+}
+
+// tool_choice is a string ("auto"|"none"|"required") or an object naming a
+// function; we collapse the object form to "required".
+std::string parse_tool_choice(const json& body) {
+  auto it = body.find("tool_choice");
+  if (it == body.end() || it->is_null()) return "auto";
+  if (it->is_string()) return it->get<std::string>();
+  if (it->is_object()) return "required";
+  throw std::runtime_error("'tool_choice' must be a string or object");
+}
+
+// Render an OpenAI assistant `tool_calls` array back into the single JSON object
+// the model originally emitted: {"name": "fn", "parameters": {...}}. `arguments`
+// arrives as a JSON string (per the OpenAI spec) but we tolerate an object too.
+std::string render_assistant_tool_call(const json& tool_calls) {
+  if (!tool_calls.is_array() || tool_calls.empty())
+    throw std::runtime_error("'tool_calls' must be a non-empty array");
+  const json& fn = tool_calls.front().at("function");
+  json args = json::object();
+  const json& raw = fn.at("arguments");
+  if (raw.is_string()) {
+    try {
+      args = json::parse(raw.get<std::string>());
+    } catch (const json::parse_error&) {
+      args = json::object();
+    }
+  } else if (raw.is_object()) {
+    args = raw;
+  }
+  return "{\"name\": " + json(fn.at("name").get<std::string>()).dump() +
+         ", \"parameters\": " + args.dump() + "}";
+}
+
+// Parse one chat message into our Message, handling assistant tool_calls (content
+// may be null/absent) and tool-result messages.
+Tokenizer::Message parse_message(const json& m) {
+  if (!m.contains("role")) throw std::runtime_error("each message needs a 'role'");
+  Tokenizer::Message msg;
+  msg.role = m.at("role").get<std::string>();
+  if (msg.role == "assistant" && m.contains("tool_calls") && !m["tool_calls"].is_null()) {
+    msg.tool_call = render_assistant_tool_call(m["tool_calls"]);
+    return msg;  // an assistant tool call carries no textual content
+  }
+  auto c = m.find("content");
+  if (c == m.end() || c->is_null()) throw std::runtime_error("each message needs 'content'");
+  msg.content = c->get<std::string>();
+  return msg;
 }
 
 void parse_common(const json& body, ChatRequest& r) {
@@ -33,6 +98,8 @@ void parse_common(const json& body, ChatRequest& r) {
   r.stream = body.value("stream", false);
   r.n = body.value("n", 1);
   r.stop = parse_stop(body);
+  r.tools = parse_tools(body);
+  r.tool_choice = parse_tool_choice(body);
 }
 }  // namespace
 
@@ -42,11 +109,7 @@ ChatRequest parse_chat_request(const nlohmann::json& body) {
   auto it = body.find("messages");
   if (it == body.end() || !it->is_array() || it->empty())
     throw std::runtime_error("'messages' must be a non-empty array");
-  for (const auto& m : *it) {
-    if (!m.contains("role") || !m.contains("content"))
-      throw std::runtime_error("each message needs 'role' and 'content'");
-    r.messages.push_back({m["role"].get<std::string>(), m["content"].get<std::string>()});
-  }
+  for (const auto& m : *it) r.messages.push_back(parse_message(m));
   parse_common(body, r);
   return r;
 }
@@ -80,6 +143,83 @@ nlohmann::json make_chat_completion(const std::string& id, long created, const s
        json::array({{{"index", 0},
                      {"message", {{"role", "assistant"}, {"content", content}}},
                      {"finish_reason", finish_reason}}})},
+      {"usage", make_usage(prompt_tokens, completion_tokens)},
+  };
+}
+
+namespace {
+std::string trim(const std::string& s) {
+  const auto first = s.find_first_not_of(" \t\r\n");
+  if (first == std::string::npos) return "";
+  return s.substr(first, s.find_last_not_of(" \t\r\n") - first + 1);
+}
+
+// Fill `out` from a parsed JSON object and return true, or return false if it is
+// not a call. The model emits "parameters"; we also accept "arguments".
+bool object_to_call(const json& o, ToolCall& out) {
+  if (!o.is_object() || !o.contains("name") || !o["name"].is_string()) return false;
+  out.name = o["name"].get<std::string>();
+  const json* args = o.contains("parameters") ? &o["parameters"]
+                     : o.contains("arguments") ? &o["arguments"]
+                                               : nullptr;
+  out.arguments = (args && !args->is_null()) ? args->dump() : "{}";
+  return true;
+}
+}  // namespace
+
+std::vector<ToolCall> parse_tool_calls(const std::string& text) {
+  std::string s = trim(text);
+  // mlx-lm strips this special token, but guard against it surviving decode.
+  constexpr const char* kPyTag = "<|python_tag|>";
+  if (s.rfind(kPyTag, 0) == 0) s = trim(s.substr(std::char_traits<char>::length(kPyTag)));
+  if (s.empty() || s.front() != '{') return {};
+
+  std::vector<ToolCall> calls;
+  // The common case: the whole output is a single JSON call object.
+  try {
+    ToolCall c;
+    if (object_to_call(json::parse(s), c)) calls.push_back(c);
+    return calls;
+  } catch (const json::parse_error&) {
+  }
+  // Fallback: Llama emits parallel calls as ';'-separated objects.
+  std::stringstream ss(s);
+  std::string part;
+  while (std::getline(ss, part, ';')) {
+    try {
+      ToolCall c;
+      if (object_to_call(json::parse(trim(part)), c)) calls.push_back(c);
+    } catch (const json::parse_error&) {
+    }
+  }
+  return calls;
+}
+
+nlohmann::json make_tool_calls(const std::vector<ToolCall>& calls) {
+  json arr = json::array();
+  for (size_t i = 0; i < calls.size(); ++i) {
+    arr.push_back({{"id", "call_" + std::to_string(i)},
+                   {"type", "function"},
+                   {"function", {{"name", calls[i].name}, {"arguments", calls[i].arguments}}}});
+  }
+  return arr;
+}
+
+nlohmann::json make_chat_completion_tools(const std::string& id, long created,
+                                          const std::string& model,
+                                          const std::vector<ToolCall>& calls, int prompt_tokens,
+                                          int completion_tokens) {
+  return {
+      {"id", id},
+      {"object", "chat.completion"},
+      {"created", created},
+      {"model", model},
+      {"choices", json::array({{{"index", 0},
+                                {"message",
+                                 {{"role", "assistant"},
+                                  {"content", nullptr},
+                                  {"tool_calls", make_tool_calls(calls)}}},
+                                {"finish_reason", "tool_calls"}}})},
       {"usage", make_usage(prompt_tokens, completion_tokens)},
   };
 }

@@ -28,8 +28,12 @@ ChatFormat chat_format_from_model_type(const std::string& model_type);
 class Tokenizer {
  public:
   struct Message {
-    std::string role;     // "system" | "user" | "assistant"
+    std::string role;     // "system" | "user" | "assistant" | "tool"
     std::string content;
+    // For an assistant turn that called a tool: the rendered call object
+    // `{"name": ..., "parameters": {...}}` replayed verbatim into the prompt.
+    // Empty for ordinary messages. Llama-3.2 emits a single call per turn.
+    std::string tool_call;
   };
 
   // Load from a tokenizer.json file. `bos_id` is prepended on encode (the Rust
@@ -46,16 +50,20 @@ class Tokenizer {
 
   // Render the model's chat template and encode it. For Llama-3.2 this injects
   // the default "Cutting Knowledge / Today Date" system preamble; `today_date`
-  // (formatted like "01 Jun 2026", empty = current date) is Llama-only.
+  // (formatted like "01 Jun 2026", empty = current date) is Llama-only. When
+  // `tools` is non-empty each entry (a function's JSON schema, rendered
+  // verbatim) is injected into the first user turn so the model can call it.
   std::vector<int> apply_chat_template(const std::vector<Message>& messages,
                                        bool add_generation_prompt = true,
-                                       const std::string& today_date = "") const;
+                                       const std::string& today_date = "",
+                                       const std::vector<std::string>& tools = {}) const;
 
   // Build just the templated prompt string (no encoding) — used by the encoder
   // above and exposed for tests.
   static std::string render_chat_template(const std::vector<Message>& messages,
                                           bool add_generation_prompt, const std::string& today_date,
-                                          ChatFormat fmt = ChatFormat::Llama3);
+                                          ChatFormat fmt = ChatFormat::Llama3,
+                                          const std::vector<std::string>& tools = {});
 
  private:
   // BpeTokenizer is pure/const and thread-safe, so encode/decode need no mutex.

@@ -69,6 +69,33 @@ TEST_CASE("chat template matches mlx-lm exactly") {
   CHECK(ids == load_token_ids("chat_ids.npy"));
 }
 
+TEST_CASE("chat template renders tools and tool turns (no model needed)") {
+  using mlxforge::Tokenizer;
+  const std::string schema = R"({"name": "get_weather"})";
+
+  // Tools are injected into the first user turn, after the preamble.
+  std::string with_tools = Tokenizer::render_chat_template(
+      {{"user", "weather in SF?"}}, /*add_generation_prompt=*/true, /*today_date=*/"01 Jun 2026",
+      mlxforge::ChatFormat::Llama3, /*tools=*/{schema});
+  CHECK(with_tools.find("Respond in the format") != std::string::npos);
+  CHECK(with_tools.find(schema) != std::string::npos);
+  // The schema precedes the user's actual question within the user turn.
+  CHECK(with_tools.find(schema) < with_tools.find("weather in SF?"));
+
+  // No tools => no preamble, plain user turn.
+  std::string no_tools = Tokenizer::render_chat_template(
+      {{"user", "weather in SF?"}}, true, "01 Jun 2026", mlxforge::ChatFormat::Llama3, {});
+  CHECK(no_tools.find("Respond in the format") == std::string::npos);
+
+  // An assistant tool_call replays as raw JSON; a tool result uses the ipython role.
+  Tokenizer::Message call{"assistant", ""};
+  call.tool_call = R"({"name": "get_weather", "parameters": {"city": "SF"}})";
+  std::string convo = Tokenizer::render_chat_template(
+      {{"user", "weather in SF?"}, call, {"tool", "{\"temp\": 21}"}}, true, "01 Jun 2026");
+  CHECK(convo.find(call.tool_call) != std::string::npos);
+  CHECK(convo.find("ipython<|end_header_id|>\n\n{\"temp\": 21}") != std::string::npos);
+}
+
 TEST_CASE("streaming detokenizer never emits broken UTF-8") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");

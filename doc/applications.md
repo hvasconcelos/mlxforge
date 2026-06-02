@@ -63,9 +63,10 @@ non-fp16 weights); `error` for caught exceptions in the worker loop.
 | GET | `/health` | Liveness / readiness (`503` until the model has loaded). |
 
 **Supported request fields:** `model`, `messages[]` (chat) or `prompt`
-(completions), `max_tokens`, `temperature`, `top_p`, `stream`, `stop`, `n`,
-`seed`. Chat requests are rendered through the model's chat template before
-tokenization.
+(completions), `max_tokens`, `temperature`, `top_p`, `top_k`, `stream`, `stop`,
+`n`, `seed`, plus `tools` / `tool_choice` for function calling (see
+[Tool / function calling](#tool--function-calling)). Chat requests are rendered
+through the model's chat template before tokenization.
 
 **Responses:**
 
@@ -113,6 +114,87 @@ for ev in c.chat.completions.create(
         messages=[{"role": "user", "content": "Tell me a joke."}],
         max_tokens=64, stream=True):
     print(ev.choices[0].delta.content or "", end="", flush=True)
+```
+
+### Tool / function calling
+
+The chat endpoint implements the OpenAI tool-calling surface, so the model can
+ask the client to run a function and continue from its result — the basis for
+agentic, multi-turn loops (e.g. *create a branch → implement → run tests →
+commit*).
+
+**Request fields.** `tools` is an array of function definitions; `tool_choice`
+is `"auto"` (default), `"none"` (suppress tools entirely), or `"required"` (an
+object naming a function is also accepted and collapsed to `"required"`).
+
+```jsonc
+{
+  "model": "mlxforge",
+  "messages": [{"role": "user", "content": "What's the weather in SF?"}],
+  "tools": [{
+    "type": "function",
+    "function": {
+      "name": "get_weather",
+      "description": "Current weather for a city",
+      "parameters": {
+        "type": "object",
+        "properties": {"city": {"type": "string"}},
+        "required": ["city"]
+      }
+    }
+  }]
+}
+```
+
+**How it flows.** When `tools` are present (and `tool_choice != "none"`), each
+function schema is injected into the first user turn of the chat template, ahead
+of the question, with the Llama-3.2 tool preamble. If the model responds with a
+call, the response carries `message.tool_calls` (and `content: null`) with
+`finish_reason: "tool_calls"`:
+
+```jsonc
+"message": {
+  "role": "assistant",
+  "content": null,
+  "tool_calls": [{
+    "id": "call_0", "type": "function",
+    "function": {"name": "get_weather", "arguments": "{\"city\":\"SF\"}"}
+  }]
+}
+```
+
+The client executes the function, appends the assistant turn and a
+`{"role": "tool", "content": "<result>"}` message, and calls the endpoint again;
+the tool result is replayed under the model's `ipython` role so it can produce
+the final answer. Parallel calls emitted as `;`-separated JSON objects are parsed
+into multiple `tool_calls`. If the model replies with prose instead of a call,
+the response is an ordinary `chat.completion` — there is no forced call.
+
+**Streaming.** With tools enabled, output that begins with `{` is buffered until
+it can be classified; a confirmed call is emitted as a single `tool_calls` delta
+(arguments are not streamed incrementally), while plain text streams live as
+usual.
+
+**Caveat.** This is the protocol plumbing. How reliably a given model plans and
+emits well-formed calls depends on the model — the small Llama-3.2 1B/3B
+checkpoints are weak tool planners, so validate against your target model before
+relying on it for an autonomous loop.
+
+```python
+# one round-trip of the tool loop with the openai client
+tools = [{"type": "function", "function": {
+    "name": "get_weather", "description": "Current weather for a city",
+    "parameters": {"type": "object", "properties": {"city": {"type": "string"}},
+                   "required": ["city"]}}}]
+msgs = [{"role": "user", "content": "What's the weather in SF?"}]
+
+r = c.chat.completions.create(model="mlxforge", messages=msgs, tools=tools)
+call = r.choices[0].message.tool_calls[0]                  # finish_reason == "tool_calls"
+msgs.append(r.choices[0].message)
+msgs.append({"role": "tool", "tool_call_id": call.id,
+             "content": '{"temp_c": 21}'})                 # the function's result
+final = c.chat.completions.create(model="mlxforge", messages=msgs, tools=tools)
+print(final.choices[0].message.content)
 ```
 
 ## The CLI: `mlxforge-cli`

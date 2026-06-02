@@ -41,7 +41,9 @@ std::string HttpServer::next_id(const char* prefix) {
 
 std::shared_ptr<Request> HttpServer::make_request(const ChatRequest& cr) const {
   auto req = std::make_shared<Request>();
-  req->prompt_ids = cr.is_chat ? tok_->apply_chat_template(cr.messages)
+  // tool_choice "none" suppresses the schemas (and later, the output parsing).
+  const std::vector<std::string> tools = cr.tools_enabled() ? cr.tools : std::vector<std::string>{};
+  req->prompt_ids = cr.is_chat ? tok_->apply_chat_template(cr.messages, true, "", tools)
                                : tok_->encode(cr.messages.front().content);
   req->params = cr.params;
   req->max_tokens = cr.max_tokens;
@@ -63,6 +65,12 @@ nlohmann::json HttpServer::run_blocking(const std::shared_ptr<Request>& req,
   const int completion_tokens = static_cast<int>(out.size());
 
   if (cr.is_chat) {
+    if (cr.tools_enabled()) {
+      auto calls = parse_tool_calls(content);
+      if (!calls.empty())
+        return make_chat_completion_tools(next_id("chatcmpl-"), created, model_name_, calls,
+                                          prompt_tokens, completion_tokens);
+    }
     return make_chat_completion(next_id("chatcmpl-"), created, model_name_, content, finish,
                                 prompt_tokens, completion_tokens);
   }
@@ -75,7 +83,8 @@ nlohmann::json HttpServer::run_blocking(const std::shared_ptr<Request>& req,
           {"usage", make_usage(prompt_tokens, completion_tokens)}};
 }
 
-void HttpServer::stream_chat(const std::shared_ptr<Request>& req, httplib::Response& res) {
+void HttpServer::stream_chat(const std::shared_ptr<Request>& req, httplib::Response& res,
+                             bool allow_tools) {
   const std::string id = next_id("chatcmpl-");
   const long created = static_cast<long>(std::time(nullptr));
   const std::string model = model_name_;
@@ -83,32 +92,63 @@ void HttpServer::stream_chat(const std::shared_ptr<Request>& req, httplib::Respo
 
   res.set_chunked_content_provider(
       "text/event-stream",
-      [req, id, created, model, tok](size_t /*offset*/, httplib::DataSink& sink) -> bool {
+      [req, id, created, model, tok, allow_tools](size_t /*offset*/,
+                                                  httplib::DataSink& sink) -> bool {
         auto send = [&](const std::string& frame) {
           if (sink.write(frame.data(), frame.size())) return true;
           req->cancelled.store(true);  // client disconnected -> worker evicts
           return false;
+        };
+        auto send_content = [&](const std::string& s) {
+          return s.empty() || send(sse_frame(make_chat_chunk(id, created, model,
+                                                             {{"content", s}}, nullptr)));
         };
 
         // First chunk announces the assistant role.
         if (!send(sse_frame(make_chat_chunk(id, created, model, {{"role", "assistant"}}, nullptr))))
           return false;
 
+        // With tools enabled we can't stream incrementally until we know the
+        // output isn't a tool call, so buffer until the first non-space char
+        // (a leading '{' => candidate call) decides; plain text streams live.
         StreamingDetokenizer detok(*tok);
+        std::string buffered;            // only accumulated while `buffering`
+        bool buffering = allow_tools;
         int t = 0;
         while (req->tokens.pop(t)) {
           std::string piece = detok.add(t);
           if (piece.empty()) continue;
-          if (!send(sse_frame(make_chat_chunk(id, created, model, {{"content", piece}}, nullptr))))
+          if (buffering) {
+            buffered += piece;
+            const size_t lead = buffered.find_first_not_of(" \t\r\n");
+            if (lead == std::string::npos) continue;  // still only whitespace
+            if (buffered[lead] == '{') continue;      // candidate tool call: keep buffering
+            buffering = false;                         // plain text: flush what we held
+            if (!send_content(buffered)) return false;
+            buffered.clear();
+          } else if (!send_content(piece)) {
             return false;
+          }
         }
-        std::string tail = detok.finish();
-        if (!tail.empty() &&
-            !send(sse_frame(make_chat_chunk(id, created, model, {{"content", tail}}, nullptr))))
-          return false;
+        const std::string tail = detok.finish();
+
+        std::string finish = finish_reason_of(req->finish_reason);
+        if (buffering) {
+          // The whole output was held back as a tool-call candidate.
+          buffered += tail;
+          auto calls = parse_tool_calls(buffered);
+          if (!calls.empty()) {
+            json delta = {{"tool_calls", make_tool_calls(calls)}};
+            if (!send(sse_frame(make_chat_chunk(id, created, model, delta, nullptr)))) return false;
+            finish = "tool_calls";
+          } else if (!send_content(buffered)) {
+            return false;  // not a call after all: emit as content
+          }
+        } else if (!send_content(tail)) {
+          return false;  // trailing text from detok.finish()
+        }
 
         // Final chunk carries the finish_reason, then the [DONE] sentinel.
-        const std::string finish = finish_reason_of(req->finish_reason);
         send(sse_frame(make_chat_chunk(id, created, model, json::object(), finish)));
         send(kSseDone);
         return false;  // stream complete
@@ -151,7 +191,7 @@ void HttpServer::setup_routes() {
         return;
       }
       if (chat && cr.stream) {
-        stream_chat(req, res);
+        stream_chat(req, res, cr.tools_enabled());
       } else {
         res.set_content(run_blocking(req, cr).dump(), "application/json");
       }

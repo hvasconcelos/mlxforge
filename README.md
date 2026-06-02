@@ -32,8 +32,9 @@ re-onboarded later. See [Supported models](#supported-models).
   (no Rust), the Llama-3.2 chat template (selected from `config.json`'s
   `model_type`), and UTF-8-safe incremental detokenization.
 - **OpenAI server** (cpp-httplib) — `/v1/chat/completions`, `/v1/completions`,
-  `/v1/models`, `/health`; non-streaming and SSE streaming; cancellation on
-  client disconnect; per-request metrics; OpenAI-shaped errors (400/429/503).
+  `/v1/models`, `/health`; non-streaming and SSE streaming; tool / function
+  calling (`tools` / `tool_choice` → `tool_calls`); cancellation on client
+  disconnect; per-request metrics; OpenAI-shaped errors (400/429/503).
 - **Optional 4-bit quantization** — `quantized_matmul` (group_size 64), ~0.65
   GiB resident vs ~2.3 GiB fp16.
 - **Configurable logging** (spdlog) — `debug`/`info`/`warn`/`error` across the

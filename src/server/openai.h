@@ -23,6 +23,19 @@ struct ChatRequest {
   bool stream = false;
   std::vector<std::string> stop;
   int n = 1;
+  // Each entry is one tool's function schema (JSON), rendered into the prompt by
+  // the chat template. `tool_choice` is "auto" (default) | "none" | "required".
+  std::vector<std::string> tools;
+  std::string tool_choice = "auto";
+
+  // Whether the model should be offered tools and its output parsed for calls.
+  bool tools_enabled() const { return !tools.empty() && tool_choice != "none"; }
+};
+
+// A tool call parsed from the model's output (or to be serialized in a response).
+struct ToolCall {
+  std::string name;       // function name
+  std::string arguments;  // JSON object string (OpenAI `function.arguments`)
 };
 
 // Parse a chat-completions body. Throws std::runtime_error on malformed JSON
@@ -39,6 +52,21 @@ nlohmann::json make_usage(int prompt_tokens, int completion_tokens);
 nlohmann::json make_chat_completion(const std::string& id, long created, const std::string& model,
                                     const std::string& content, const std::string& finish_reason,
                                     int prompt_tokens, int completion_tokens);
+
+// Detect a Llama-3.2 tool call in the model's decoded output. Returns the parsed
+// calls, or an empty vector when the text is not a tool call (treat as content).
+std::vector<ToolCall> parse_tool_calls(const std::string& text);
+
+// Serialize tool calls into the OpenAI `message.tool_calls` array. Ids are
+// deterministic ("call_0", "call_1", ...) so responses are reproducible.
+nlohmann::json make_tool_calls(const std::vector<ToolCall>& calls);
+
+// chat.completion whose assistant turn is a set of tool calls: content is null
+// and finish_reason is "tool_calls".
+nlohmann::json make_chat_completion_tools(const std::string& id, long created,
+                                          const std::string& model,
+                                          const std::vector<ToolCall>& calls, int prompt_tokens,
+                                          int completion_tokens);
 
 // GET /v1/models payload.
 nlohmann::json make_models_list(const std::string& model);
