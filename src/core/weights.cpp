@@ -68,6 +68,16 @@ const mx::array& Weights::at(const std::string& key) const {
   return it->second;
 }
 
+bool Weights::is_quantized(const std::string& weight_key, QuantParams& out) const {
+  static const std::string kWeightSuffix = ".weight";
+  if (!ends_with(weight_key, kWeightSuffix)) return false;
+  const std::string base = weight_key.substr(0, weight_key.size() - kWeightSuffix.size());
+  if (!tensors.count(base + ".scales")) return false;
+  auto it = quant.find(base);
+  out = (it != quant.end()) ? it->second : QuantParams{};
+  return true;
+}
+
 std::string Weights::summary() const {
   std::vector<std::string> keys;
   keys.reserve(tensors.size());
@@ -102,7 +112,21 @@ void absorb(std::unordered_map<std::string, mx::array>& out,
 }
 }  // namespace
 
-Weights load_weights(const std::string& model_dir) {
+namespace {
+// Record quant params for every quantized weight: any base with a ".scales"
+// sibling is quantized; its group_size/bits come from the model config (per-
+// module override if present, else the model defaults).
+void index_quantized(Weights& w, const ModelConfig& cfg) {
+  static const std::string kScales = ".scales";
+  for (const auto& [key, _] : w.tensors) {
+    if (!ends_with(key, kScales)) continue;
+    const std::string base = key.substr(0, key.size() - kScales.size());
+    w.quant.emplace(base, cfg.quant_for(base));
+  }
+}
+}  // namespace
+
+Weights load_weights(const std::string& model_dir, const ModelConfig& cfg) {
   const std::string index_path = model_dir + "/model.safetensors.index.json";
   Weights w;
 
@@ -133,6 +157,10 @@ Weights load_weights(const std::string& model_dir) {
             non_fp16);
   if (non_fp16 > 0)
     log::warn("weights: {} tensors are not fp16 (expected for quantized models)", non_fp16);
+
+  index_quantized(w, cfg);
+  if (!w.quant.empty())
+    log::info("weights: {} quantized weights detected", w.quant.size());
   return w;
 }
 

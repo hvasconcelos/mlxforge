@@ -25,6 +25,7 @@
 #include "mlx/mlx.h"
 
 #include "core/config.h"
+#include "core/gguf.h"
 #include "core/logging.h"
 #include "core/model_source.h"
 #include "core/weights.h"
@@ -44,6 +45,34 @@ bool ends_with(const std::string& s, const std::string& suffix) {
 }  // namespace
 
 namespace {
+
+// A loaded model + its tokenizer + config, from either a GGUF file or a
+// safetensors model directory. The model is heap-owned so it can be moved out
+// of the loader without requiring LlamaModel to be movable.
+struct LoadedModel {
+  std::unique_ptr<mlxforge::LlamaModel> model;
+  mlxforge::Tokenizer tok;
+  mlxforge::ModelConfig cfg;
+};
+
+// Resolve a model spec and load it for single-stream inference, dispatching on
+// whether it resolves to a GGUF file or a safetensors directory.
+LoadedModel load_for_inference(const std::string& spec) {
+  const std::string resolved = mlxforge::resolve_model_dir(spec);
+  LoadedModel lm;
+  if (mlxforge::is_gguf_path(resolved)) {
+    mlxforge::GgufModel g = mlxforge::load_gguf_model(resolved);
+    lm.cfg = g.config;
+    lm.tok = mlxforge::Tokenizer::from_gguf(g.tokens, g.merges, g.token_types, g.pre, g.bos_id);
+    lm.model = std::make_unique<mlxforge::LlamaModel>(std::move(g.config), std::move(g.weights));
+  } else {
+    lm.cfg = mlxforge::ModelConfig::from_file(resolved + "/config.json");
+    lm.model = std::make_unique<mlxforge::LlamaModel>(lm.cfg, mlxforge::load_weights(resolved, lm.cfg));
+    lm.tok = mlxforge::Tokenizer::from_file(resolved + "/tokenizer.json", lm.cfg.bos_token_id,
+                                            mlxforge::chat_format_from_model_type(lm.cfg.model_type));
+  }
+  return lm;
+}
 
 // build smoke test: verifies MLX graph building/eval and prints result
 int run_smoke() {
@@ -75,12 +104,19 @@ int run_smoke() {
 
 // Loads all weights from a model directory and checks their dtypes.
 int run_dump_weights(const std::string& spec) {
-  // Resolve the directory for the model, possibly downloading it
-  const std::string dir = mlxforge::resolve_model_dir(spec);
+  // Resolve the model spec, possibly downloading it
+  const std::string resolved = mlxforge::resolve_model_dir(spec);
   // Reset the recorded peak device memory for accurate measurement
   mx::reset_peak_memory();
-  // Actually load all weight tensors from the directory
-  mlxforge::Weights w = mlxforge::load_weights(dir);
+  // Load all weight tensors (cfg supplies the quant params used to tag quantized
+  // tensors). GGUF carries its config in-file; safetensors reads config.json.
+  mlxforge::Weights w;
+  if (mlxforge::is_gguf_path(resolved)) {
+    w = std::move(mlxforge::load_gguf_model(resolved).weights);
+  } else {
+    mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(resolved + "/config.json");
+    w = mlxforge::load_weights(resolved, cfg);
+  }
 
   // Materialize (evaluate) all tensors so memory usage is valid,
   // and enforce that any fp16 cast is done before measurement
@@ -115,20 +151,11 @@ int run_dump_weights(const std::string& spec) {
 
 // Performs generation using a loaded model, with either raw text or pre-tokenized prompts.
 int run_generate(const std::string& spec, const std::string& prompt_arg, int max_tokens) {
-  // Resolve and load the model directory (downloading if needed)
-  const std::string dir = mlxforge::resolve_model_dir(spec);
-
-  // Load the model configuration from file
-  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
-
-  // Load the model weights and construct the LlamaModel
-  mlxforge::LlamaModel model(cfg, mlxforge::load_weights(dir));
-
-  // Load the tokenizer with proper configuration
-  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(
-      dir + "/tokenizer.json", cfg.bos_token_id,
-      mlxforge::chat_format_from_model_type(cfg.model_type)
-  );
+  // Resolve and load the model (GGUF file or safetensors dir; downloads if needed)
+  LoadedModel lm = load_for_inference(spec);
+  mlxforge::LlamaModel& model = *lm.model;
+  mlxforge::Tokenizer& tok = lm.tok;
+  const mlxforge::ModelConfig& cfg = lm.cfg;
 
   // Prepare the prompt, either by loading a .npy of pre-tokenized ids
   // or by applying the chat template to the provided raw prompt text.
@@ -176,12 +203,9 @@ int run_generate(const std::string& spec, const std::string& prompt_arg, int max
 // invocations and against mlx-lm. No detokenize callback, so decode timing is
 // the pure forward pass.
 int run_bench(const std::string& spec, int max_tokens, int runs) {
-  const std::string dir = mlxforge::resolve_model_dir(spec);
-  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
-  mlxforge::LlamaModel model(cfg, mlxforge::load_weights(dir));
-  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(
-      dir + "/tokenizer.json", cfg.bos_token_id,
-      mlxforge::chat_format_from_model_type(cfg.model_type));
+  LoadedModel lm = load_for_inference(spec);
+  mlxforge::LlamaModel& model = *lm.model;
+  mlxforge::Tokenizer& tok = lm.tok;
 
   // A fixed prompt keeps prefill length (and therefore TTFT) constant.
   const std::vector<int> prompt =

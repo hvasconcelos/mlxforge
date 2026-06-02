@@ -31,6 +31,16 @@ class BpeTokenizer {
   // malformed or not a byte-level BPE model (see is_supported).
   static BpeTokenizer from_blob(const std::string& tokenizer_json);
 
+  // Build directly from GGUF tokenizer metadata (no tokenizer.json): `tokens`
+  // is the id->token table (already in the GPT-2 byte-level alphabet), `merges`
+  // holds "L R" pairs by rank, `token_types` marks each id (3=CONTROL /
+  // 4=USER_DEFINED are special), and `pre` names the pretokenizer (only the
+  // Llama-3 byte-level variants are accepted). Throws on an unsupported `pre`.
+  static BpeTokenizer from_gguf(const std::vector<std::string>& tokens,
+                                const std::vector<std::string>& merges,
+                                const std::vector<int>& token_types,
+                                const std::string& pre);
+
   // Encode text to token ids. Does NOT prepend BOS — the Tokenizer wrapper owns
   // that, matching tokenizers-cpp's Encode (which skips the post-processor).
   // Special-token literals present in the input are emitted as their ids.

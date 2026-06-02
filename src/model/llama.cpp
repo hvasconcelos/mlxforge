@@ -30,6 +30,18 @@ mx::array compute_rope_freqs(const ModelConfig& cfg) {
   mx::array exponent = mx::divide(idx, mx::array(static_cast<float>(hd)));
   mx::array freqs = mx::power(mx::array(base), exponent);
 
+  // GGUF checkpoints bake the llama3 rescaling into a per-dimension factor array
+  // (no scaling params in the metadata): final freqs = base**(2i/d) * factors.
+  // This reproduces mlx_lm's Llama3RoPE `_freqs` exactly (validated against the
+  // rope_freqs.npy golden fixture).
+  if (cfg.rope_freq_factors) {
+    mx::array factors = mx::array(cfg.rope_freq_factors->data(),
+                                  {static_cast<int>(cfg.rope_freq_factors->size())}, mx::float32);
+    freqs = mx::multiply(freqs, factors);
+    mx::eval(freqs);
+    return freqs;
+  }
+
   if (!cfg.rope_scaling || cfg.rope_scaling->rope_type != "llama3") {
     mx::eval(freqs);
     return freqs;
@@ -95,24 +107,28 @@ const mx::array& LlamaModel::layer_w(int i, const std::string& suffix) const {
 }
 
 mx::array LlamaModel::linear(const mx::array& x, const std::string& weight_key) const {
-  if (cfg_.quantized) {
-    // weight_key ends with ".weight"; scales/biases share the same base.
+  // Quantization is detected per-weight (a "<base>.scales" sibling), not from a
+  // global flag: a checkpoint may mix quantized and dense weights (GGUF) or vary
+  // bit-width per layer (mixed-precision MLX repos).
+  QuantParams qp;
+  if (w_.is_quantized(weight_key, qp)) {
     static constexpr std::string_view kWeightSuffix = ".weight";
     const std::string base = weight_key.substr(0, weight_key.size() - kWeightSuffix.size());
     return mx::quantized_matmul(x, w_.at(weight_key), w_.at(base + ".scales"),
-                                w_.at(base + ".biases"), /*transpose=*/true, cfg_.quant_group_size,
-                                cfg_.quant_bits);
+                                w_.at(base + ".biases"), /*transpose=*/true, qp.group_size,
+                                qp.bits);
   }
   return mx::matmul(x, mx::transpose(w_.at(weight_key)));  // weight is (out, in)
 }
 
 mx::array LlamaModel::embed(const mx::array& tokens) const {
-  if (cfg_.quantized) {
+  QuantParams qp;
+  if (w_.is_quantized("model.embed_tokens.weight", qp)) {
     // Gather the quantized rows for these tokens, then dequantize just those.
     mx::array w = mx::take(w_.at("model.embed_tokens.weight"), tokens, /*axis=*/0);
     mx::array s = mx::take(w_.at("model.embed_tokens.scales"), tokens, /*axis=*/0);
     mx::array b = mx::take(w_.at("model.embed_tokens.biases"), tokens, /*axis=*/0);
-    return mx::dequantize(w, s, b, cfg_.quant_group_size, cfg_.quant_bits);
+    return mx::dequantize(w, s, b, qp.group_size, qp.bits);
   }
   return mx::take(w_.at("model.embed_tokens.weight"), tokens, /*axis=*/0);
 }

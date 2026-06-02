@@ -101,7 +101,25 @@ std::string mlxforge_cache_root() {
   return (fs::path(home) / ".cache" / "mlxforge").string();
 }
 
+namespace {
+bool has_gguf_suffix(const std::string& s) {
+  if (s.size() < 5) return false;
+  std::string tail = s.substr(s.size() - 5);
+  for (char& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return tail == ".gguf";
+}
+}  // namespace
+
 std::string resolve_model_dir(const std::string& spec) {
+  // Tier 0: a local GGUF file (self-contained: config + tokenizer + weights).
+  // Returned verbatim; callers detect it with is_gguf_path and route to the
+  // GGUF loader instead of expecting a config.json directory.
+  std::error_code gec;
+  if (has_gguf_suffix(spec) && fs::is_regular_file(spec, gec)) {
+    log::info("model: using local GGUF file '{}'", spec);
+    return spec;
+  }
+
   // Tier 1: an explicit local model directory.
   if (is_model_dir(spec)) {
     log::info("model: using local dir '{}'", spec);

@@ -417,4 +417,43 @@ BpeTokenizer BpeTokenizer::from_blob(const std::string& tokenizer_json) {
   return t;
 }
 
+BpeTokenizer BpeTokenizer::from_gguf(const std::vector<std::string>& tokens,
+                                     const std::vector<std::string>& merges,
+                                     const std::vector<int>& token_types,
+                                     const std::string& pre) {
+  // The hand-rolled pre-tokenizer regex (match_piece) and byte-level pipeline
+  // are correct only for the Llama-3 byte-level BPE variants.
+  if (pre != "llama-bpe" && pre != "llama3" && pre != "gpt2") {
+    throw std::runtime_error("bpe: unsupported gguf pretokenizer '" + pre +
+                             "' (expected llama-bpe/llama3/gpt2)");
+  }
+  if (tokens.empty()) throw std::runtime_error("bpe: gguf has no tokenizer.ggml.tokens");
+
+  BpeTokenizer t;
+  t.token_to_id_.reserve(tokens.size());
+  t.id_to_token_.assign(tokens.begin(), tokens.end());  // dense id -> token
+  for (int id = 0; id < static_cast<int>(tokens.size()); ++id) {
+    t.token_to_id_.emplace(tokens[id], id);
+    // token_type 3 (CONTROL) / 4 (USER_DEFINED) are the special/added tokens.
+    const int tt = id < static_cast<int>(token_types.size()) ? token_types[id] : 1;
+    if (tt == 3 || tt == 4) {
+      t.special_ids_.insert(id);
+      t.special_tokens_.emplace_back(tokens[id], id);
+      if (!tokens[id].empty()) t.special_first_bytes_.insert(static_cast<unsigned char>(tokens[id][0]));
+    }
+  }
+
+  t.merge_ranks_.reserve(merges.size());
+  int rank = 0;
+  for (const auto& m : merges) t.merge_ranks_.emplace(m, rank++);  // each entry is "L R"
+
+  // Longest literal first so e.g. "<|eot_id|>" wins over any shorter prefix.
+  std::sort(t.special_tokens_.begin(), t.special_tokens_.end(),
+            [](const auto& a, const auto& b) { return a.first.size() > b.first.size(); });
+
+  log::info("bpe: loaded from gguf vocab={} merges={} special_tokens={} pre='{}'",
+            t.token_to_id_.size(), t.merge_ranks_.size(), t.special_ids_.size(), pre);
+  return t;
+}
+
 }  // namespace mlxforge

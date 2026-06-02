@@ -43,6 +43,14 @@ class Tokenizer {
   static Tokenizer from_file(const std::string& tokenizer_json_path, int bos_id = 128000,
                              ChatFormat fmt = ChatFormat::Llama3);
 
+  // Build from GGUF tokenizer metadata (no tokenizer.json on disk). The arrays
+  // come from a parsed GGUF file (see core/gguf.h); `bos_id` is prepended on
+  // encode. Throws if `pre` is not a supported byte-level BPE variant.
+  static Tokenizer from_gguf(const std::vector<std::string>& tokens,
+                             const std::vector<std::string>& merges,
+                             const std::vector<int>& token_types, const std::string& pre,
+                             int bos_id = 128000, ChatFormat fmt = ChatFormat::Llama3);
+
   // Encode prepends the configured BOS id (when >= 0), matching mlx-lm's
   // tok.encode for the model.
   std::vector<int> encode(const std::string& text) const;

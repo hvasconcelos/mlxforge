@@ -25,7 +25,7 @@ inline bool model_available() {
 inline LlamaModel& shared_model() {
   static LlamaModel model = [] {
     ModelConfig cfg = ModelConfig::from_file(model_dir() + "/config.json");
-    Weights w = load_weights(model_dir());
+    Weights w = load_weights(model_dir(), cfg);
     return LlamaModel(std::move(cfg), std::move(w));
   }();
   return model;

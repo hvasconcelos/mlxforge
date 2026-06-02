@@ -84,10 +84,24 @@ ModelConfig ModelConfig::from_json(const nlohmann::json& j) {
   c.rope_scaling = parse_rope_scaling(j);
 
   // If a quantization sub-object exists, extract its config fields as well.
+  // The block carries top-level defaults (group_size/bits) plus, for
+  // mixed-precision checkpoints, per-module overrides keyed by the module path
+  // (the weight base, e.g. "model.layers.0.mlp.down_proj"). A per-module value
+  // is an object with its own bits/group_size; a bare `false` means the module
+  // is left dense (no override needed — it simply has no ".scales" tensor).
   if (auto it = j.find("quantization"); it != j.end() && it->is_object()) {
     c.quantized = true;
     c.quant_group_size = it->value("group_size", c.quant_group_size);
     c.quant_bits = it->value("bits", c.quant_bits);
+    for (const auto& [key, val] : it->items()) {
+      if (key == "group_size" || key == "bits") continue;  // top-level defaults
+      if (val.is_object() && val.contains("bits")) {
+        QuantParams qp;
+        qp.group_size = val.value("group_size", c.quant_group_size);
+        qp.bits = val.value("bits", c.quant_bits);
+        c.quant_overrides.emplace(key, qp);
+      }
+    }
   }
   return c;
 }

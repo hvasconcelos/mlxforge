@@ -10,7 +10,8 @@ template and special-token handling, which are selected automatically from
 | Family | Example repo | Precision | Chat format | End-to-end |
 | --- | --- | --- | --- | --- |
 | Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-bf16` | fp16 (cast on load) | `<\|start_header_id\|>…` | yes |
-| Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 4-bit | `<\|start_header_id\|>…` | yes |
+| Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 4-bit (mixed bits ok) | `<\|start_header_id\|>…` | yes |
+| Llama-3.2 (GGUF) | `bartowski/Llama-3.2-1B-Instruct-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | `<\|start_header_id\|>…` | yes |
 
 Support is currently limited to **Llama-3.2** while the engine stabilizes. Other
 LLaMA-family models will be re-onboarded later; because the forward pass is
@@ -35,6 +36,41 @@ A "model directory" is any folder containing `config.json`, `tokenizer.json`, an
 the safetensors weights (single `model.safetensors`, or sharded
 `model-0000N-of-*.safetensors` plus the index JSON). The HF cache snapshot dir
 (`~/.cache/huggingface/hub/.../snapshots/<rev>`) works directly.
+
+### GGUF (single-file, self-contained)
+
+A `.gguf` file bundles the config, tokenizer, and weights in one file (no
+`config.json` / `tokenizer.json` on disk). Point either binary at the file path:
+
+```sh
+hf download bartowski/Llama-3.2-1B-Instruct-GGUF --include "*Q4_K_M.gguf"
+./build/mlxforge-cli generate /path/to/Llama-3.2-1B-Instruct-Q4_K_M.gguf "What is the capital of France?" 64
+./build/mlxforge /path/to/Llama-3.2-1B-Instruct-Q4_K_M.gguf --port 8080
+```
+
+`core/gguf` parses the file itself (it does **not** use `mx::load_gguf`, whose
+bundled gguflib mis-handles several quant types — see below): it reads the
+metadata to build the `ModelConfig` and BPE tokenizer, then loads every tensor,
+remapping the ggml names (`blk.N.attn_q.weight` →
+`model.layers.N.self_attn.q_proj.weight`) and un-permuting the q/k projections
+that llama.cpp stores in its interleaved RoPE layout. The llama3 RoPE rescaling
+baked into `rope_freqs.weight` is lifted into the config.
+
+Quantization (all read straight from the file and validated against the bf16
+golden weights):
+
+- `Q4_0`, `Q4_1`, `Q8_0` — kept quantized (group_size 32). MLX v0.31.2 mis-unpacks
+  `Q4_1`, so these legacy types are extracted by `core/gguf` directly.
+- `Q4_K`, `Q5_K`, `Q6_K` — dequantized to fp16 by our own super-block dequant
+  (MLX v0.31.2 mis-dequantizes `Q4_K`/`Q5_K` and fails outright on some K-quants).
+  This covers the popular `Q4_K_M` / `Q5_K_M` / `Q6_K` files. No memory savings —
+  K-quants become dense fp16.
+- `F16` / `F32` — read directly.
+- Anything else (`Q2_K`, `Q3_K`, `Q5_0/Q5_1`, `IQ*`, …) is **rejected with a clear
+  error** rather than risk silent garbage.
+
+Only the `llama` architecture is accepted; others are rejected. Auto-download of a
+GGUF *repo id* is not wired yet — download the `.gguf` and pass its path.
 
 > **Note on the gated fp16 repo.** The official fp16 Llama-3.2 repo is gated
 > behind a Llama license + HF token. The public `-bf16` repo is the *same
@@ -67,9 +103,13 @@ constants:
 ## What is and isn't implemented
 
 **Supported:** GQA, RMSNorm, llama3-scaled and plain RoPE, SwiGLU, tied and
-untied LM heads, fp16 and 4-bit (`quantized_matmul`, group_size 64) weights,
-greedy / temperature / top-k / top-p sampling, single-stream and
-continuous-batched decode.
+untied LM heads, greedy / temperature / top-k / top-p sampling, single-stream and
+continuous-batched decode, and both safetensors and GGUF checkpoints.
+Quantization is detected **per-weight** (a `<base>.scales` sibling), so a
+checkpoint may mix quantized and dense tensors or vary the bit-width per layer:
+fp16, MLX affine quants (any bits/group_size, incl. mixed-precision repos), and
+GGUF `Q4_0`/`Q4_1`/`Q8_0` (group_size 32) all run; GGUF `Q4_K`/`Q5_K`/`Q6_K`
+(`Q4_K_M`/`Q5_K_M`/`Q6_K` files) run dequantized to fp16 via our own dequant.
 
 **Not implemented:**
 

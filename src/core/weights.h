@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "core/config.h"
 #include "mlx/array.h"
 
 namespace mlxforge {
@@ -31,18 +32,30 @@ std::vector<std::string> shard_files(
 
 struct Weights {
   std::unordered_map<std::string, mlx::core::array> tensors;
+  // Quant params for each quantized weight, keyed by the weight base (the key
+  // without the trailing ".weight"). A weight is quantized iff "<base>.scales"
+  // is present in `tensors`; this map records its group_size/bits. Dense
+  // weights have no entry here.
+  std::unordered_map<std::string, QuantParams> quant;
 
   bool has(const std::string& key) const { return tensors.count(key) > 0; }
   // Throws std::runtime_error naming the key if absent.
   const mlx::core::array& at(const std::string& key) const;
   size_t size() const { return tensors.size(); }
 
+  // Whether `weight_key` (ending in ".weight") is an integer-quantized weight,
+  // i.e. it has a sibling "<base>.scales" tensor. On true, fills `out` with the
+  // weight's quant params (from `quant`, falling back to QuantParams defaults).
+  bool is_quantized(const std::string& weight_key, QuantParams& out) const;
+
   // Human-readable "key  [shape]  dtype" dump, sorted by key.
   std::string summary() const;
 };
 
 // Load every weight tensor from a model directory, applying sanitize and casting
-// to fp16. Throws if neither an index JSON nor model.safetensors is found.
-Weights load_weights(const std::string& model_dir);
+// to fp16. `cfg` supplies the quant params (defaults + per-module overrides) used
+// to populate Weights::quant for each quantized tensor. Throws if neither an
+// index JSON nor model.safetensors is found.
+Weights load_weights(const std::string& model_dir, const ModelConfig& cfg);
 
 }  // namespace mlxforge

@@ -7,6 +7,7 @@ add_executable(mlxforge_tests
   smoke_test.cpp
   core/config_test.cpp
   core/weights_test.cpp
+  core/gguf_test.cpp
   core/model_source_test.cpp
   support/reference_test.cpp
   model/llama_front_test.cpp
@@ -49,10 +50,21 @@ if(_mlxforge_model_snapshots)
   list(GET _mlxforge_model_snapshots 0 MLXFORGE_MODEL_DIR)
 endif()
 
+# A local Llama GGUF file for the self-contained-loader integration tests
+# (empty -> the GGUF tests self-skip). Any *.gguf under the cached bartowski
+# Llama-3.2-1B-Instruct-GGUF repo is used.
+file(GLOB _mlxforge_gguf_files
+  "$ENV{HOME}/.cache/huggingface/hub/models--bartowski--Llama-3.2-1B-Instruct-GGUF/snapshots/*/*.gguf")
+set(MLXFORGE_GGUF_MODEL "")
+if(_mlxforge_gguf_files)
+  list(GET _mlxforge_gguf_files 0 MLXFORGE_GGUF_MODEL)
+endif()
+
 target_compile_definitions(mlxforge_tests PRIVATE
   MLXFORGE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
   MLXFORGE_REF_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/reference/fixtures"
   MLXFORGE_MODEL_DIR="${MLXFORGE_MODEL_DIR}"
-  MLXFORGE_MODEL_DIR_4BIT="${MLXFORGE_MODEL_DIR_4BIT}")
+  MLXFORGE_MODEL_DIR_4BIT="${MLXFORGE_MODEL_DIR_4BIT}"
+  MLXFORGE_GGUF_MODEL="${MLXFORGE_GGUF_MODEL}")
 
 doctest_discover_tests(mlxforge_tests)

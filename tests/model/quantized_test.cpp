@@ -42,7 +42,7 @@ TEST_CASE("quantized greedy output stays coherent; footprint ~0.7 GiB") {
   mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(dir4() + "/tokenizer.json");
 
   mx::reset_peak_memory();
-  mlxforge::LlamaModel model(cfg, mlxforge::load_weights(dir4()));
+  mlxforge::LlamaModel model(cfg, mlxforge::load_weights(dir4(), cfg));
 
   std::vector<int> prompt = tok.encode("The capital of France is");
   mlxforge::GenerateResult r = mlxforge::greedy_generate(model, prompt, /*max_tokens=*/12, cfg.eos_token_ids);

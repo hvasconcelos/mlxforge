@@ -62,3 +62,33 @@ TEST_CASE("ModelConfig ignores unknown/extra keys") {
   CHECK_FALSE(c.rope_scaling.has_value());
   CHECK(c.eos_token_ids.empty());
 }
+
+TEST_CASE("ModelConfig parses mixed-precision quantization overrides") {
+  auto j = nlohmann::json::parse(R"({
+    "num_hidden_layers": 2, "hidden_size": 8, "num_attention_heads": 4,
+    "num_key_value_heads": 2, "vocab_size": 100, "intermediate_size": 16,
+    "rope_theta": 10000.0, "rms_norm_eps": 1e-6,
+    "quantization": {
+      "group_size": 64,
+      "bits": 4,
+      "model.layers.0.mlp.down_proj": {"group_size": 32, "bits": 8},
+      "model.layers.1.self_attn.q_proj": false
+    }
+  })");
+  ModelConfig c = ModelConfig::from_json(j);
+  CHECK(c.quantized);
+  CHECK(c.quant_group_size == 64);  // top-level defaults
+  CHECK(c.quant_bits == 4);
+
+  // A module without an override resolves to the defaults.
+  CHECK(c.quant_for("model.layers.0.self_attn.q_proj").group_size == 64);
+  CHECK(c.quant_for("model.layers.0.self_attn.q_proj").bits == 4);
+
+  // The per-module object override wins.
+  CHECK(c.quant_for("model.layers.0.mlp.down_proj").group_size == 32);
+  CHECK(c.quant_for("model.layers.0.mlp.down_proj").bits == 8);
+
+  // A bare `false` is not recorded as an override (the module is left dense and
+  // simply has no ".scales" tensor); it resolves to defaults if queried.
+  CHECK(c.quant_overrides.count("model.layers.1.self_attn.q_proj") == 0);
+}

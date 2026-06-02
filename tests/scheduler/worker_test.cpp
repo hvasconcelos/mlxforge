@@ -25,8 +25,11 @@ TEST_CASE("worker processes a request submitted from another thread") {
 
   mlxforge::Scheduler sched;
   mlxforge::Worker worker(
-      [dir] { return std::make_unique<mlxforge::LlamaModel>(
-                  mlxforge::ModelConfig::from_file(dir + "/config.json"), mlxforge::load_weights(dir)); },
+      [dir] {
+        mlxforge::ModelConfig c = mlxforge::ModelConfig::from_file(dir + "/config.json");
+        auto w = mlxforge::load_weights(dir, c);
+        return std::make_unique<mlxforge::LlamaModel>(std::move(c), std::move(w));
+      },
       &sched);
   worker.start();  // loads the model on the worker thread
 
