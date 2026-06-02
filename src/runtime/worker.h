@@ -1,9 +1,9 @@
-// MLXFORGE-016/018: the single GPU worker thread. It owns ALL MLX state — it LOADS
-// the model on its own thread (MLX arrays are thread-bound) and is the only
-// thread that calls mx::eval/async_eval. Other threads interact solely through
-// the Scheduler and their own Request.
+// The single GPU worker thread. It owns ALL MLX state — it LOADS the model on
+// its own thread (MLX arrays are thread-bound) and is the only thread that calls
+// mx::eval/async_eval. Other threads interact solely through the Scheduler and
+// their own Request.
 //
-// Continuous batching (MLXFORGE-018): a persistent decode batch is kept in a single
+// Continuous batching: a persistent decode batch is kept in a single
 // BatchKVCache. Each loop iteration admits waiting requests (prefill -> merge),
 // runs exactly ONE async_eval decode step over the whole batch, pushes each
 // row's token, and evicts finished/cancelled rows via filter.

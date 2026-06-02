@@ -1,6 +1,7 @@
-// MLXFORGE-014: sampling implemented entirely as MLX graph ops (logits stay on the
-// GPU — pulling them to the CPU would break the decode pipeline). Greedy first
-// for deterministic reference matching, then temperature / top-k / top-p.
+// Sampling implemented entirely as MLX graph ops (logits stay on the GPU —
+// pulling them to the CPU would break the decode pipeline). Greedy is the
+// deterministic baseline (matches the golden reference); temperature / top-k /
+// top-p layer on top of it.
 #pragma once
 
 #include <cstdint>

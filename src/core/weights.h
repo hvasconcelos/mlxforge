@@ -1,4 +1,4 @@
-// MLXFORGE-004: load, sanitize and fp16-cast model weights from safetensors.
+// Load, sanitize and fp16-cast model weights from safetensors.
 //
 // Handles both single-file (model.safetensors) and sharded
 // (model-0000N-of-*.safetensors + index JSON) layouts. Every tensor is cast to

@@ -1,4 +1,4 @@
-# Aggregated test binary. Each new story adds its *_test.cpp source here; every
+# Aggregated test binary. Each module's *_test.cpp source is listed here; every
 # TEST_CASE is registered with ctest via doctest_discover_tests.
 include(doctest)
 

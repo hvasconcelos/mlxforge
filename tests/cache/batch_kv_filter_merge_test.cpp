@@ -1,4 +1,4 @@
-// MLXFORGE-011: BatchKVCache filter (eviction) and merge (admission).
+// BatchKVCache filter (eviction) and merge (admission).
 #include <doctest/doctest.h>
 
 #include <vector>
@@ -31,7 +31,7 @@ mx::array row_tagged(int B, int L) {
 }
 }  // namespace
 
-TEST_CASE("MLXFORGE-011: filter drops the right rows (including first and last)") {
+TEST_CASE("filter drops the right rows (including first and last)") {
   BatchKVCache cache(/*n_layers=*/1, /*left_padding=*/{0, 0, 0, 0});  // B=4
   mx::array kv = row_tagged(4, 2);  // rows tagged 0,1,2,3
   cache.update_and_fetch(0, kv, kv);
@@ -49,7 +49,7 @@ TEST_CASE("MLXFORGE-011: filter drops the right rows (including first and last)"
   CHECK(vals[2] == doctest::Approx(2.0f));   // surviving row 2
 }
 
-TEST_CASE("MLXFORGE-011: filter's common-left-padding shift reduces idx") {
+TEST_CASE("filter's common-left-padding shift reduces idx") {
   BatchKVCache cache(/*n_layers=*/1, /*left_padding=*/{2, 5, 3});  // B=3
   mx::array kv = row_tagged(3, 4);
   cache.update_and_fetch(0, kv, kv);
@@ -61,7 +61,7 @@ TEST_CASE("MLXFORGE-011: filter's common-left-padding shift reduces idx") {
   CHECK(read_ints(cache.left_padding()) == std::vector<int>{2, 0});  // 5-3, 3-3
 }
 
-TEST_CASE("MLXFORGE-011: merge of two caches with different S_cap") {
+TEST_CASE("merge of two caches with different S_cap") {
   BatchKVCache a(/*n_layers=*/1, /*left_padding=*/{0, 0});  // B=2
   a.update_and_fetch(0, row_tagged(2, 300), row_tagged(2, 300));
   a.advance(300);

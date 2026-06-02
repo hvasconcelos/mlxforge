@@ -111,9 +111,9 @@ void Worker::decode_step() {
   ++decode_steps_;
   const int B = static_cast<int>(reqs_.size());
 
-  // MLXFORGE-019: pad the active batch up to a fixed bucket with masked dummy rows
-  // so the decode forward graph shape recurs. Dummy rows are batch-independent
-  // and masked, so they cannot affect the real rows; they are trimmed after.
+  // Pad the active batch up to a fixed bucket with masked dummy rows so the
+  // decode forward graph shape recurs. Dummy rows are batch-independent and
+  // masked, so they cannot affect the real rows; they are trimmed after.
   const int bucket = next_bucket(B);
   const int extra = bucket - B;
   if (extra > 0) cache_->pad_dummies(extra);

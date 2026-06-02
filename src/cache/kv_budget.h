@@ -1,10 +1,10 @@
-// MLXFORGE-012: KV memory admission gate (the real OOM guard).
+// KV memory admission gate (the real OOM guard).
 //
 // MLX allocates until Metal fails, so before admitting a batch we project its
 // peak KV footprint and refuse/queue if it would exceed a configured budget.
 // Per token the cache holds K and V for every layer:
 //   bytes/token = 2 (K+V) * n_layers * n_kv_heads * head_dim * sizeof(fp16)
-// For Llama-3.2-1B that is 2*16*8*64*2 = 32 KiB/token (the spec figure).
+// For Llama-3.2-1B that is 2*16*8*64*2 = 32 KiB/token.
 #pragma once
 
 #include <cstddef>

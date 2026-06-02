@@ -1,4 +1,4 @@
-// MLXFORGE-016: the three-queue state machine. Requests flow
+// The waiting-queue half of the three-queue state machine. Requests flow
 //   waiting -> prefill_batch -> decode_batch
 // The HTTP/test threads only push to `waiting`; the worker thread owns the
 // prefill/decode sets and is the only thread that touches MLX. Handoff is via a

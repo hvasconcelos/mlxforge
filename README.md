@@ -211,10 +211,24 @@ Source layout (`src/`):
 | `server/http_server` | routes, blocking + SSE handlers, error shapes |
 | `server/config` | CLI/env server configuration |
 
-See `SPECIFICATION.md` for the full design and `STORIES.md` for the 25-story
-implementation breakdown.
+For the full design see the [`doc/`](./doc) folder:
+
+- [`doc/architecture.md`](./doc/architecture.md) — engine architecture, the
+  single-GPU-thread model, request lifecycle, continuous batching.
+- [`doc/llm-architecture.md`](./doc/llm-architecture.md) — the transformer
+  forward pass (embedding, RMSNorm, RoPE, GQA attention, SwiGLU, KV cache,
+  sampling, quantization).
+- [`doc/supported-models.md`](./doc/supported-models.md) — model families,
+  adding a new one, the golden-reference discipline.
+- [`doc/applications.md`](./doc/applications.md) — the server and CLI binaries
+  and the OpenAI API surface.
+- [`doc/contributing.md`](./doc/contributing.md) — build/test workflow,
+  conventions, and the hard-won numerical gotchas.
 
 ## License
 
-Research/educational. Model weights are subject to their own licenses (Llama
-Community License for the underlying Llama-3.2 weights).
+mlxforge is released under the [MIT License](./LICENSE).
+
+Model weights are **not** covered by this license and remain subject to their
+own terms (e.g. the Llama Community License for the Llama-3.2 weights, and the
+Apache-2.0 license for Mistral-7B-Instruct-v0.3).

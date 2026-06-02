@@ -1,7 +1,10 @@
-// LLaMA decoder model on MLX. Built up across stories:
-//   MLXFORGE-006: embedding, RMSNorm, Q/K/V projections, RoPE (this file's start)
-//   MLXFORGE-007: single decoder block (attention + SwiGLU)
-//   MLXFORGE-008: full 16-layer stack -> logits
+// LLaMA-family decoder model on MLX. Builds the full forward pass in layers:
+//   - embedding, RMSNorm, Q/K/V projections, RoPE (the attention front-half)
+//   - a single decoder block (GQA attention + SwiGLU MLP + residuals)
+//   - the full n-layer stack -> final RMSNorm -> LM head logits
+// fp16 and 4-bit-quantized weights, single-stream and batched forward paths are
+// all served by this one class (the transformer is shared across the supported
+// model families; only tokenizer/chat formatting differs per family).
 #pragma once
 
 #include <string>
@@ -18,7 +21,7 @@ namespace mlxforge {
 namespace mx = mlx::core;
 
 // Confirms the pinned MLX exposes fast::rope(const array& offset, ...) — the
-// per-row offset overload that batched decode (MLXFORGE-010+) depends on. Returns
+// per-row offset overload that batched (left-padded) decode depends on. Returns
 // true if it ran the overload successfully.
 bool rope_array_offset_overload_available();
 

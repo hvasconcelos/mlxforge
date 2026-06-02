@@ -1,6 +1,7 @@
-// MLXFORGE-009: single-sequence KV cache. Proves the prefill/decode split before
-// the batched cache (MLXFORGE-010) the server needs. Prefill fills the cache once;
-// each decode step appends one token's K/V and attends over cached history.
+// Single-sequence KV cache. The simplest form of the prefill/decode split that
+// underlies the batched cache (BatchKVCache) the server needs: prefill fills the
+// cache once; each decode step appends one token's K/V and attends over the
+// cached history.
 #pragma once
 
 #include <optional>

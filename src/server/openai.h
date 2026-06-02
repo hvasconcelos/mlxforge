@@ -1,4 +1,4 @@
-// MLXFORGE-022: OpenAI request parsing + response serialization (pure functions, no
+// OpenAI request parsing + response serialization (pure functions, no
 // server/GPU — unit tested). The HTTP layer (http_server) tokenizes the parsed
 // messages and assembles responses from these.
 #pragma once

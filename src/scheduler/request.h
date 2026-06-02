@@ -1,5 +1,5 @@
-// MLXFORGE-016: a Request is the unit of work shared between an HTTP/test thread and
-// the GPU worker. The submitting thread touches only its own Request (MLX is not
+// A Request is the unit of work shared between an HTTP/test thread and the GPU
+// worker. The submitting thread touches only its own Request (MLX is not
 // thread-safe for concurrent eval); the worker is the sole producer of tokens.
 #pragma once
 
@@ -17,8 +17,8 @@
 namespace mlxforge {
 
 // Bounded, blocking, single-producer (worker) / single-consumer (request thread)
-// token queue. push() applies backpressure when full (MLXFORGE-023); the consumer
-// pop()s until the producer close()s and the queue drains.
+// token queue. push() applies backpressure when full (slow SSE consumers); the
+// consumer pop()s until the producer close()s and the queue drains.
 class TokenQueue {
  public:
   explicit TokenQueue(std::size_t capacity = 1024) : capacity_(capacity) {}
@@ -74,7 +74,7 @@ struct Request {
   TokenQueue tokens;                 // worker pushes generated ids, then close()s
   std::string finish_reason;         // "stop" | "length" | "cancel" (worker sets)
 
-  // Metrics (MLXFORGE-024): enqueue stamped on submit, first_token/finish by worker.
+  // Metrics: enqueue stamped on submit, first_token/finish stamped by the worker.
   using Clock = std::chrono::steady_clock;
   Clock::time_point enqueue_time{};
   Clock::time_point first_token_time{};

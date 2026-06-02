@@ -1,4 +1,4 @@
-// MLXFORGE-023: SSE chunk framing + bounded token-queue backpressure (no server/GPU).
+// SSE chunk framing + bounded token-queue backpressure (no server/GPU).
 #include <doctest/doctest.h>
 
 #include <atomic>
@@ -11,7 +11,7 @@
 using namespace mlxforge;
 using nlohmann::json;
 
-TEST_CASE("MLXFORGE-023: SSE chunk frame is byte-exact") {
+TEST_CASE("SSE chunk frame is byte-exact") {
   json chunk = make_chat_chunk("chatcmpl-1", 1234, "mlxforge", {{"content", "Paris"}}, nullptr);
   std::string frame = sse_frame(chunk);
 
@@ -31,7 +31,7 @@ TEST_CASE("MLXFORGE-023: SSE chunk frame is byte-exact") {
   CHECK(kSseDone == "data: [DONE]\n\n");
 }
 
-TEST_CASE("MLXFORGE-023: bounded token queue applies backpressure at capacity") {
+TEST_CASE("bounded token queue applies backpressure at capacity") {
   TokenQueue q(/*capacity=*/2);
   q.push(10);
   q.push(20);  // now full

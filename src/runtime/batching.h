@@ -1,8 +1,8 @@
-// MLXFORGE-017: the prefill pass. Waiting requests are left-padded to a common
-// P_max and prefilled in a DEDICATED forward (a separate pass, then joined — not
+// The prefill pass. Waiting requests are left-padded to a common P_max and
+// prefilled in a DEDICATED forward (a separate pass, then joined — not
 // chunk-interleaved into the decode batch). Long prompts are chunked at
 // prefill_step_size with eval(cache.state) at each boundary to bound graph
-// growth. The result merges into the decode cache (MLXFORGE-018).
+// growth. The result merges into the worker's decode cache.
 #pragma once
 
 #include <memory>
@@ -14,12 +14,12 @@
 
 namespace mlxforge {
 
-// Scheduler sizing knobs (spec values).
+// Scheduler sizing knobs.
 constexpr int kPrefillBatchSize = 8;
 constexpr int kPrefillStepSize = 2048;
 
-// MLXFORGE-019: round an active batch size up to a fixed decode bucket so the
-// forward graph shape recurs (avoiding a per-step regraph). Buckets are
+// Round an active batch size up to a fixed decode bucket so the forward graph
+// shape recurs (avoiding a per-step regraph). Buckets are
 // {1,2,4,8,16,32}; beyond 32, round up to a multiple of 32.
 int next_bucket(int n);
 

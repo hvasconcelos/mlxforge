@@ -1,4 +1,4 @@
-// MLXFORGE-005: self-tests for the golden-reference compare harness.
+// self-tests for the golden-reference compare harness.
 #include "support/reference.h"
 
 #include <doctest/doctest.h>

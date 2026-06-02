@@ -1,4 +1,4 @@
-// MLXFORGE-024: server config parsing + bounded waiting queue (no GPU).
+// server config parsing + bounded waiting queue (no GPU).
 #include <doctest/doctest.h>
 
 #include <memory>
@@ -10,7 +10,7 @@
 
 using namespace mlxforge;
 
-TEST_CASE("MLXFORGE-024: ServerConfig parses flags with defaults") {
+TEST_CASE("ServerConfig parses flags with defaults") {
   ServerConfig d = ServerConfig::parse({"/models/llama"});
   CHECK(d.model_dir == "/models/llama");
   CHECK(d.host == "0.0.0.0");
@@ -27,12 +27,12 @@ TEST_CASE("MLXFORGE-024: ServerConfig parses flags with defaults") {
   CHECK(c.max_waiting == 16);
 }
 
-TEST_CASE("MLXFORGE-024: ServerConfig rejects unknown flags") {
+TEST_CASE("ServerConfig rejects unknown flags") {
   CHECK_THROWS_AS(ServerConfig::parse({"/m", "--bogus", "x"}), std::runtime_error);
   CHECK_THROWS_AS(ServerConfig::parse({"/m", "--port"}), std::runtime_error);  // missing value
 }
 
-TEST_CASE("MLXFORGE-024: bounded waiting queue rejects on overflow (429)") {
+TEST_CASE("bounded waiting queue rejects on overflow (429)") {
   Scheduler sched;
   sched.set_max_waiting(2);
   CHECK(sched.submit(std::make_shared<Request>()));

@@ -1,4 +1,4 @@
-// MLXFORGE-003: ModelConfig parsing (pure logic, no GPU / no weights).
+// ModelConfig parsing (pure logic, no GPU / no weights).
 #include <doctest/doctest.h>
 
 #include <string>

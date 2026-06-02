@@ -1,7 +1,7 @@
-# Golden-reference fixtures (MLXFORGE-002)
+# Golden-reference fixtures
 
 The C++ engine's failure mode is **silent numerical garbage, not a crash**. Every
-numerically-sensitive story asserts its output against a trusted oracle: `mlx-lm`
+numerically-sensitive stage asserts its output against a trusted oracle: `mlx-lm`
 run on the *same* weights the C++ engine loads. `dump_ref.py` produces that oracle
 once; the `.npy` files in `fixtures/` are committed and the C++ tests compare
 against them (fp16 rel ~1e-2, or exact equality for token streams).
@@ -30,12 +30,12 @@ reference/.venv/bin/python reference/dump_ref.py
 | File | Shape | Dtype | Gates |
 |---|---|---|---|
 | `prompt_{0,1,2}_ids.npy` | `(T_i,)` | int32 | pre-tokenized prompt IDs (engine before tokenizer) |
-| `chat_ids.npy` | `(42,)` | int32 | chat-template parity (MLXFORGE-021/022) |
-| `embeddings.npy` | `(1, 6, 2048)` | float16 | MLXFORGE-006 embedding lookup |
-| `block0.npy` | `(1, 6, 2048)` | float16 | MLXFORGE-007 single decoder block |
-| `logits_last.npy` | `(1, 128256)` | float16 | MLXFORGE-008 final logits |
-| `argmax.npy` | `(1,)` | int32 | MLXFORGE-008 first-token argmax (exact) |
-| `greedy_tokens.npy` | `(20,)` | int32 | MLXFORGE-009/015 greedy stream (exact) |
+| `chat_ids.npy` | `(42,)` | int32 | chat-template parity |
+| `embeddings.npy` | `(1, 6, 2048)` | float16 | embedding lookup |
+| `block0.npy` | `(1, 6, 2048)` | float16 | single decoder block |
+| `logits_last.npy` | `(1, 128256)` | float16 | final logits |
+| `argmax.npy` | `(1,)` | int32 | first-token argmax (exact) |
+| `greedy_tokens.npy` | `(20,)` | int32 | greedy stream (exact) |
 
 The primary prompt (index 0) `"The capital of France is"` is used for all forward
 intermediates; its greedy continuation is `" Paris. The Eiffel Tower is located in

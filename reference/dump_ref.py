@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""MLXFORGE-002: golden-reference dump.
+"""Golden-reference dump.
 
 Runs mlx-lm on the *exact* model the C++ engine will load and emits .npy tensors
-that gate every numerically-sensitive C++ story (embeddings, block-0 output,
+that gate every numerically-sensitive C++ stage (embeddings, block-0 output,
 final logits, greedy token stream) plus pre-tokenized prompt IDs so engine
-phases can run before the C++ tokenizer exists (MLXFORGE-021).
+phases can run before the C++ tokenizer exists.
 
 The C++ side loads the SAME repo and casts to fp16, so this reference is
 self-consistent: any divergence in C++ is a real bug, not a model mismatch.
@@ -116,11 +116,11 @@ def main():
     # --- Forward-pass intermediates for the primary prompt -------------------
     primary_ids = mx.array(prompt_id_lists[0], dtype=mx.int32)[None]  # (1, T)
 
-    # Embedding lookup (MLXFORGE-006 gate).
+    # Embedding lookup (gates the embedding stage).
     embeddings = model.model.embed_tokens(primary_ids)  # (1, T, hidden)
     save("embeddings", embeddings)
 
-    # Front-half of layer 0 (MLXFORGE-006 gate): input RMSNorm, then RoPE'd Q/K and
+    # Front-half of layer 0 (gates the embedding/attention front-half): input RMSNorm, then RoPE'd Q/K and
     # the (un-roped) V, each (1, n_heads, T, head_dim). Mirrors Attention.__call__.
     layer0 = model.model.layers[0]
     attn = layer0.self_attn
@@ -141,19 +141,19 @@ def main():
         save("v0", v)  # (1, 8, T, 64)
 
     # Block-0 output: exactly what LlamaModel.__call__ computes for layer 0
-    # (MLXFORGE-007 gate).
+    # (gates the single decoder block).
     mask = create_attention_mask(embeddings, cache=None)
     block0 = model.model.layers[0](embeddings, mask, None)  # (1, T, hidden)
     save("block0", block0)
 
-    # Full forward to logits; dump the last position + its argmax (MLXFORGE-008 gate).
+    # Full forward to logits; dump the last position + its argmax (gates the full forward pass).
     logits = model(primary_ids)  # (1, T, vocab)
     logits_last = logits[:, -1, :]  # (1, vocab)
     save("logits_last", logits_last)
     argmax = mx.argmax(logits_last, axis=-1)  # (1,)
     save("argmax", np.array(argmax, dtype=np.int32))
 
-    # --- Greedy token stream (full-recompute reference; MLXFORGE-009/015 gate) ---
+    # --- Greedy token stream (full-recompute reference; gates the greedy decode stream) ---
     # Pure argmax loop, no cache, so it is an independent oracle the cached C++
     # path must reproduce exactly.
     ids = list(prompt_id_lists[0])

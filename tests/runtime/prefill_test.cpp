@@ -1,4 +1,4 @@
-// MLXFORGE-017: prefill pass — left-pad, (chunked) dedicated forward, correct
+// prefill pass — left-pad, (chunked) dedicated forward, correct
 // per-row offsets ready to merge into the decode cache.
 #include <doctest/doctest.h>
 
@@ -37,7 +37,7 @@ int solo_first(mlxforge::LlamaModel& model, const std::vector<int>& ids) {
 }
 }  // namespace
 
-TEST_CASE("MLXFORGE-017: ragged prefill matches single-sequence first tokens + offsets") {
+TEST_CASE("ragged prefill matches single-sequence first tokens + offsets") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -64,7 +64,7 @@ TEST_CASE("MLXFORGE-017: ragged prefill matches single-sequence first tokens + o
   CHECK(pr.cache.idx() == p_max);
 }
 
-TEST_CASE("MLXFORGE-017: chunked prefill equals a single-shot prefill") {
+TEST_CASE("chunked prefill equals a single-shot prefill") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;

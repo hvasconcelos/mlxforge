@@ -1,4 +1,4 @@
-// MLXFORGE-009: single-sequence KV cache — prove the prefill/decode split.
+// single-sequence KV cache — prove the prefill/decode split.
 #include <doctest/doctest.h>
 
 #include <vector>
@@ -27,7 +27,7 @@ int last_argmax(const mx::array& logits) {
 }
 }  // namespace
 
-TEST_CASE("MLXFORGE-009: decode-with-cache equals a full recompute") {
+TEST_CASE("decode-with-cache equals a full recompute") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
@@ -64,7 +64,7 @@ TEST_CASE("MLXFORGE-009: decode-with-cache equals a full recompute") {
   CHECK(argmax_row(cached_last) == argmax_row(recompute_last));
 }
 
-TEST_CASE("MLXFORGE-009: greedy stream with cache matches the reference exactly") {
+TEST_CASE("greedy stream with cache matches the reference exactly") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
     return;
