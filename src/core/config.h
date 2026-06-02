@@ -30,7 +30,7 @@ struct RopeScaling {
 ///
 struct ModelConfig {
   // ----- Core model hyperparameters -----
-  std::string model_type;       ///< Model type ("llama", "mistral", ...), determines chat template/format.
+  std::string model_type;       ///< Model type ("llama", ...), determines chat template/format.
   int n_layers = 0;             ///< Number of transformer layers (num_hidden_layers).
   int hidden = 0;               ///< Hidden size of transformer blocks.
   int n_heads = 0;              ///< Number of attention heads.

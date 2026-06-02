@@ -11,24 +11,15 @@ template and special-token handling, which are selected automatically from
 | --- | --- | --- | --- | --- |
 | Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-bf16` | fp16 (cast on load) | `<\|start_header_id\|>…` | yes |
 | Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 4-bit | `<\|start_header_id\|>…` | yes |
-| Mistral | `mlx-community/Mistral-7B-Instruct-v0.3-4bit` | 4-bit | `<s>[INST] … [/INST]` | forward pass only* |
 
-\* **Mistral is not end-to-end runnable right now.** Its tokenizer is
-SentencePiece/Metaspace, and the from-scratch tokenizer currently implements
-only Llama-3.2-style byte-level BPE — so `Tokenizer::from_file` throws on
-Mistral's `tokenizer.json` (the CLI/server can't tokenize it). The shared
-forward pass is still validated against the mlx-lm reference using committed
-token-id fixtures; reimplementing the SentencePiece tokenizer is the follow-up
-that restores end-to-end Mistral.
+Support is currently limited to **Llama-3.2** while the engine stabilizes. Other
+LLaMA-family models will be re-onboarded later; because the forward pass is
+shared, that work is mostly tokenizer/chat-format (see [Adding a new model
+family](#adding-a-new-model-family)).
 
 The primary, frozen reference target is **Llama-3.2-1B-Instruct** (16 layers,
 hidden 2048, 32 query / 8 KV heads GQA, head_dim 64, RMSNorm, llama3-scaled RoPE,
 SwiGLU, tied embeddings). It is the model the golden reference is dumped from.
-
-`Mistral-7B-Instruct-v0.3` exercises the same forward pass with a different shape
-and a separate `lm_head.weight` (untied), no attention bias, and no sliding
-window. Adding it required **no forward-pass changes** — only the `[INST]` chat
-template and config-driven BOS/special-token handling.
 
 ## Getting the weights
 
@@ -38,9 +29,6 @@ huggingface-cli download mlx-community/Llama-3.2-1B-Instruct-bf16
 
 # Llama-3.2-1B, 4-bit
 huggingface-cli download mlx-community/Llama-3.2-1B-Instruct-4bit
-
-# Mistral-7B-Instruct-v0.3, 4-bit
-huggingface-cli download mlx-community/Mistral-7B-Instruct-v0.3-4bit
 ```
 
 A "model directory" is any folder containing `config.json`, `tokenizer.json`, and
@@ -69,8 +57,8 @@ constants:
 - **`config.json` → `ModelConfig`** (`core/config`): layer/head/dim counts,
   `rope_theta`, `rms_eps`, `rope_scaling`, `tie_word_embeddings`, the quantization
   block (`quantized`, `quant_group_size`, `quant_bits`), and the EOS/BOS token ids.
-- **`model_type`** selects the chat format (`"mistral"` → Mistral `[INST]`,
-  otherwise the Llama-3.2 header format) via `chat_format_from_model_type`.
+- **`model_type`** selects the chat format (currently always the Llama-3.2 header
+  format) via `chat_format_from_model_type`.
 - **`tokenizer.json`** drives BPE encode/decode and supplies the special-token ids
   (`added_tokens[*].special`) that are skipped on decode — there are no hard-coded
   token ids.
@@ -85,10 +73,11 @@ continuous-batched decode.
 
 **Not implemented:**
 
-- **Sliding-window attention.** Mistral v0.1 used it; v0.2/v0.3 disable it and so
-  run as plain causal attention. v0.1 is therefore not supported.
-- **System role in the Mistral template.** `[INST]` has no system turn, so a
-  leading system message is folded into the first user turn.
+- **Sliding-window attention.** Only plain causal attention is supported, so
+  models that rely on a sliding window are not.
+- **Non-Llama tokenizers / chat templates.** Only Llama-3.2-style byte-level BPE
+  and its header chat format are implemented (`Tokenizer::from_file` throws on
+  others, e.g. SentencePiece).
 - **Tool / function-calling tokens**, vision/multimodal, embeddings endpoints,
   LoRA/adapters, speculative decoding, multi-model hosting, prefix sharing.
 
@@ -126,7 +115,6 @@ are not.
 python3.12 -m venv reference/.venv
 reference/.venv/bin/pip install mlx-lm numpy
 reference/.venv/bin/python reference/dump_ref.py --model llama     # -> reference/fixtures/
-reference/.venv/bin/python reference/dump_ref.py --model mistral   # -> reference/fixtures_mistral/
 ```
 
 The fixtures gate the embedding output, a single decoder block, the final logits,

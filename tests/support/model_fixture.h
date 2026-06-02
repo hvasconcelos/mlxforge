@@ -31,22 +31,4 @@ inline LlamaModel& shared_model() {
   return model;
 }
 
-// --- Mistral (a second architecture; shares LlamaModel's forward pass) -------
-
-inline std::string mistral_model_dir() { return MLXFORGE_MISTRAL_MODEL_DIR; }
-
-inline bool mistral_available() {
-  const std::string d = mistral_model_dir();
-  return !d.empty() && std::ifstream(d + "/config.json").good();
-}
-
-inline LlamaModel& shared_mistral_model() {
-  static LlamaModel model = [] {
-    ModelConfig cfg = ModelConfig::from_file(mistral_model_dir() + "/config.json");
-    Weights w = load_weights(mistral_model_dir());
-    return LlamaModel(std::move(cfg), std::move(w));
-  }();
-  return model;
-}
-
 }  // namespace mlxforge::test

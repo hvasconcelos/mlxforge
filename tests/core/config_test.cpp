@@ -37,28 +37,6 @@ TEST_CASE("ModelConfig loads the Llama-3.2-1B config with correct values") {
   CHECK(c.rope_scaling->original_max_position_embeddings == 8192);
 }
 
-TEST_CASE("ModelConfig loads the Mistral-7B-Instruct-v0.3 config with correct values") {
-  ModelConfig c = ModelConfig::from_file(fixture("config_mistral_7b_v03.json"));
-  CHECK(c.model_type == "mistral");
-  CHECK(c.n_layers == 32);
-  CHECK(c.hidden == 4096);
-  CHECK(c.n_heads == 32);
-  CHECK(c.n_kv_heads == 8);
-  CHECK(c.head_dim == 128);  // derived: hidden(4096) / n_heads(32)
-  CHECK(c.vocab == 32768);
-  CHECK(c.intermediate_size == 14336);
-  CHECK(c.tie_word_embeddings == false);  // Mistral has a separate lm_head
-  CHECK(c.bos_token_id == 1);
-  CHECK(c.eos_token_ids == std::vector<int>{2});
-  CHECK(c.rope_theta == doctest::Approx(1000000.0f));
-  CHECK_FALSE(c.rope_scaling.has_value());  // plain RoPE, no llama3 rescaling
-
-  // 4-bit quantization is detected.
-  CHECK(c.quantized);
-  CHECK(c.quant_bits == 4);
-  CHECK(c.quant_group_size == 64);
-}
-
 TEST_CASE("ModelConfig errors clearly on a missing required field") {
   // Valid except num_key_value_heads is absent.
   auto j = nlohmann::json::parse(R"({

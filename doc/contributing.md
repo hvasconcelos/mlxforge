@@ -47,15 +47,13 @@ ctest --test-dir build -R kv_cache                       # run a subset by name
 The failure mode here is **silent numerical garbage, not a crash**. Every
 numerically-sensitive stage is gated against an `mlx-lm` golden reference: `.npy`
 tensors dumped from `mlx-lm` on the *same* weights the C++ engine loads,
-committed under `reference/fixtures/` (Llama) and `reference/fixtures_mistral/`
-(Mistral).
+committed under `reference/fixtures/`.
 
 ```sh
 # regenerate fixtures (rarely needed)
 python3.12 -m venv reference/.venv
 reference/.venv/bin/pip install mlx-lm numpy
 reference/.venv/bin/python reference/dump_ref.py              # Llama (default)
-reference/.venv/bin/python reference/dump_ref.py --model mistral
 ```
 
 - The throwaway venv (`reference/.venv`) and the HF model cache are gitignored;
@@ -66,7 +64,7 @@ reference/.venv/bin/python reference/dump_ref.py --model mistral
   KV-cache bookkeeping, sampler math, request/response (de)serialization, SSE
   framing) always run. The golden-reference / integration tests need the model
   present locally; CMake globs the HF cache for the snapshot dir
-  (`MLXFORGE_MODEL_DIR`, `MLXFORGE_MODEL_DIR_4BIT`, `MLXFORGE_MISTRAL_MODEL_DIR`)
+  (`MLXFORGE_MODEL_DIR`, `MLXFORGE_MODEL_DIR_4BIT`)
   and the tests **self-skip** (pass with a message) if it's absent. A green
   `ctest` *without* the model has only run the pure-logic units — download a
   model to exercise the numerical and scheduler paths.
@@ -107,7 +105,7 @@ tokenizer. Each one is a bug that does not announce itself.
   validated to byte-match the HF tokenizer against committed mlx-lm golden ids
   (`reference/fixtures/tokenizer_corpus.json`). It is pure/`const`/thread-safe
   (no mutex) and currently supports Llama-3.2-style byte-level BPE only —
-  `Tokenizer::from_file` throws on other families (e.g. Mistral's SentencePiece).
+  `Tokenizer::from_file` throws on other families (e.g. SentencePiece-based ones).
 - **Masks are additive fp16, never boolean** (avoids MLX bug #2894). See
   `LlamaModel::batch_mask`.
 - **RoPE is llama3-scaled.** `compute_rope_freqs` mirrors `mlx_lm`'s `Llama3RoPE`

@@ -347,7 +347,7 @@ bool BpeTokenizer::is_supported(const std::string& tokenizer_json) {
   auto model = j.find("model");
   if (model == j.end() || model->value("type", std::string()) != "BPE") return false;
   // The byte-level pipeline (and our hand-rolled splitter) is correct only for a
-  // ByteLevel decoder; Metaspace/SentencePiece models (e.g. Mistral) are not.
+  // ByteLevel decoder; Metaspace/SentencePiece models are not.
   auto dec = j.find("decoder");
   return dec != j.end() && dec->value("type", std::string()) == "ByteLevel";
 }

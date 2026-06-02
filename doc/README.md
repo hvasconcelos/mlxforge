@@ -12,7 +12,7 @@ whichever document matches what you're trying to do:
 | --- | --- |
 | [architecture.md](./architecture.md) | How the whole engine fits together: the single GPU-worker thread model, the three-queue scheduler, the request lifecycle, continuous batching, and where every module lives. |
 | [llm-architecture.md](./llm-architecture.md) | The transformer itself: embedding, RMSNorm, RoPE (llama3 scaling), GQA attention, SwiGLU, the KV cache layout, sampling, and 4-bit quantization — i.e. the numerically-sensitive forward pass. |
-| [supported-models.md](./supported-models.md) | Which model families run today (Llama-3.2, Mistral), exactly which weights to download, what is and isn't implemented, and how to add a new family. |
+| [supported-models.md](./supported-models.md) | Which model families run today (Llama-3.2), exactly which weights to download, what is and isn't implemented, and how to add a new family. |
 | [applications.md](./applications.md) | The two binaries — the `mlxforge` server and the `mlxforge-cli` tool — their flags, the OpenAI API surface, and example clients. |
 | [contributing.md](./contributing.md) | The maintainer guide: build/test workflow, the golden-reference discipline, coding conventions, and the hard-won numerical gotchas you must respect when touching the forward pass. |
 

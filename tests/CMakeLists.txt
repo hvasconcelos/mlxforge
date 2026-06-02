@@ -31,7 +31,6 @@ add_executable(mlxforge_tests
   server/sse_test.cpp
   server/hardening_test.cpp
   model/quantized_test.cpp
-  model/mistral_forward_test.cpp
 )
 target_include_directories(mlxforge_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(mlxforge_tests PRIVATE mlxforge_core doctest::doctest)
@@ -41,15 +40,9 @@ file(GLOB _mlxforge_model_snapshots
   "$ENV{HOME}/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-bf16/snapshots/*")
 file(GLOB _mlxforge_model_snapshots_4bit
   "$ENV{HOME}/.cache/huggingface/hub/models--mlx-community--Llama-3.2-1B-Instruct-4bit/snapshots/*")
-file(GLOB _mlxforge_mistral_snapshots
-  "$ENV{HOME}/.cache/huggingface/hub/models--mlx-community--Mistral-7B-Instruct-v0.3-4bit/snapshots/*")
 set(MLXFORGE_MODEL_DIR_4BIT "")
 if(_mlxforge_model_snapshots_4bit)
   list(GET _mlxforge_model_snapshots_4bit 0 MLXFORGE_MODEL_DIR_4BIT)
-endif()
-set(MLXFORGE_MISTRAL_MODEL_DIR "")
-if(_mlxforge_mistral_snapshots)
-  list(GET _mlxforge_mistral_snapshots 0 MLXFORGE_MISTRAL_MODEL_DIR)
 endif()
 set(MLXFORGE_MODEL_DIR "")
 if(_mlxforge_model_snapshots)
@@ -59,9 +52,7 @@ endif()
 target_compile_definitions(mlxforge_tests PRIVATE
   MLXFORGE_TEST_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
   MLXFORGE_REF_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/reference/fixtures"
-  MLXFORGE_MISTRAL_REF_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/reference/fixtures_mistral"
   MLXFORGE_MODEL_DIR="${MLXFORGE_MODEL_DIR}"
-  MLXFORGE_MODEL_DIR_4BIT="${MLXFORGE_MODEL_DIR_4BIT}"
-  MLXFORGE_MISTRAL_MODEL_DIR="${MLXFORGE_MISTRAL_MODEL_DIR}")
+  MLXFORGE_MODEL_DIR_4BIT="${MLXFORGE_MODEL_DIR_4BIT}")
 
 doctest_discover_tests(mlxforge_tests)
