@@ -138,7 +138,7 @@ reference/.venv/bin/python reference/dump_ref.py --model qwen3     # -> referenc
 ## Run the server
 
 ```sh
-./build/mlxforge "$MODEL_DIR" --port 8080 --max-ctx 8192 --max-waiting 256
+./build/mlxforge -m "$MODEL_DIR" --port 8080 --max-ctx 8192 --max-waiting 256
 ```
 
 Then use the official `openai` client:
@@ -192,10 +192,10 @@ uses the default shown:
 
 ```sh
 # verbose decode-loop / scheduler / request tracing
-MLXFORGE_LOG_LEVEL=debug ./build/mlxforge "$MODEL_DIR"
+MLXFORGE_LOG_LEVEL=debug ./build/mlxforge -m "$MODEL_DIR"
 
 # errors only, also tee'd to a file
-MLXFORGE_LOG_LEVEL=error MLXFORGE_LOG_FILE=/var/log/mlxforge.log ./build/mlxforge "$MODEL_DIR"
+MLXFORGE_LOG_LEVEL=error MLXFORGE_LOG_FILE=/var/log/mlxforge.log ./build/mlxforge -m "$MODEL_DIR"
 ```
 
 `info` includes lifecycle events (model load, server listen/stop) and the

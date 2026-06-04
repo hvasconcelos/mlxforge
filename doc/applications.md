@@ -14,7 +14,7 @@ and the safetensors weights — see [supported-models.md](./supported-models.md)
 ## The server: `mlxforge`
 
 ```sh
-./build/mlxforge "$MODEL_DIR" --port 8080 --max-ctx 8192 --max-waiting 256
+./build/mlxforge -m "$MODEL_DIR" --port 8080 --max-ctx 8192 --max-waiting 256
 ```
 
 On startup it loads the config and tokenizer, launches the GPU worker (which

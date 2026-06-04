@@ -1,8 +1,10 @@
 // mlxforge — the OpenAI-compatible server binary.
 //
-// Usage: mlxforge <model> [--host H] [--port P] [--max-ctx N] [--max-waiting N]
-//   <model> is either a local model directory or a HuggingFace repo id (downloaded on first use).
+// Usage: mlxforge -m <model> [-c <conffile>] [--host H] [--port P] [--max-ctx N] [--max-waiting N]
+//   -m/--model is either a local model directory or a HuggingFace repo id (downloaded on first use).
+//   The model may also be set via the config file's "model" key (-m/--model overrides it).
 //   Loads the tokenizer/config, starts the GPU worker, and serves the HTTP API.
+//   -c/--config loads defaults from a JSON file; env vars then CLI flags override it.
 //   Command line flags can also be set via environment variables (see server/config.h for details).
 //   Receives SIGINT/SIGTERM for graceful shutdown.
 //
@@ -80,7 +82,8 @@ int main(int argc, char** argv) {
   }
   // If required positional argument is missing, print usage and exit.
   if (sc.model_dir.empty()) {
-    std::fprintf(stderr, "usage: mlxforge <model> [--host H] [--port P] [--max-ctx N]\n");
+    std::fprintf(stderr,
+                 "usage: mlxforge -m <model> [-c <conffile>] [--host H] [--port P] [--max-ctx N]\n");
     return 2;
   }
 

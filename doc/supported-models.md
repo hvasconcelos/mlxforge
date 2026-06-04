@@ -80,7 +80,7 @@ A `.gguf` file bundles the config, tokenizer, and weights in one file (no
 ```sh
 hf download bartowski/Llama-3.2-1B-Instruct-GGUF --include "*Q4_K_M.gguf"
 ./build/mlxforge-cli generate /path/to/Llama-3.2-1B-Instruct-Q4_K_M.gguf "What is the capital of France?" 64
-./build/mlxforge /path/to/Llama-3.2-1B-Instruct-Q4_K_M.gguf --port 8080
+./build/mlxforge -m /path/to/Llama-3.2-1B-Instruct-Q4_K_M.gguf --port 8080
 ```
 
 `core/gguf` parses the file itself (it does **not** use `mx::load_gguf`, whose
@@ -117,7 +117,7 @@ Point either binary at the directory:
 
 ```sh
 ./build/mlxforge-cli generate "$MODEL_DIR" "What is the capital of France?" 64
-./build/mlxforge "$MODEL_DIR" --port 8080
+./build/mlxforge -m "$MODEL_DIR" --port 8080
 ```
 
 ## How a model is configured
