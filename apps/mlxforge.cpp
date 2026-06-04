@@ -2,7 +2,8 @@
 //
 // Usage: mlxforge -m <model> [-c <conffile>] [--host H] [--port P] [--max-ctx N] [--max-waiting N]
 //   -m/--model is either a local model directory or a HuggingFace repo id (downloaded on first use).
-//   The model may also be set via the config file's "model" key (-m/--model overrides it).
+//   The model may instead be set via the config file's "model" key (-m/--model overrides it);
+//   it is optional on the command line, but if neither source provides one the server exits.
 //   Loads the tokenizer/config, starts the GPU worker, and serves the HTTP API.
 //   -c/--config loads defaults from a JSON file; env vars then CLI flags override it.
 //   Command line flags can also be set via environment variables (see server/config.h for details).
@@ -80,9 +81,12 @@ int main(int argc, char** argv) {
     mlxforge::log::error("config error: {}", e.what());
     return 2;
   }
-  // If required positional argument is missing, print usage and exit.
+  // The model is optional on the command line: it may come from -m/--model or
+  // the config file's "model" key. If neither supplies one, there's nothing to
+  // serve — report it clearly and print usage.
   if (sc.model_dir.empty()) {
     std::fprintf(stderr,
+                 "error: no model provided (pass -m <model> or set \"model\" in the config file)\n"
                  "usage: mlxforge -m <model> [-c <conffile>] [--host H] [--port P] [--max-ctx N]\n");
     return 2;
   }
