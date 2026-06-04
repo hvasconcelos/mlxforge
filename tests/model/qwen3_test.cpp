@@ -37,7 +37,7 @@ TEST_CASE("Qwen3: QK-Norm attention front-half matches the reference") {
     MESSAGE("Qwen3 model/fixtures not present; skipping golden-reference check");
     return;
   }
-  mlxforge::LlamaModel& model = shared_qwen3_model();
+  mlxforge::Qwen3Model& model = shared_qwen3_model();
 
   // QK-Norm is the defining Qwen3 delta — the per-head q/k norm weights must load.
   CHECK(model.weights().has("model.layers.0.self_attn.q_norm.weight"));
@@ -56,7 +56,7 @@ TEST_CASE("Qwen3: QK-Norm attention front-half matches the reference") {
   // Post-(q_norm + RoPE) Q, post-(k_norm + RoPE) K, and un-roped V. If QK-Norm
   // were skipped, q/k would diverge from the reference here — this is the test
   // that proves the Qwen3 attention path.
-  mlxforge::LlamaModel::QKV qkv = model.attn_qkv(emb, /*layer=*/0);
+  mlxforge::DecoderModel::QKV qkv = model.attn_qkv(emb, /*layer=*/0);
   assert_close(qkv.q, load_qwen3_npy("q_rope0.npy"));
   assert_close(qkv.k, load_qwen3_npy("k_rope0.npy"));
   assert_close(qkv.v, load_qwen3_npy("v0.npy"));
@@ -67,7 +67,7 @@ TEST_CASE("Qwen3: decoder block 0 output matches the reference") {
     MESSAGE("Qwen3 model/fixtures not present; skipping golden-reference check");
     return;
   }
-  mlxforge::LlamaModel& model = shared_qwen3_model();
+  mlxforge::Qwen3Model& model = shared_qwen3_model();
   std::vector<int> ids = load_qwen3_token_ids("prompt_0_ids.npy");
   mx::array tokens(ids.data(), {1, static_cast<int>(ids.size())}, mx::int32);
   mx::array emb = model.embed(tokens);
@@ -80,7 +80,7 @@ TEST_CASE("Qwen3: full forward logits + first-token argmax match the reference")
     MESSAGE("Qwen3 model/fixtures not present; skipping golden-reference check");
     return;
   }
-  mlxforge::LlamaModel& model = shared_qwen3_model();
+  mlxforge::Qwen3Model& model = shared_qwen3_model();
   std::vector<int> ids = load_qwen3_token_ids("prompt_0_ids.npy");
   const int T = static_cast<int>(ids.size());
   mx::array tokens(ids.data(), {1, T}, mx::int32);

@@ -107,7 +107,7 @@ tokenizer. Each one is a bug that does not announce itself.
   (no mutex) and currently supports Llama-3.2-style byte-level BPE only —
   `Tokenizer::from_file` throws on other families (e.g. SentencePiece-based ones).
 - **Masks are additive fp16, never boolean** (avoids MLX bug #2894). See
-  `LlamaModel::batch_mask`.
+  `DecoderModel::batch_mask`.
 - **RoPE is llama3-scaled.** `compute_rope_freqs` mirrors `mlx_lm`'s `Llama3RoPE`
   exactly and feeds `fast::rope` via `freqs` (the analytic base disabled). It is
   validated against the reference; don't "simplify" the math.

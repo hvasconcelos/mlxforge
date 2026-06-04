@@ -27,7 +27,7 @@ TEST_CASE("Qwen3 MoE: stacked expert + router weights load") {
     MESSAGE("Qwen3 MoE model/fixtures not present; skipping golden-reference check");
     return;
   }
-  mlxforge::LlamaModel& model = shared_qwen3_moe_model();
+  mlxforge::Qwen3MoeModel& model = shared_qwen3_moe_model();
   // The router gate and the per-layer stacked SwitchLinear experts must be present
   // (the load-time sanitize stacks raw per-expert tensors; mlx repos ship stacked).
   CHECK(model.config().num_experts > 0);
@@ -45,7 +45,7 @@ TEST_CASE("Qwen3 MoE: sparse MoE block (layer 0) matches the reference") {
     MESSAGE("Qwen3 MoE model/fixtures not present; skipping golden-reference check");
     return;
   }
-  mlxforge::LlamaModel& model = shared_qwen3_moe_model();
+  mlxforge::Qwen3MoeModel& model = shared_qwen3_moe_model();
   REQUIRE(model.config().is_moe_layer(0));
 
   std::vector<int> ids = load_qwen3_moe_token_ids("prompt_0_ids.npy");
@@ -69,7 +69,7 @@ TEST_CASE("Qwen3 MoE: decoder block 0 output matches the reference") {
     MESSAGE("Qwen3 MoE model/fixtures not present; skipping golden-reference check");
     return;
   }
-  mlxforge::LlamaModel& model = shared_qwen3_moe_model();
+  mlxforge::Qwen3MoeModel& model = shared_qwen3_moe_model();
   std::vector<int> ids = load_qwen3_moe_token_ids("prompt_0_ids.npy");
   mx::array tokens(ids.data(), {1, static_cast<int>(ids.size())}, mx::int32);
   mx::array emb = model.embed(tokens);
@@ -82,7 +82,7 @@ TEST_CASE("Qwen3 MoE: full forward first-token argmax + greedy stream match") {
     MESSAGE("Qwen3 MoE model/fixtures not present; skipping golden-reference check");
     return;
   }
-  mlxforge::LlamaModel& model = shared_qwen3_moe_model();
+  mlxforge::Qwen3MoeModel& model = shared_qwen3_moe_model();
   std::vector<int> ids = load_qwen3_moe_token_ids("prompt_0_ids.npy");
   const int T = static_cast<int>(ids.size());
   mx::array tokens(ids.data(), {1, T}, mx::int32);

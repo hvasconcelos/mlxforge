@@ -7,7 +7,7 @@
 #include <functional>
 #include <vector>
 
-#include "model/llama.h"
+#include "model/decoder_model.h"
 
 namespace mlxforge {
 
@@ -26,7 +26,7 @@ struct GenerateResult {
 
 // Greedy (argmax) single-stream generation. Calls `on_token(id)` for each
 // emitted token. Stops when an EOS token would be produced or after max_tokens.
-GenerateResult greedy_generate(const LlamaModel& model, const std::vector<int>& prompt_ids,
+GenerateResult greedy_generate(const DecoderModel& model, const std::vector<int>& prompt_ids,
                                int max_tokens, const std::vector<int>& eos_ids,
                                const std::function<void(int)>& on_token = {});
 

@@ -29,7 +29,7 @@
 #include "core/logging.h"
 #include "core/model_source.h"
 #include "core/weights.h"
-#include "model/llama.h"
+#include "model/model_factory.h"
 #include "runtime/single_stream.h"
 #include "tokenizer/tokenizer.h"
 
@@ -48,9 +48,10 @@ namespace {
 
 // A loaded model + its tokenizer + config, from either a GGUF file or a
 // safetensors model directory. The model is heap-owned so it can be moved out
-// of the loader without requiring LlamaModel to be movable.
+// of the loader without requiring DecoderModel to be movable (and to hold the
+// concrete subclass create_model() picks behind the base pointer).
 struct LoadedModel {
-  std::unique_ptr<mlxforge::LlamaModel> model;
+  std::unique_ptr<mlxforge::DecoderModel> model;
   mlxforge::Tokenizer tok;
   mlxforge::ModelConfig cfg;
 };
@@ -65,10 +66,10 @@ LoadedModel load_for_inference(const std::string& spec) {
     lm.cfg = g.config;
     lm.tok = mlxforge::Tokenizer::from_gguf(g.tokens, g.merges, g.token_types, g.pre, g.bos_id,
                                             mlxforge::chat_format_from_model_type(lm.cfg.model_type));
-    lm.model = std::make_unique<mlxforge::LlamaModel>(std::move(g.config), std::move(g.weights));
+    lm.model = mlxforge::create_model(std::move(g.config), std::move(g.weights));
   } else {
     lm.cfg = mlxforge::ModelConfig::from_file(resolved + "/config.json");
-    lm.model = std::make_unique<mlxforge::LlamaModel>(lm.cfg, mlxforge::load_weights(resolved, lm.cfg));
+    lm.model = mlxforge::create_model(lm.cfg, mlxforge::load_weights(resolved, lm.cfg));
     lm.tok = mlxforge::Tokenizer::from_file(resolved + "/tokenizer.json", lm.cfg.bos_token_id,
                                             mlxforge::chat_format_from_model_type(lm.cfg.model_type));
   }
@@ -154,7 +155,7 @@ int run_dump_weights(const std::string& spec) {
 int run_generate(const std::string& spec, const std::string& prompt_arg, int max_tokens) {
   // Resolve and load the model (GGUF file or safetensors dir; downloads if needed)
   LoadedModel lm = load_for_inference(spec);
-  mlxforge::LlamaModel& model = *lm.model;
+  mlxforge::DecoderModel& model = *lm.model;
   mlxforge::Tokenizer& tok = lm.tok;
   const mlxforge::ModelConfig& cfg = lm.cfg;
 
@@ -205,7 +206,7 @@ int run_generate(const std::string& spec, const std::string& prompt_arg, int max
 // the pure forward pass.
 int run_bench(const std::string& spec, int max_tokens, int runs) {
   LoadedModel lm = load_for_inference(spec);
-  mlxforge::LlamaModel& model = *lm.model;
+  mlxforge::DecoderModel& model = *lm.model;
   mlxforge::Tokenizer& tok = lm.tok;
 
   // A fixed prompt keeps prefill length (and therefore TTFT) constant.

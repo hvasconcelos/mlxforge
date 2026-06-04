@@ -6,9 +6,15 @@ numerically-sensitive part of the codebase: every stage below is gated against a
 `mlx-lm` golden reference (see [supported-models.md](./supported-models.md) and
 [contributing.md](./contributing.md)).
 
-All of this lives in `model/llama.{h,cpp}` in a single `LlamaModel` class. The
-architecture is **shared across the LLaMA family** — onboarding a new family
-generally needs no forward-pass changes, only tokenizer/chat-format work.
+The shared forward pass lives in an abstract `DecoderModel` base
+(`model/decoder_model.{h,cpp}`); the per-architecture deltas are two `virtual`
+hooks — `norm_qk_head()` (QK-Norm) and `feed_forward()` (dense vs MoE MLP).
+Concrete subclasses are `LlamaModel` (plain, `model/llama.h`), `Qwen3Model`
+(QK-Norm, `model/qwen3.{h,cpp}`), and `Qwen3MoeModel : Qwen3Model` (adds MoE,
+`model/qwen3_moe.{h,cpp}`); `create_model()` (`model/model_factory.{h,cpp}`)
+picks one from the checkpoint. The architecture is **largely shared** —
+onboarding a new family usually means a small hook override (or none) plus
+tokenizer/chat-format work.
 
 ## The decoder, end to end
 
@@ -83,19 +89,19 @@ is no manual `repeat` of K/V, which is a classic source of silent bugs.
 example, has `hidden=1024`, `n_heads=16`, `head_dim=128`, so `q_proj` is wider
 than the hidden size and `o_proj` maps `n_heads*head_dim` back to `hidden`.
 
-**QK-Norm (Qwen3).** When the per-layer `self_attn.q_norm.weight` /
-`self_attn.k_norm.weight` tensors are present, `project_qkv` applies an extra
-RMSNorm to **each Q and K head** (over `head_dim`, with `rms_norm_eps`) right
-after the reshape and **before RoPE**; V is untouched. This is gated on weight
-presence (`has_qk_norm_`), so the Llama path — which has no such weights — is
-unchanged. It is validated against the Qwen3 golden reference like the rest of
-the front-half.
+**QK-Norm (Qwen3).** `Qwen3Model` overrides the `norm_qk_head()` hook to apply an
+extra RMSNorm to **each Q and K head** (over `head_dim`, with `rms_norm_eps`) right
+after the reshape in `project_qkv` and **before RoPE**, using the per-layer
+`self_attn.q_norm.weight` / `self_attn.k_norm.weight` tensors; V is untouched. The
+base `DecoderModel` hook is the identity, so the Llama path — which has no such
+weights — is unchanged. It is validated against the Qwen3 golden reference like
+the rest of the front-half.
 
 ### RoPE (rotary position embeddings, llama3-scaled)
 
 RoPE rotates Q and K by a position-dependent angle. Llama-3.2 uses `rope_type
 "llama3"`, which **rescales the rotation frequencies** to extend the usable
-context. `compute_rope_freqs` (in `model/llama.cpp`) mirrors `mlx_lm`'s
+context. `compute_rope_freqs` (in `model/decoder_model.cpp`) mirrors `mlx_lm`'s
 `Llama3RoPE` exactly:
 
 - Start from the standard schedule `freqs = base ** (arange(0, head_dim, 2) /
@@ -124,7 +130,7 @@ model.
 `fast::scaled_dot_product_attention(q, k, v, scale, mask_mode, mask)` with `scale
 = 1/sqrt(head_dim)`. Softmax runs in fp32 internally. Two masking regimes:
 
-- **Single-stream / prefill** (`model/llama.cpp::attention`): a multi-token chunk
+- **Single-stream / prefill** (`DecoderModel::attention`): a multi-token chunk
   uses `mask_mode="causal"`; a single decode token over the full cached history is
   unmasked (it may attend to everything already cached).
 - **Batched decode** (`attention_batched`): the mask must encode both causality
@@ -133,7 +139,7 @@ model.
 
 ### The ragged batched mask
 
-`LlamaModel::batch_mask` builds a `[B, 1, N, T_kv]` additive fp16 mask for a
+`DecoderModel::batch_mask` builds a `[B, 1, N, T_kv]` additive fp16 mask for a
 batched step. With key positions `kpos` and query positions `qpos`:
 
 - `causal[q, k] = qpos[q] >= kpos[k]`
@@ -154,10 +160,10 @@ projections (`gate_proj`, `up_proj`, `down_proj`) with the intermediate width fr
 ### Sparse MoE MLP (Qwen3 MoE)
 
 Some checkpoints replace the dense SwiGLU on a subset of layers with a
-**mixture-of-experts** block. `LlamaModel::decoder_block` picks per layer:
-`config().is_moe_layer(i)` is true when `num_experts > 0`, `i` is not in
-`mlp_only_layers`, and `(i+1) % decoder_sparse_step == 0` — otherwise the dense
-`mlp()` runs unchanged. `moe_mlp()` implements the sparse path:
+**mixture-of-experts** block. `Qwen3MoeModel::feed_forward` (the MLP hook) picks
+per layer: `config().is_moe_layer(i)` is true when `num_experts > 0`, `i` is not
+in `mlp_only_layers`, and `(i+1) % decoder_sparse_step == 0` — otherwise the
+inherited dense `mlp()` runs unchanged. `moe_mlp()` implements the sparse path:
 
 1. **Route.** `gates = softmax(gate(x))` over `num_experts` (the softmax is computed
    in fp32 — `precise=true` — to match the reference).
@@ -181,7 +187,7 @@ The final RMSNorm output is projected to vocabulary logits. The model uses the
 
 ## Linear layers and quantization
 
-Every projection goes through `LlamaModel::linear`. HF stores a `Linear` weight as
+Every projection goes through `DecoderModel::linear`. HF stores a `Linear` weight as
 `(out, in)`, so the fp16 path is `x @ Wᵀ` (`mx::matmul(x, transpose(W))`).
 
 For a quantized checkpoint (detected from `config.json`'s `quantization` block),

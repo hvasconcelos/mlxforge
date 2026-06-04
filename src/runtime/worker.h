@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "cache/batch_kv_cache.h"
-#include "model/llama.h"
+#include "model/decoder_model.h"
 #include "runtime/metrics.h"
 #include "scheduler/scheduler.h"
 
@@ -26,7 +26,7 @@ namespace mlxforge {
 
 class Worker {
  public:
-  using ModelFactory = std::function<std::unique_ptr<LlamaModel>()>;
+  using ModelFactory = std::function<std::unique_ptr<DecoderModel>()>;
 
   Worker(ModelFactory factory, Scheduler* scheduler)
       : factory_(std::move(factory)), sched_(scheduler) {}
@@ -69,7 +69,7 @@ class Worker {
 
   ModelFactory      factory_;
   Scheduler*        sched_;
-  std::unique_ptr<LlamaModel> model_;  // constructed and owned on the worker thread
+  std::unique_ptr<DecoderModel> model_;  // constructed and owned on the worker thread
 
   // Decode-batch state (worker thread only). All vectors are row-aligned with
   // the cache's batch axis.

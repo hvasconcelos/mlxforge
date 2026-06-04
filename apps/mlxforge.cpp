@@ -29,7 +29,7 @@
 #include "core/logging.h"
 #include "core/model_source.h"
 #include "core/weights.h"
-#include "model/llama.h"
+#include "model/model_factory.h"
 #include "runtime/worker.h"
 #include "scheduler/scheduler.h"
 #include "server/config.h"
@@ -166,11 +166,11 @@ int main(int argc, char** argv) {
       [dir, is_gguf] {
         if (is_gguf) {
           mlxforge::GgufModel g = mlxforge::load_gguf_model(dir);
-          return std::make_unique<mlxforge::LlamaModel>(std::move(g.config), std::move(g.weights));
+          return mlxforge::create_model(std::move(g.config), std::move(g.weights));
         }
         mlxforge::ModelConfig wcfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
         auto weights = mlxforge::load_weights(dir, wcfg);
-        return std::make_unique<mlxforge::LlamaModel>(std::move(wcfg), std::move(weights));
+        return mlxforge::create_model(std::move(wcfg), std::move(weights));
       },
       &scheduler);
   worker.start();

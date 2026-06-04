@@ -115,7 +115,7 @@ huggingface-cli download mlx-community/Llama-3.2-1B-Instruct-4bit   # 4-bit
 | Qwen3 (GGUF) | `Qwen/Qwen3-0.6B-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | ChatML (`<\|im_start\|>…`) |
 | Qwen3 (MoE) | `mlx-community/Qwen3-30B-A3B-4bit` | 4-bit / fp16 (mixed bits ok) | ChatML (`<\|im_start\|>…`) |
 
-The transformer (`model/llama`) is family-shared, and the chat template is
+The transformer (the `DecoderModel` base in `model/`) is family-shared, and the chat template is
 selected from `config.json`'s `model_type` with BOS / special-token handling
 driven by `config.json` + `tokenizer.json` (no hard-coded ids). **Qwen3 dense**
 models (0.6B–32B) run end-to-end: their three deltas over Llama-3.2 — per-head
@@ -256,7 +256,7 @@ Source layout (`src/`):
 | `core/model_source` | resolve a model spec (local dir, `.gguf` file, or HF repo id) to a path; HF-cache reuse + download |
 | `core/hf_download` | download HF repos via libcurl (list, filter, fetch through CDN redirect, atomic rename) |
 | `core/env` | `env_or`/`env_long` environment-variable helpers |
-| `model/llama` | the transformer: embedding, RMSNorm, RoPE, GQA SDPA, SwiGLU, LM head; fp16 + quantized paths; single-stream and batched forward |
+| `model/` | the transformer: `DecoderModel` base (embedding, RMSNorm, RoPE, GQA SDPA, SwiGLU, LM head; fp16 + quantized paths; single-stream and batched forward) + `LlamaModel`/`Qwen3Model`/`Qwen3MoeModel` subclasses + `create_model` factory |
 | `cache/kv_cache` | single-sequence KV cache |
 | `cache/batch_kv_cache` | batched, left-padded KV cache: `update_and_fetch`, `filter`, `merge`, `pad_dummies` |
 | `cache/kv_budget` | KV memory projection / admission gate |

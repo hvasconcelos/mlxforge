@@ -183,7 +183,7 @@ path under `tests/`.
 | `core/model_source` | Resolve a model spec (local dir or HF repo id) to a local snapshot dir; HF-cache reuse + download fallback. |
 | `core/hf_download` | Download HF repos via libcurl (the only HTTP client): list files, filter, fetch through the CDN redirect, atomic rename. |
 | `core/env` | Tiny `env_or`/`env_long` helpers for environment-variable overrides. |
-| `model/llama` | The transformer: embedding, RMSNorm, RoPE, GQA SDPA, SwiGLU, LM head. fp16 and quantized paths; single-stream and batched forward. |
+| `model/` | The transformer: `DecoderModel` base (embedding, RMSNorm, RoPE, GQA SDPA, SwiGLU, LM head; fp16 and quantized paths; single-stream and batched forward) with `LlamaModel`/`Qwen3Model`/`Qwen3MoeModel` subclasses and a `create_model` factory. |
 | `cache/kv_cache` | Single-sequence KV cache (the simplest prefill/decode split). |
 | `cache/batch_kv_cache` | Batched, left-padded KV cache: `update_and_fetch`, `filter` (evict), `merge` (admit), `pad_dummies` (bucketing). |
 | `cache/kv_budget` | KV memory projection / admission gate. |
@@ -207,7 +207,7 @@ path under `tests/`.
   paged-attention primitive and SDPA wants contiguous K/V. At the ~1B scale the
   padding waste is bounded and acceptable. The trade-off is no prefix sharing.
 - **Additive fp16 masks, never boolean.** A known MLX boolean-mask bug (#2894)
-  forces additive masks; the mask is built per step in `LlamaModel::batch_mask`.
+  forces additive masks; the mask is built per step in `DecoderModel::batch_mask`.
 - **Sampling stays on the GPU.** Pulling logits back to the host to sample would
   serialize the decode pipeline; sampling is expressed as graph ops folded into
   the forward graph so the single `async_eval` realizes both.

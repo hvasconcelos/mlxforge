@@ -32,7 +32,10 @@ add_library(mlxforge_core STATIC
   src/core/gguf.cpp
   src/core/model_source.cpp
   src/core/hf_download.cpp
-  src/model/llama.cpp
+  src/model/decoder_model.cpp
+  src/model/qwen3.cpp
+  src/model/qwen3_moe.cpp
+  src/model/model_factory.cpp
   src/cache/kv_cache.cpp
   src/cache/batch_kv_cache.cpp
   src/cache/kv_budget.cpp

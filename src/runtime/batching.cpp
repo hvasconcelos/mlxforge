@@ -14,7 +14,7 @@ int next_bucket(int n) {
   return ((n + 31) / 32) * 32;  // beyond 32, round up to a multiple of 32
 }
 
-PrefillResult prefill(const LlamaModel& model, const std::vector<std::vector<int>>& prompts,
+PrefillResult prefill(const DecoderModel& model, const std::vector<std::vector<int>>& prompts,
                       int step_size, int pad_id) {
   const int B = static_cast<int>(prompts.size());
   int p_max = 0;

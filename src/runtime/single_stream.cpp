@@ -23,7 +23,7 @@ int greedy_last(const mx::array& logits) {
 }
 }  // namespace
 
-GenerateResult greedy_generate(const LlamaModel& model, const std::vector<int>& prompt_ids,
+GenerateResult greedy_generate(const DecoderModel& model, const std::vector<int>& prompt_ids,
                                int max_tokens, const std::vector<int>& eos_ids,
                                const std::function<void(int)>& on_token) {
   auto is_eos = [&](int id) {

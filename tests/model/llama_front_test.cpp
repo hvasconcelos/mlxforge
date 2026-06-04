@@ -41,7 +41,7 @@ TEST_CASE("embedding + RMSNorm + RoPE'd Q/K/V match the reference") {
 
   // Post-RoPE Q/K and un-roped V, each (1, heads, T, head_dim). V has heavy
   // cancellation, so it is the strictest check that the projection is correct.
-  mlxforge::LlamaModel::QKV qkv = model.attn_qkv(emb, /*layer=*/0);
+  mlxforge::DecoderModel::QKV qkv = model.attn_qkv(emb, /*layer=*/0);
   assert_close(qkv.q, load_npy("q_rope0.npy"));
   assert_close(qkv.k, load_npy("k_rope0.npy"));
   assert_close(qkv.v, load_npy("v0.npy"));

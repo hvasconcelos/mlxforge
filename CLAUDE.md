@@ -118,7 +118,7 @@ reference/.venv/bin/python reference/dump_ref.py
   Llama-3.2-style byte-level BPE only; `Tokenizer::from_file` throws on other
   families (e.g. SentencePiece-based tokenizers, not yet implemented).
 - **Masks are additive fp16, never boolean** (avoids MLX bug #2894). See
-  `LlamaModel::batch_mask`.
+  `DecoderModel::batch_mask`.
 - **RoPE is llama3-scaled** — `compute_rope_freqs` mirrors `mlx_lm`'s
   `Llama3RoPE` exactly and feeds `fast::rope` via `freqs` (base disabled). It's
   validated against `reference/fixtures/rope_freqs.npy`; don't "simplify" the

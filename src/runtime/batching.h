@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "cache/batch_kv_cache.h"
-#include "model/llama.h"
+#include "model/decoder_model.h"
 #include "scheduler/request.h"
 
 namespace mlxforge {
@@ -33,7 +33,7 @@ struct PrefillResult {
 // BatchKVCache, chunking at `step_size`. Returns the cache plus the last-real-
 // position logits (rows are left-padded, so every row's last token sits at
 // P_max-1). `pad_id` fills the masked-out left padding.
-PrefillResult prefill(const LlamaModel& model, const std::vector<std::vector<int>>& prompts,
+PrefillResult prefill(const DecoderModel& model, const std::vector<std::vector<int>>& prompts,
                       int step_size = kPrefillStepSize, int pad_id = 0);
 
 }  // namespace mlxforge

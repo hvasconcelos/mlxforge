@@ -1,4 +1,4 @@
-#include "model/llama.h"
+#include "model/decoder_model.h"
 
 #include <cmath>
 #include <limits>
@@ -91,24 +91,23 @@ bool rope_array_offset_overload_available() {
   return true;
 }
 
-LlamaModel::LlamaModel(ModelConfig config, Weights weights)
+DecoderModel::DecoderModel(ModelConfig config, Weights weights)
     : cfg_(std::move(config)), w_(std::move(weights)), rope_freqs_(compute_rope_freqs(cfg_)) {
-  has_qk_norm_ = w_.has("model.layers.0.self_attn.q_norm.weight");
-  log::debug("LlamaModel: type={} layers={} hidden={} heads={}/{} head_dim={} vocab={} "
-             "quantized={} qk_norm={}",
+  log::debug("DecoderModel: type={} layers={} hidden={} heads={}/{} head_dim={} vocab={} "
+             "quantized={}",
              cfg_.model_type, cfg_.n_layers, cfg_.hidden, cfg_.n_heads, cfg_.n_kv_heads,
-             cfg_.head_dim, cfg_.vocab, cfg_.quantized, has_qk_norm_);
+             cfg_.head_dim, cfg_.vocab, cfg_.quantized);
 }
 
-std::string LlamaModel::layer_key(int i, const std::string& suffix) const {
+std::string DecoderModel::layer_key(int i, const std::string& suffix) const {
   return "model.layers." + std::to_string(i) + "." + suffix;
 }
 
-const mx::array& LlamaModel::layer_w(int i, const std::string& suffix) const {
+const mx::array& DecoderModel::layer_w(int i, const std::string& suffix) const {
   return w_.at(layer_key(i, suffix));
 }
 
-mx::array LlamaModel::linear(const mx::array& x, const std::string& weight_key) const {
+mx::array DecoderModel::linear(const mx::array& x, const std::string& weight_key) const {
   // Quantization is detected per-weight (a "<base>.scales" sibling), not from a
   // global flag: a checkpoint may mix quantized and dense weights (GGUF) or vary
   // bit-width per layer (mixed-precision MLX repos).
@@ -123,7 +122,7 @@ mx::array LlamaModel::linear(const mx::array& x, const std::string& weight_key) 
   return mx::matmul(x, mx::transpose(w_.at(weight_key)));  // weight is (out, in)
 }
 
-mx::array LlamaModel::embed(const mx::array& tokens) const {
+mx::array DecoderModel::embed(const mx::array& tokens) const {
   QuantParams qp;
   if (w_.is_quantized("model.embed_tokens.weight", qp)) {
     // Gather the quantized rows for these tokens, then dequantize just those.
@@ -135,48 +134,51 @@ mx::array LlamaModel::embed(const mx::array& tokens) const {
   return mx::take(w_.at("model.embed_tokens.weight"), tokens, /*axis=*/0);
 }
 
-mx::array LlamaModel::rms_norm(const mx::array& x, const mx::array& weight) const {
+mx::array DecoderModel::rms_norm(const mx::array& x, const mx::array& weight) const {
   return mx::fast::rms_norm(x, std::optional<mx::array>(weight), cfg_.rms_eps);
 }
 
-mx::array LlamaModel::apply_rope(const mx::array& x, int offset) const {
+mx::array DecoderModel::apply_rope(const mx::array& x, int offset) const {
   return mx::fast::rope(x, cfg_.head_dim, /*traditional=*/false, /*base=*/std::nullopt,
                         /*scale=*/1.0f, offset, rope_freqs_);
 }
 
-mx::array LlamaModel::apply_rope(const mx::array& x, const mx::array& offset) const {
+mx::array DecoderModel::apply_rope(const mx::array& x, const mx::array& offset) const {
   return mx::fast::rope(x, cfg_.head_dim, /*traditional=*/false, /*base=*/std::nullopt,
                         /*scale=*/1.0f, offset, rope_freqs_);
 }
 
-LlamaModel::QKV LlamaModel::project_qkv(const mx::array& x, int layer) const {
+mx::array DecoderModel::norm_qk_head(const mx::array& h, int /*layer*/, bool /*is_query*/) const {
+  return h;  // Llama: no per-head Q/K normalization.
+}
+
+DecoderModel::QKV DecoderModel::project_qkv(const mx::array& x, int layer) const {
   const int B = x.shape()[0];
   const int L = x.shape()[1];
   mx::array x_normed = rms_norm(x, layer_w(layer, "input_layernorm.weight"));
 
-  // Reshape a projection to per-head form (B, heads, L, head_dim). Qwen3 applies
-  // an extra RMSNorm to each Q/K head (over head_dim) before RoPE; `norm_suffix`
-  // names that weight, and the norm is gated on `has_qk_norm_` so the Llama path
-  // (no q_norm/k_norm) is unchanged. V is never QK-normed (norm_suffix == nullptr).
-  auto to_heads = [&](const mx::array& proj, int heads, const char* norm_suffix) {
+  // Reshape a projection to per-head form (B, heads, L, head_dim). Q/K route
+  // through norm_qk_head() (Qwen3 RMSNorm over head_dim before RoPE; identity
+  // for Llama); V is never QK-normed (is_qk == false).
+  auto to_heads = [&](const mx::array& proj, int heads, bool is_qk, bool is_query) {
     mx::array h = mx::reshape(proj, {B, L, heads, cfg_.head_dim});
-    if (has_qk_norm_ && norm_suffix) h = rms_norm(h, layer_w(layer, norm_suffix));
+    if (is_qk) h = norm_qk_head(h, layer, is_query);
     return mx::transpose(h, {0, 2, 1, 3});
   };
   return {to_heads(linear(x_normed, layer_key(layer, "self_attn.q_proj.weight")), cfg_.n_heads,
-                   "self_attn.q_norm.weight"),
+                   /*is_qk=*/true, /*is_query=*/true),
           to_heads(linear(x_normed, layer_key(layer, "self_attn.k_proj.weight")), cfg_.n_kv_heads,
-                   "self_attn.k_norm.weight"),
+                   /*is_qk=*/true, /*is_query=*/false),
           to_heads(linear(x_normed, layer_key(layer, "self_attn.v_proj.weight")), cfg_.n_kv_heads,
-                   nullptr)};
+                   /*is_qk=*/false, /*is_query=*/false)};
 }
 
-LlamaModel::QKV LlamaModel::attn_qkv(const mx::array& x, int layer, int offset) const {
+DecoderModel::QKV DecoderModel::attn_qkv(const mx::array& x, int layer, int offset) const {
   QKV p = project_qkv(x, layer);
   return {apply_rope(p.q, offset), apply_rope(p.k, offset), p.v};
 }
 
-mx::array LlamaModel::attention(const mx::array& x, int layer, int offset, KVCache* cache) const {
+mx::array DecoderModel::attention(const mx::array& x, int layer, int offset, KVCache* cache) const {
   const int B = x.shape()[0];
   const int L = x.shape()[1];
 
@@ -199,78 +201,25 @@ mx::array LlamaModel::attention(const mx::array& x, int layer, int offset, KVCac
   return linear(out, layer_key(layer, "self_attn.o_proj.weight"));
 }
 
-mx::array LlamaModel::mlp(const mx::array& x, int layer) const {
+mx::array DecoderModel::mlp(const mx::array& x, int layer) const {
   mx::array gate = linear(x, layer_key(layer, "mlp.gate_proj.weight"));
   mx::array up = linear(x, layer_key(layer, "mlp.up_proj.weight"));
   mx::array silu = mx::multiply(gate, mx::sigmoid(gate));
   return linear(mx::multiply(silu, up), layer_key(layer, "mlp.down_proj.weight"));
 }
 
-mx::array LlamaModel::switch_linear(const mx::array& x, int layer, const char* proj,
-                                    const mx::array& inds) const {
-  // Stacked SwitchLinear weight (num_experts, out, in); gather the per-token
-  // expert rows named by `inds`. Quantization is detected the same way as the
-  // dense linear() (a "<base>.scales" sibling), so a mixed checkpoint just works.
-  const std::string wkey = layer_key(layer, std::string("mlp.switch_mlp.") + proj + ".weight");
-  QuantParams qp;
-  if (w_.is_quantized(wkey, qp)) {
-    static constexpr std::string_view kWeightSuffix = ".weight";
-    const std::string base = wkey.substr(0, wkey.size() - kWeightSuffix.size());
-    return mx::gather_qmm(x, w_.at(wkey), w_.at(base + ".scales"), w_.at(base + ".biases"),
-                          /*lhs_indices=*/std::nullopt, /*rhs_indices=*/inds,
-                          /*transpose=*/true, qp.group_size, qp.bits);
-  }
-  // Dense: x @ W^T per expert. W is (E, out, in); swap to (E, in, out) for gather_mm.
-  return mx::gather_mm(x, mx::swapaxes(w_.at(wkey), -1, -2),
-                       /*lhs_indices=*/std::nullopt, /*rhs_indices=*/inds);
+mx::array DecoderModel::feed_forward(const mx::array& x, int layer) const {
+  return mlp(x, layer);  // Llama / dense default.
 }
 
-mx::array LlamaModel::moe_mlp(const mx::array& x, int layer) const {
-  // Router logits -> probabilities. softmax is computed in fp32 (precise) to
-  // match mlx_lm's softmax(..., precise=True); the gate may be 8-bit quantized,
-  // which linear() handles transparently.
-  mx::array gates = mx::softmax(linear(x, layer_key(layer, "mlp.gate.weight")),
-                                /*axis=*/-1, /*precise=*/true);  // (B, L, n_experts)
-  const int B = x.shape()[0];
-  const int L = x.shape()[1];
-  const int n_experts = cfg_.num_experts;
-  const int k = cfg_.num_experts_per_tok;
-
-  // Top-k experts: argpartition leaves the k largest in the last k positions; the
-  // exact intra-k order is irrelevant (the outputs are summed). Cast to uint32 for
-  // the gather indices.
-  mx::array part = mx::argpartition(gates, /*kth=*/n_experts - k, /*axis=*/-1);
-  mx::array inds =
-      mx::astype(mx::slice(part, {0, 0, n_experts - k}, {B, L, n_experts}), mx::uint32);
-  mx::array scores = mx::take_along_axis(gates, inds, /*axis=*/-1);  // (B, L, k)
-  if (cfg_.norm_topk_prob) {
-    scores = mx::divide(scores, mx::sum(scores, /*axis=*/-1, /*keepdims=*/true));
-  }
-
-  // Per-expert SwiGLU (SwitchGLU): broadcast x over the expert axis, gather each
-  // token's chosen experts, then collapse the matmul singleton dim. Shapes:
-  //   xe (B,L,1,1,hidden) -> up/gate (B,L,k,1,moe_inter) -> y (B,L,k,1,hidden).
-  mx::array xe = mx::expand_dims(x, {-2, -3});
-  mx::array up = switch_linear(xe, layer, "up_proj", inds);
-  mx::array gate = switch_linear(xe, layer, "gate_proj", inds);
-  mx::array silu = mx::multiply(gate, mx::sigmoid(gate));
-  mx::array y = switch_linear(mx::multiply(silu, up), layer, "down_proj", inds);
-  y = mx::squeeze(y, /*axis=*/-2);  // (B, L, k, hidden)
-
-  // Weighted sum over the k selected experts.
-  mx::array weighted = mx::multiply(y, mx::expand_dims(scores, -1));  // (B, L, k, hidden)
-  return mx::sum(weighted, /*axis=*/-2);  // (B, L, hidden)
-}
-
-mx::array LlamaModel::decoder_block(const mx::array& x, int layer, int offset,
-                                   KVCache* cache) const {
+mx::array DecoderModel::decoder_block(const mx::array& x, int layer, int offset,
+                                      KVCache* cache) const {
   mx::array h = mx::add(x, attention(x, layer, offset, cache));
   mx::array post = rms_norm(h, layer_w(layer, "post_attention_layernorm.weight"));
-  mx::array ff = cfg_.is_moe_layer(layer) ? moe_mlp(post, layer) : mlp(post, layer);
-  return mx::add(h, ff);
+  return mx::add(h, feed_forward(post, layer));
 }
 
-mx::array LlamaModel::batch_mask(int prev_idx, int n_query, const mx::array& left_padding) const {
+mx::array DecoderModel::batch_mask(int prev_idx, int n_query, const mx::array& left_padding) const {
   const int t_kv = prev_idx + n_query;
   const int B = left_padding.shape()[0];
 
@@ -290,8 +239,8 @@ mx::array LlamaModel::batch_mask(int prev_idx, int n_query, const mx::array& lef
   return mx::where(keep, mx::array(0.0f, mx::float16), mx::array(ninf, mx::float16));
 }
 
-mx::array LlamaModel::attention_batched(const mx::array& x, int layer, const mx::array& offset,
-                                       const mx::array& mask, BatchKVCache& cache) const {
+mx::array DecoderModel::attention_batched(const mx::array& x, int layer, const mx::array& offset,
+                                          const mx::array& mask, BatchKVCache& cache) const {
   const int B = x.shape()[0];
   const int L = x.shape()[1];
 
@@ -307,7 +256,7 @@ mx::array LlamaModel::attention_batched(const mx::array& x, int layer, const mx:
   return linear(out, layer_key(layer, "self_attn.o_proj.weight"));
 }
 
-mx::array LlamaModel::forward(const mx::array& tokens, BatchKVCache& cache) const {
+mx::array DecoderModel::forward(const mx::array& tokens, BatchKVCache& cache) const {
   const int N = tokens.shape()[1];
   const int prev = cache.idx();
   mx::array offset = cache.offset();  // per-row, read once before the cache write
@@ -315,22 +264,22 @@ mx::array LlamaModel::forward(const mx::array& tokens, BatchKVCache& cache) cons
 
   mx::array h = embed(tokens);
   // Same residual structure as decoder_block(), but with the batched attention
-  // path (per-row RoPE offset + additive mask). MLP/norms are shared.
+  // path (per-row RoPE offset + additive mask). feed_forward/norms are shared.
   for (int layer = 0; layer < cfg_.n_layers; ++layer) {
     mx::array attended = mx::add(h, attention_batched(h, layer, offset, mask, cache));
     mx::array post = rms_norm(attended, layer_w(layer, "post_attention_layernorm.weight"));
-    mx::array ff = cfg_.is_moe_layer(layer) ? moe_mlp(post, layer) : mlp(post, layer);
-    h = mx::add(attended, ff);
+    h = mx::add(attended, feed_forward(post, layer));
   }
   cache.advance(N);
 
   h = rms_norm(h, w_.at("model.norm.weight"));
+  // LM head: a separate lm_head when present, else the tied input embedding.
   const std::string head_key =
       w_.has("lm_head.weight") ? "lm_head.weight" : "model.embed_tokens.weight";
   return linear(h, head_key);
 }
 
-mx::array LlamaModel::forward(const mx::array& tokens, KVCache* cache) const {
+mx::array DecoderModel::forward(const mx::array& tokens, KVCache* cache) const {
   const int offset = cache ? cache->offset() : 0;
   mx::array h = embed(tokens);
   for (int layer = 0; layer < cfg_.n_layers; ++layer) {

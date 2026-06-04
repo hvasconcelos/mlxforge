@@ -11,6 +11,8 @@
 #include "core/config.h"
 #include "core/weights.h"
 #include "model/llama.h"
+#include "model/qwen3.h"
+#include "model/qwen3_moe.h"
 
 namespace mlxforge::test {
 
@@ -39,11 +41,11 @@ inline bool qwen3_model_available() {
   return !d.empty() && std::ifstream(d + "/config.json").good();
 }
 
-inline LlamaModel& shared_qwen3_model() {
-  static LlamaModel model = [] {
+inline Qwen3Model& shared_qwen3_model() {
+  static Qwen3Model model = [] {
     ModelConfig cfg = ModelConfig::from_file(qwen3_model_dir() + "/config.json");
     Weights w = load_weights(qwen3_model_dir(), cfg);
-    return LlamaModel(std::move(cfg), std::move(w));
+    return Qwen3Model(std::move(cfg), std::move(w));
   }();
   return model;
 }
@@ -56,11 +58,11 @@ inline bool qwen3_moe_model_available() {
   return !d.empty() && std::ifstream(d + "/config.json").good();
 }
 
-inline LlamaModel& shared_qwen3_moe_model() {
-  static LlamaModel model = [] {
+inline Qwen3MoeModel& shared_qwen3_moe_model() {
+  static Qwen3MoeModel model = [] {
     ModelConfig cfg = ModelConfig::from_file(qwen3_moe_model_dir() + "/config.json");
     Weights w = load_weights(qwen3_moe_model_dir(), cfg);
-    return LlamaModel(std::move(cfg), std::move(w));
+    return Qwen3MoeModel(std::move(cfg), std::move(w));
   }();
   return model;
 }

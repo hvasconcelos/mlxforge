@@ -1,11 +1,12 @@
 # Supported models
 
 mlxforge runs LLaMA-family decoder-only transformers, including Qwen3 dense
-models. The forward pass (`model/llama`) is shared across families; what differs
-per family is a small set of deltas — the chat template and special-token
-handling, plus any per-family attention tweak (Qwen3's QK-Norm) — all selected
-automatically from `config.json` (`model_type` and the presence of the
-distinguishing weights).
+models. The forward pass (the `DecoderModel` base in `model/`) is shared across
+families; what differs per family is a small set of deltas — the chat template
+and special-token handling, plus any per-family forward-pass tweak (Qwen3's
+QK-Norm, Qwen3 MoE's sparse MLP) expressed as a subclass hook override — all
+selected automatically by `create_model` from `config.json` (`model_type`,
+`num_experts`) and the presence of the distinguishing weights.
 
 ## Families that run today
 
