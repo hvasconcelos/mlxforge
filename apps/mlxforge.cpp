@@ -97,9 +97,10 @@ int main(int argc, char** argv) {
   // Convert argv to a std::vector<std::string> (excluding program name).
   const std::vector<std::string> args(argv + 1, argv + argc);
 
-  // -h/--help short-circuits everything: print help to stdout and exit 0.
+  // -h/--help short-circuits everything: print the banner + help to stdout and exit 0.
   for (const std::string& a : args) {
     if (a == "-h" || a == "--help") {
+      print_banner();
       print_help();
       return 0;
     }
