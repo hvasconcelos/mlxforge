@@ -58,8 +58,33 @@ void print_banner() {
 ▐▌  ▐▌▐▌     ▐▌  ▐▛▀▀▘▐▌ ▐▌▐▛▀▚▖▐▌▝▜▌▐▛▀▀▘
 ▐▌  ▐▌▐▙▄▄▖▗▞▘▝▚▖▐▌   ▝▚▄▞▘▐▌ ▐▌▝▚▄▞▘▐▙▄▄▖ ⚒️
 
-   LLaMA inference on Apple MLX · OpenAI-compatible API
+   Local Inference on Apple MLX · OpenAI-compatible API
 )");
+  std::fflush(stdout);
+}
+
+// Prints the command-line help to stdout (program output, not a log line),
+// listing every flag, the model/config precedence, and the env-var overrides.
+void print_help() {
+  std::puts(
+      "mlxforge — OpenAI-compatible LLM inference server on Apple MLX\n"
+      "\n"
+      "usage: mlxforge [-m <model>] [-c <conffile>] [options]\n"
+      "\n"
+      "options:\n"
+      "  -m, --model <spec>     model directory or HuggingFace repo id\n"
+      "  -c, --config <file>    load configuration from a JSON file\n"
+      "      --host <H>         bind address (default 0.0.0.0)\n"
+      "      --port <P>         listen port (default 8080)\n"
+      "      --max-ctx <N>      max prompt length in tokens (default 8192)\n"
+      "      --max-waiting <N>  max queued requests (default 256)\n"
+      "      --kv-budget <B>    KV cache budget in bytes, 0 = unbounded (default 0)\n"
+      "  -h, --help             show this help and exit\n"
+      "\n"
+      "The model may be given via -m or the config file's \"model\" key.\n"
+      "Config precedence (low to high): defaults < config file < env vars < CLI flags.\n"
+      "Env vars: MLXFORGE_HOST, MLXFORGE_PORT, MLXFORGE_MAX_CTX, MLXFORGE_MAX_WAITING, "
+      "MLXFORGE_KV_BUDGET.");
   std::fflush(stdout);
 }
 
@@ -69,14 +94,24 @@ int main(int argc, char** argv) {
   // Initialize the logger as early as possible (stderr; picks up env config)
   mlxforge::log::init();
 
+  // Convert argv to a std::vector<std::string> (excluding program name).
+  const std::vector<std::string> args(argv + 1, argv + argc);
+
+  // -h/--help short-circuits everything: print help to stdout and exit 0.
+  for (const std::string& a : args) {
+    if (a == "-h" || a == "--help") {
+      print_help();
+      return 0;
+    }
+  }
+
   // Print banner to stdout (decorative, not for logging)
   print_banner();
 
   // Parse server config from command-line arguments and (optionally) environment.
   mlxforge::ServerConfig sc;
   try {
-    // Convert argv to a std::vector<std::string> (excluding program name)
-    sc = mlxforge::ServerConfig::parse(std::vector<std::string>(argv + 1, argv + argc));
+    sc = mlxforge::ServerConfig::parse(args);
   } catch (const std::exception& e) {
     mlxforge::log::error("config error: {}", e.what());
     return 2;

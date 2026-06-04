@@ -4,7 +4,7 @@ Guidance for working in this repo with Claude Code.
 
 ## What this is
 
-`mlxforge` — a from-scratch LLaMA inference engine in **C++ on Apple MLX** (the C++
+`mlxforge` — a from-scratch Local Inference engine in **C++ on Apple MLX** (the C++
 core library, not `mlx-lm`), served behind an **OpenAI-compatible HTTP API** with
 **continuous batching**. Apple Silicon only (Metal backend). C++17.
 

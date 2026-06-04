@@ -1,6 +1,6 @@
 # mlxforge
 
-A from-scratch LLaMA inference engine in **C++ on Apple MLX**, served behind an
+A from-scratch Local inference engine in **C++ on Apple MLX**, served behind an
 **OpenAI-compatible HTTP API** with **continuous batching**.
 
 mlxforge loads raw safetensors weights, runs a numerically-correct transformer
