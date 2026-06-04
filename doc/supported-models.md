@@ -1,9 +1,11 @@
 # Supported models
 
-mlxforge runs LLaMA-family decoder-only transformers. The forward pass
-(`model/llama`) is shared across families; what differs per family is the chat
-template and special-token handling, which are selected automatically from
-`config.json`'s `model_type`.
+mlxforge runs LLaMA-family decoder-only transformers, including Qwen3 dense
+models. The forward pass (`model/llama`) is shared across families; what differs
+per family is a small set of deltas — the chat template and special-token
+handling, plus any per-family attention tweak (Qwen3's QK-Norm) — all selected
+automatically from `config.json` (`model_type` and the presence of the
+distinguishing weights).
 
 ## Families that run today
 
@@ -12,11 +14,44 @@ template and special-token handling, which are selected automatically from
 | Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-bf16` | fp16 (cast on load) | `<\|start_header_id\|>…` | yes |
 | Llama-3.2 | `mlx-community/Llama-3.2-1B-Instruct-4bit` | 4-bit (mixed bits ok) | `<\|start_header_id\|>…` | yes |
 | Llama-3.2 (GGUF) | `bartowski/Llama-3.2-1B-Instruct-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | `<\|start_header_id\|>…` | yes |
+| Qwen3 (dense) | `mlx-community/Qwen3-0.6B-bf16` | fp16 (cast on load) | ChatML (`<\|im_start\|>…`) | yes |
+| Qwen3 (dense, 4-bit) | `mlx-community/Qwen3-4B-4bit` | 4-bit (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes |
+| Qwen3 (GGUF) | `Qwen/Qwen3-0.6B-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | ChatML (`<\|im_start\|>…`) | yes |
 
-Support is currently limited to **Llama-3.2** while the engine stabilizes. Other
-LLaMA-family models will be re-onboarded later; because the forward pass is
-shared, that work is mostly tokenizer/chat-format (see [Adding a new model
-family](#adding-a-new-model-family)).
+**Qwen3 dense** models (0.6B/1.7B/4B/8B/14B/32B) run end-to-end. They add three
+deltas over Llama-3.2, all handled automatically: per-head **QK-Norm** (an
+RMSNorm on each Q/K head before RoPE, gated on the `q_norm`/`k_norm` weights),
+the **ChatML** chat template (with an `enable_thinking` toggle for Qwen3's
+reasoning mode), and single-digit number pre-tokenization in the byte-level BPE.
+Qwen3 has **no BOS token**. Qwen3 **MoE** models (e.g. 30B-A3B, 235B-A22B) are
+**not** supported — their expert-routing MLP is a separate feature.
+
+Other LLaMA-family models will be re-onboarded as needed; because the forward
+pass is shared, that work is mostly tokenizer/chat-format plus any small
+attention delta (see [Adding a new model family](#adding-a-new-model-family)).
+
+### Compatible repos
+
+Loading is **org-agnostic** — the engine accepts any HuggingFace repo id and only
+checks *format*, not provenance: safetensors weights (PyTorch `.bin` is rejected),
+the canonical HF weight-key layout, and a byte-level BPE `tokenizer.json`. Any
+Llama-3.2 **text** repo (1B/3B) that meets those — across orgs and quant formats —
+runs. The 11B/90B variants are vision/multimodal and are **not** supported.
+
+| Repo | Precision | Notes |
+| --- | --- | --- |
+| `mlx-community/Llama-3.2-3B-Instruct-bf16` | fp16 (cast on load) | 3B sibling of the reference model |
+| `mlx-community/Llama-3.2-3B-Instruct-4bit` | 4-bit (mixed bits ok) | MLX affine quant |
+| `meta-llama/Llama-3.2-1B-Instruct` | bf16 → fp16 | official repo; **gated** (Llama license + HF token) |
+| `meta-llama/Llama-3.2-3B-Instruct` | bf16 → fp16 | official repo; **gated** |
+| `meta-llama/Llama-3.2-1B` / `…-3B` | bf16 → fp16 | base (non-instruct); same loader path |
+| `bartowski/Llama-3.2-3B-Instruct-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | single-file GGUF (pass the `.gguf` path) |
+
+mlx-community is just the convenient default: its repos are **public** (the official
+fp16 repos are gated) and ship pre-converted/pre-quantized safetensors. A dense
+`meta-llama` or `bf16` repo runs in fp16 — on-the-fly quantization of a dense
+checkpoint is not implemented, so use a pre-quantized (`-4bit`) or GGUF repo for
+quantized inference.
 
 The primary, frozen reference target is **Llama-3.2-1B-Instruct** (16 layers,
 hidden 2048, 32 query / 8 KV heads GQA, head_dim 64, RMSNorm, llama3-scaled RoPE,

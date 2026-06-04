@@ -60,6 +60,11 @@ class BpeTokenizer {
   // Pre-tokenize a plain (special-token-free) segment and append its ids.
   void encode_plain(const std::string& segment, std::vector<int>& out) const;
 
+  // Max digits matched as one pre-token by the number alternative of the split
+  // regex: 3 for Llama-3 (`\p{N}{1,3}`), 1 for Qwen/most tiktoken BPEs (`\p{N}`).
+  // Set from the tokenizer.json pre_tokenizer pattern / the GGUF pretokenizer.
+  int digit_run_max_ = 1;
+
   std::unordered_map<std::string, int>    token_to_id_;  // byte-level token -> id
   std::vector<std::string>                id_to_token_;  // id -> token (dense, for decode)
   std::unordered_map<std::string, int>    merge_ranks_;  // "L R" -> rank (merge priority)

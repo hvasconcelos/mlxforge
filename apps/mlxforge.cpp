@@ -105,7 +105,8 @@ int main(int argc, char** argv) {
     mlxforge::GgufModel head = mlxforge::load_gguf_config_and_tokenizer(dir);
     cfg = std::move(head.config);
     tok = mlxforge::Tokenizer::from_gguf(head.tokens, head.merges, head.token_types, head.pre,
-                                         head.bos_id);
+                                         head.bos_id,
+                                         mlxforge::chat_format_from_model_type(cfg.model_type));
   } else {
     cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
     tok = mlxforge::Tokenizer::from_file(dir + "/tokenizer.json", cfg.bos_token_id,

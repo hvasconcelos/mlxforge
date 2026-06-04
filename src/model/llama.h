@@ -100,6 +100,9 @@ class LlamaModel {
   ModelConfig cfg_;
   Weights w_;
   mx::array rope_freqs_;
+  // Qwen3 normalizes each Q/K head (RMSNorm over head_dim) before RoPE. Detected
+  // from the presence of the q_norm/k_norm weights; false for Llama-family models.
+  bool has_qk_norm_ = false;
 };
 
 }  // namespace mlxforge

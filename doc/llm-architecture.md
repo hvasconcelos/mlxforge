@@ -78,6 +78,18 @@ each to `(B, heads, L, head_dim)`. The model is **grouped-query attention (GQA)*
 head-repeat is handled **natively by MLX SDPA** when `q_heads > kv_heads` — there
 is no manual `repeat` of K/V, which is a classic source of silent bugs.
 
+`head_dim` is read from config and need not equal `hidden / n_heads`: Qwen3, for
+example, has `hidden=1024`, `n_heads=16`, `head_dim=128`, so `q_proj` is wider
+than the hidden size and `o_proj` maps `n_heads*head_dim` back to `hidden`.
+
+**QK-Norm (Qwen3).** When the per-layer `self_attn.q_norm.weight` /
+`self_attn.k_norm.weight` tensors are present, `project_qkv` applies an extra
+RMSNorm to **each Q and K head** (over `head_dim`, with `rms_norm_eps`) right
+after the reshape and **before RoPE**; V is untouched. This is gated on weight
+presence (`has_qk_norm_`), so the Llama path — which has no such weights — is
+unchanged. It is validated against the Qwen3 golden reference like the rest of
+the front-half.
+
 ### RoPE (rotary position embeddings, llama3-scaled)
 
 RoPE rotates Q and K by a position-dependent angle. Llama-3.2 uses `rope_type

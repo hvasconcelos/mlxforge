@@ -31,4 +31,21 @@ inline LlamaModel& shared_model() {
   return model;
 }
 
+// Same, for the Qwen3 dense model (QK-Norm + ChatML integration tests).
+inline std::string qwen3_model_dir() { return MLXFORGE_MODEL_DIR_QWEN3; }
+
+inline bool qwen3_model_available() {
+  const std::string d = qwen3_model_dir();
+  return !d.empty() && std::ifstream(d + "/config.json").good();
+}
+
+inline LlamaModel& shared_qwen3_model() {
+  static LlamaModel model = [] {
+    ModelConfig cfg = ModelConfig::from_file(qwen3_model_dir() + "/config.json");
+    Weights w = load_weights(qwen3_model_dir(), cfg);
+    return LlamaModel(std::move(cfg), std::move(w));
+  }();
+  return model;
+}
+
 }  // namespace mlxforge::test

@@ -116,6 +116,11 @@ void parse_common(const json& body, ChatRequest& r) {
   r.stop = parse_stop(body);
   r.tools = parse_tools(body);
   r.tool_choice = parse_tool_choice(body);
+  // Qwen3 reasoning toggle: accept a top-level `enable_thinking` or the
+  // HF-conventional `chat_template_kwargs.enable_thinking`.
+  r.enable_thinking = body.value("enable_thinking", true);
+  if (auto kw = body.find("chat_template_kwargs"); kw != body.end() && kw->is_object())
+    r.enable_thinking = kw->value("enable_thinking", r.enable_thinking);
 }
 }  // namespace
 

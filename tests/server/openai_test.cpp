@@ -35,6 +35,17 @@ TEST_CASE("parse_chat_request maps fields and applies defaults") {
   // An omitted "model" parses as empty, so the server serves the loaded model
   // without a name check (a non-empty name it would validate against).
   CHECK(d.model.empty());
+  // Qwen3 reasoning toggle defaults to on.
+  CHECK(d.enable_thinking);
+}
+
+TEST_CASE("parse_chat_request reads enable_thinking (top-level and chat_template_kwargs)") {
+  const std::string msgs = R"("messages":[{"role":"user","content":"x"}])";
+  CHECK_FALSE(parse_chat_request(json::parse("{" + msgs + R"(,"enable_thinking":false})")).enable_thinking);
+  CHECK_FALSE(parse_chat_request(
+                  json::parse("{" + msgs + R"(,"chat_template_kwargs":{"enable_thinking":false}})"))
+                  .enable_thinking);
+  CHECK(parse_chat_request(json::parse("{" + msgs + "}")).enable_thinking);  // default on
 }
 
 TEST_CASE("parse_chat_request rejects malformed/out-of-range requests") {

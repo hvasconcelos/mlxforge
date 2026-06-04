@@ -482,6 +482,7 @@ std::string remap_block_module(const std::string& rest) {
       {"attn_norm", "input_layernorm"},      {"ffn_gate", "mlp.gate_proj"},
       {"ffn_up", "mlp.up_proj"},             {"ffn_down", "mlp.down_proj"},
       {"ffn_norm", "post_attention_layernorm"},
+      {"attn_q_norm", "self_attn.q_norm"},   {"attn_k_norm", "self_attn.k_norm"},
   };
   auto it = kTable.find(rest);
   return it == kTable.end() ? std::string{} : it->second;
@@ -572,22 +573,27 @@ void unpermute_qk(Weights& w, const ModelConfig& c) {
 
 ModelConfig config_from_gguf(const GgufMetadata& m) {
   const std::string arch = gm_str(m, "general.architecture");
-  if (arch != "llama") {
+  if (arch != "llama" && arch != "qwen3" && arch != "qwen2") {
     throw std::runtime_error("gguf: unsupported architecture '" + arch +
-                             "' (this engine is llama-family only)");
+                             "' (expected llama/qwen2/qwen3)");
   }
+  // Metadata keys are namespaced by architecture (e.g. "qwen3.block_count").
+  const std::string p = arch + ".";
   ModelConfig c;
-  c.model_type = "llama";
-  c.n_layers = gm_int(m, "llama.block_count");
-  c.hidden = gm_int(m, "llama.embedding_length");
-  c.n_heads = gm_int(m, "llama.attention.head_count");
-  c.n_kv_heads = gm_int_or(m, "llama.attention.head_count_kv", c.n_heads);
-  c.intermediate_size = gm_int(m, "llama.feed_forward_length");
-  c.head_dim = gm_int_or(m, "llama.rope.dimension_count", c.hidden / std::max(1, c.n_heads));
-  c.rms_eps = gm_float(m, "llama.attention.layer_norm_rms_epsilon");
-  c.rope_theta = gm_float_or(m, "llama.rope.freq_base", 10000.0f);
-  c.max_position_embeddings = gm_int_or(m, "llama.context_length", 0);
-  c.vocab = gm_int_or(m, "llama.vocab_size", static_cast<int>(m.tokens.size()));
+  c.model_type = arch;
+  c.n_layers = gm_int(m, p + "block_count");
+  c.hidden = gm_int(m, p + "embedding_length");
+  c.n_heads = gm_int(m, p + "attention.head_count");
+  c.n_kv_heads = gm_int_or(m, p + "attention.head_count_kv", c.n_heads);
+  c.intermediate_size = gm_int(m, p + "feed_forward_length");
+  // Qwen3 sets an explicit head dim (attention.key_length) that need not equal
+  // hidden/n_heads; llama derives it from the rope dimension count.
+  c.head_dim = gm_int_or(m, p + "attention.key_length",
+                         gm_int_or(m, p + "rope.dimension_count", c.hidden / std::max(1, c.n_heads)));
+  c.rms_eps = gm_float(m, p + "attention.layer_norm_rms_epsilon");
+  c.rope_theta = gm_float_or(m, p + "rope.freq_base", 10000.0f);
+  c.max_position_embeddings = gm_int_or(m, p + "context_length", 0);
+  c.vocab = gm_int_or(m, p + "vocab_size", static_cast<int>(m.tokens.size()));
   c.bos_token_id = gm_int_or(m, "tokenizer.ggml.bos_token_id", -1);
   const int eos = gm_int_or(m, "tokenizer.ggml.eos_token_id", -1);
   if (eos >= 0) c.eos_token_ids = {eos};
@@ -602,7 +608,10 @@ GgufModel model_head_from_metadata(const GgufMetadata& m) {
   g.tokens = m.tokens;
   g.merges = m.merges;
   g.token_types = m.token_types;
-  g.bos_id = g.config.bos_token_id;
+  // Some families (Qwen3) define a bos_token_id but do not prepend it on encode;
+  // `tokenizer.ggml.add_bos_token` (a GGUF bool, default true) is the source of
+  // truth, mirroring the safetensors tokenizer_config.json's add_bos_token.
+  g.bos_id = gm_int_or(m, "tokenizer.ggml.add_bos_token", 1) ? g.config.bos_token_id : -1;
   g.eos_id = gm_int_or(m, "tokenizer.ggml.eos_token_id", -1);
   g.pre = gm_str(m, "tokenizer.ggml.pre");
   return g;

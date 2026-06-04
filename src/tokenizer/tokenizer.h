@@ -18,11 +18,10 @@ namespace mlxforge {
 
 // Which chat template to render. Selected from config.json's model_type so the
 // forward pass (shared) and the prompt formatting (per-family) stay decoupled.
-// Only Llama-3.2 is supported today; new families will add values here.
-enum class ChatFormat { Llama3 };
+enum class ChatFormat { Llama3, Qwen3 };
 
-// Map a config.json model_type to a chat format. Currently always Llama3; the
-// seam is kept so new families can be mapped here when they are re-onboarded.
+// Map a config.json model_type to a chat format: "qwen3"/"qwen2" -> Qwen3 (ChatML),
+// everything else -> Llama3.
 ChatFormat chat_format_from_model_type(const std::string& model_type);
 
 class Tokenizer {
@@ -59,19 +58,23 @@ class Tokenizer {
   // Render the model's chat template and encode it. For Llama-3.2 this injects
   // the default "Cutting Knowledge / Today Date" system preamble; `today_date`
   // (formatted like "01 Jun 2026", empty = current date) is Llama-only. When
-  // `tools` is non-empty each entry (a function's JSON schema, rendered
-  // verbatim) is injected into the first user turn so the model can call it.
+  // `tools` is non-empty each entry (a function's JSON schema, rendered verbatim)
+  // is injected so the model can call it (Llama: first user turn; Qwen3: system
+  // turn, Hermes-style). `enable_thinking` is Qwen3-only: false emits an empty
+  // `<think></think>` block to suppress reasoning (ignored by Llama).
   std::vector<int> apply_chat_template(const std::vector<Message>& messages,
                                        bool add_generation_prompt = true,
                                        const std::string& today_date = "",
-                                       const std::vector<std::string>& tools = {}) const;
+                                       const std::vector<std::string>& tools = {},
+                                       bool enable_thinking = true) const;
 
   // Build just the templated prompt string (no encoding) — used by the encoder
   // above and exposed for tests.
   static std::string render_chat_template(const std::vector<Message>& messages,
                                           bool add_generation_prompt, const std::string& today_date,
                                           ChatFormat fmt = ChatFormat::Llama3,
-                                          const std::vector<std::string>& tools = {});
+                                          const std::vector<std::string>& tools = {},
+                                          bool enable_thinking = true);
 
  private:
   // BpeTokenizer is pure/const and thread-safe, so encode/decode need no mutex.

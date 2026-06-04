@@ -1,0 +1,130 @@
+{
+  "model_repo": "mlx-community/Qwen3-0.6B-bf16",
+  "compute_dtype": "float16",
+  "prompts": [
+    "The capital of France is",
+    "Hello, world!",
+    "Once upon a time, in a land far away,"
+  ],
+  "chat_messages": [
+    {
+      "role": "user",
+      "content": "What is the capital of France?"
+    }
+  ],
+  "greedy_max_new": 20,
+  "arrays": {
+    "prompt_0_ids": {
+      "shape": [
+        5
+      ],
+      "dtype": "int32"
+    },
+    "prompt_1_ids": {
+      "shape": [
+        4
+      ],
+      "dtype": "int32"
+    },
+    "prompt_2_ids": {
+      "shape": [
+        11
+      ],
+      "dtype": "int32"
+    },
+    "chat_ids": {
+      "shape": [
+        15
+      ],
+      "dtype": "int32"
+    },
+    "chat_ids_nothink": {
+      "shape": [
+        19
+      ],
+      "dtype": "int32"
+    },
+    "embeddings": {
+      "shape": [
+        1,
+        5,
+        1024
+      ],
+      "dtype": "float16"
+    },
+    "attn_norm0": {
+      "shape": [
+        1,
+        5,
+        1024
+      ],
+      "dtype": "float16"
+    },
+    "q_pre0": {
+      "shape": [
+        1,
+        16,
+        5,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "q_rope0": {
+      "shape": [
+        1,
+        16,
+        5,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "k_rope0": {
+      "shape": [
+        1,
+        8,
+        5,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "v0": {
+      "shape": [
+        1,
+        8,
+        5,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "block0": {
+      "shape": [
+        1,
+        5,
+        1024
+      ],
+      "dtype": "float16"
+    },
+    "logits_last": {
+      "shape": [
+        1,
+        151936
+      ],
+      "dtype": "float16"
+    },
+    "argmax": {
+      "shape": [
+        1
+      ],
+      "dtype": "int32"
+    },
+    "greedy_tokens": {
+      "shape": [
+        20
+      ],
+      "dtype": "int32"
+    }
+  },
+  "eos_token_ids": [
+    151645
+  ]
+}

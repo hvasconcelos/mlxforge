@@ -96,6 +96,47 @@ TEST_CASE("chat template renders tools and tool turns (no model needed)") {
   CHECK(convo.find("ipython<|end_header_id|>\n\n{\"temp\": 21}") != std::string::npos);
 }
 
+TEST_CASE("Qwen3 ChatML template renders thinking, tools, and tool turns (no model needed)") {
+  using mlxforge::ChatFormat;
+  using mlxforge::Tokenizer;
+
+  // Basic ChatML: no default system message, generation prompt opens an assistant
+  // turn. Thinking is on by default (no <think> block emitted).
+  std::string basic = Tokenizer::render_chat_template({{"user", "hi"}}, /*add_generation_prompt=*/
+                                                      true, "", ChatFormat::Qwen3);
+  CHECK(basic == "<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n");
+
+  // System message is rendered as a leading system turn.
+  std::string with_sys = Tokenizer::render_chat_template(
+      {{"system", "be terse"}, {"user", "hi"}}, true, "", ChatFormat::Qwen3);
+  CHECK(with_sys.rfind("<|im_start|>system\nbe terse<|im_end|>\n", 0) == 0);
+
+  // enable_thinking=false appends an empty <think></think> block after the header.
+  std::string no_think = Tokenizer::render_chat_template({{"user", "hi"}}, true, "",
+                                                         ChatFormat::Qwen3, {}, /*enable_thinking=*/
+                                                         false);
+  CHECK(no_think.find("<|im_start|>assistant\n<think>\n\n</think>\n\n") != std::string::npos);
+
+  // Hermes-style tools: injected into the system turn, with <tool_call> guidance.
+  const std::string schema = R"({"type": "function", "function": {"name": "get_weather"}})";
+  std::string with_tools = Tokenizer::render_chat_template(
+      {{"user", "weather?"}}, true, "", ChatFormat::Qwen3, /*tools=*/{schema});
+  CHECK(with_tools.rfind("<|im_start|>system\n# Tools", 0) == 0);
+  CHECK(with_tools.find("<tools>\n" + schema + "\n</tools>") != std::string::npos);
+  CHECK(with_tools.find("<tool_call></tool_call>") != std::string::npos);
+
+  // An assistant tool call replays as a <tool_call> block; a tool result is wrapped
+  // in a <tool_response> under a user turn.
+  Tokenizer::Message call{"assistant", ""};
+  call.tool_call = R"({"name": "get_weather", "arguments": {"city": "SF"}})";
+  std::string convo = Tokenizer::render_chat_template(
+      {{"user", "weather?"}, call, {"tool", R"({"temp": 21})"}}, true, "", ChatFormat::Qwen3);
+  CHECK(convo.find("<|im_start|>assistant\n\n<tool_call>\n" + call.tool_call + "\n</tool_call>") !=
+        std::string::npos);
+  CHECK(convo.find("<|im_start|>user\n<tool_response>\n{\"temp\": 21}\n</tool_response><|im_end|>") !=
+        std::string::npos);
+}
+
 TEST_CASE("streaming detokenizer never emits broken UTF-8") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");

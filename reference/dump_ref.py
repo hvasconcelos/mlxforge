@@ -38,6 +38,16 @@ MODELS = {
         "compute_dtype": mx.float16,
         # The Llama-3.2 chat template has a system role with a date preamble.
         "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
+        # Qwen3-only: also dump a thinking-disabled chat prompt.
+        "thinking": False,
+    },
+    "qwen3": {
+        "repo": "mlx-community/Qwen3-0.6B-bf16",
+        "fixtures": "fixtures_qwen3",
+        "compute_dtype": mx.float16,
+        # Qwen3 ChatML: no default system message.
+        "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
+        "thinking": True,
     },
 }
 
@@ -136,13 +146,23 @@ def main():
     chat_ids = tok.apply_chat_template(CHAT_MESSAGES, add_generation_prompt=True)
     save("chat_ids", np.array(chat_ids, dtype=np.int32))
 
+    # Qwen3-style reasoning toggle: the thinking-disabled prompt appends an empty
+    # <think></think> block. (Templates that ignore the kwarg dump an identical
+    # array, which the C++ side simply doesn't exercise.)
+    if spec.get("thinking"):
+        chat_ids_nothink = tok.apply_chat_template(
+            CHAT_MESSAGES, add_generation_prompt=True, enable_thinking=False
+        )
+        save("chat_ids_nothink", np.array(chat_ids_nothink, dtype=np.int32))
+
     # Diverse tokenizer corpus -> committed golden ids (validates the from-scratch
-    # byte-level BPE; tok.encode includes BOS, matching mlxforge::Tokenizer::encode).
-    if args.model == "llama":
-        corpus = [{"text": s, "ids": [int(x) for x in tok.encode(s)]} for s in TOKENIZER_CORPUS]
-        with open(os.path.join(FIXTURES_DIR, "tokenizer_corpus.json"), "w") as f:
-            json.dump(corpus, f, ensure_ascii=False, indent=2)
-        print(f"  wrote tokenizer_corpus.json ({len(corpus)} strings)")
+    # byte-level BPE; tok.encode matches mlxforge::Tokenizer::encode for the family).
+    # Dumped per-model so each tokenizer (Llama digit runs vs Qwen single digits) is
+    # validated against its own oracle.
+    corpus = [{"text": s, "ids": [int(x) for x in tok.encode(s)]} for s in TOKENIZER_CORPUS]
+    with open(os.path.join(FIXTURES_DIR, "tokenizer_corpus.json"), "w") as f:
+        json.dump(corpus, f, ensure_ascii=False, indent=2)
+    print(f"  wrote tokenizer_corpus.json ({len(corpus)} strings)")
 
     # --- Forward-pass intermediates for the primary prompt -------------------
     primary_ids = mx.array(prompt_id_lists[0], dtype=mx.int32)[None]  # (1, T)
@@ -158,18 +178,23 @@ def main():
     x_normed = layer0.input_layernorm(embeddings)  # (1, T, hidden)
     save("attn_norm0", x_normed)
     B, T, _ = embeddings.shape
-    q = attn.q_proj(x_normed).reshape(B, T, attn.n_heads, -1).transpose(0, 2, 1, 3)
-    k = attn.k_proj(x_normed).reshape(B, T, attn.n_kv_heads, -1).transpose(0, 2, 1, 3)
+    q = attn.q_proj(x_normed).reshape(B, T, attn.n_heads, -1)
+    k = attn.k_proj(x_normed).reshape(B, T, attn.n_kv_heads, -1)
     v = attn.v_proj(x_normed).reshape(B, T, attn.n_kv_heads, -1).transpose(0, 2, 1, 3)
-    # The precomputed `_freqs` and the front-half RoPE intermediates are specific
-    # to the llama3-rescaled RoPE; plain-RoPE models lack `_freqs` and are covered
-    # end-to-end by the block-0/logits/greedy fixtures below.
+    # Qwen3 normalizes each Q/K head (RMSNorm over head_dim) before RoPE.
+    if hasattr(attn, "q_norm"):
+        q = attn.q_norm(q)
+        k = attn.k_norm(k)
+    q = q.transpose(0, 2, 1, 3)  # (1, n_heads, T, head_dim)
+    k = k.transpose(0, 2, 1, 3)  # (1, n_kv_heads, T, head_dim)
+    # The precomputed `_freqs` is specific to the llama3-rescaled RoPE; plain-RoPE
+    # models (Qwen3) lack it. The front-half intermediates are dumped for both.
     if hasattr(attn.rope, "_freqs"):
         save("rope_freqs", attn.rope._freqs)  # (head_dim/2,) llama3-rescaled freqs
-        save("q_pre0", q)  # pre-RoPE queries (1, 32, T, 64)
-        save("q_rope0", attn.rope(q))  # (1, 32, T, 64)
-        save("k_rope0", attn.rope(k))  # (1, 8, T, 64)
-        save("v0", v)  # (1, 8, T, 64)
+    save("q_pre0", q)  # pre-RoPE queries (post q_norm for Qwen3)
+    save("q_rope0", attn.rope(q))
+    save("k_rope0", attn.rope(k))
+    save("v0", v)
 
     # Block-0 output: exactly what LlamaModel.__call__ computes for layer 0
     # (gates the single decoder block).

@@ -63,7 +63,8 @@ LoadedModel load_for_inference(const std::string& spec) {
   if (mlxforge::is_gguf_path(resolved)) {
     mlxforge::GgufModel g = mlxforge::load_gguf_model(resolved);
     lm.cfg = g.config;
-    lm.tok = mlxforge::Tokenizer::from_gguf(g.tokens, g.merges, g.token_types, g.pre, g.bos_id);
+    lm.tok = mlxforge::Tokenizer::from_gguf(g.tokens, g.merges, g.token_types, g.pre, g.bos_id,
+                                            mlxforge::chat_format_from_model_type(lm.cfg.model_type));
     lm.model = std::make_unique<mlxforge::LlamaModel>(std::move(g.config), std::move(g.weights));
   } else {
     lm.cfg = mlxforge::ModelConfig::from_file(resolved + "/config.json");

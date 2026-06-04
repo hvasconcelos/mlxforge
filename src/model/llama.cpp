@@ -93,9 +93,11 @@ bool rope_array_offset_overload_available() {
 
 LlamaModel::LlamaModel(ModelConfig config, Weights weights)
     : cfg_(std::move(config)), w_(std::move(weights)), rope_freqs_(compute_rope_freqs(cfg_)) {
-  log::debug("LlamaModel: type={} layers={} hidden={} heads={}/{} head_dim={} vocab={} quantized={}",
+  has_qk_norm_ = w_.has("model.layers.0.self_attn.q_norm.weight");
+  log::debug("LlamaModel: type={} layers={} hidden={} heads={}/{} head_dim={} vocab={} "
+             "quantized={} qk_norm={}",
              cfg_.model_type, cfg_.n_layers, cfg_.hidden, cfg_.n_heads, cfg_.n_kv_heads,
-             cfg_.head_dim, cfg_.vocab, cfg_.quantized);
+             cfg_.head_dim, cfg_.vocab, cfg_.quantized, has_qk_norm_);
 }
 
 std::string LlamaModel::layer_key(int i, const std::string& suffix) const {
@@ -152,12 +154,21 @@ LlamaModel::QKV LlamaModel::project_qkv(const mx::array& x, int layer) const {
   const int L = x.shape()[1];
   mx::array x_normed = rms_norm(x, layer_w(layer, "input_layernorm.weight"));
 
-  auto to_heads = [&](const mx::array& proj, int heads) {
-    return mx::transpose(mx::reshape(proj, {B, L, heads, cfg_.head_dim}), {0, 2, 1, 3});
+  // Reshape a projection to per-head form (B, heads, L, head_dim). Qwen3 applies
+  // an extra RMSNorm to each Q/K head (over head_dim) before RoPE; `norm_suffix`
+  // names that weight, and the norm is gated on `has_qk_norm_` so the Llama path
+  // (no q_norm/k_norm) is unchanged. V is never QK-normed (norm_suffix == nullptr).
+  auto to_heads = [&](const mx::array& proj, int heads, const char* norm_suffix) {
+    mx::array h = mx::reshape(proj, {B, L, heads, cfg_.head_dim});
+    if (has_qk_norm_ && norm_suffix) h = rms_norm(h, layer_w(layer, norm_suffix));
+    return mx::transpose(h, {0, 2, 1, 3});
   };
-  return {to_heads(linear(x_normed, layer_key(layer, "self_attn.q_proj.weight")), cfg_.n_heads),
-          to_heads(linear(x_normed, layer_key(layer, "self_attn.k_proj.weight")), cfg_.n_kv_heads),
-          to_heads(linear(x_normed, layer_key(layer, "self_attn.v_proj.weight")), cfg_.n_kv_heads)};
+  return {to_heads(linear(x_normed, layer_key(layer, "self_attn.q_proj.weight")), cfg_.n_heads,
+                   "self_attn.q_norm.weight"),
+          to_heads(linear(x_normed, layer_key(layer, "self_attn.k_proj.weight")), cfg_.n_kv_heads,
+                   "self_attn.k_norm.weight"),
+          to_heads(linear(x_normed, layer_key(layer, "self_attn.v_proj.weight")), cfg_.n_kv_heads,
+                   nullptr)};
 }
 
 LlamaModel::QKV LlamaModel::attn_qkv(const mx::array& x, int layer, int offset) const {

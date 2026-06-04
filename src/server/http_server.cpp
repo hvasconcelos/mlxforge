@@ -45,8 +45,9 @@ std::shared_ptr<Request> HttpServer::make_request(const ChatRequest& cr) const {
   auto req = std::make_shared<Request>();
   // tool_choice "none" suppresses the schemas (and later, the output parsing).
   const std::vector<std::string> tools = cr.tools_enabled() ? cr.tools : std::vector<std::string>{};
-  req->prompt_ids = cr.is_chat ? tok_->apply_chat_template(cr.messages, true, "", tools)
-                               : tok_->encode(cr.messages.front().content);
+  req->prompt_ids = cr.is_chat
+                        ? tok_->apply_chat_template(cr.messages, true, "", tools, cr.enable_thinking)
+                        : tok_->encode(cr.messages.front().content);
   req->params = cr.params;
   req->max_tokens = cr.max_tokens;
   req->eos_ids = cfg_.eos_token_ids;

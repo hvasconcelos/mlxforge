@@ -43,6 +43,15 @@ inline std::vector<int> load_token_ids(const std::string& name) {
   return load_token_ids_at(MLXFORGE_REF_FIXTURES_DIR, name);
 }
 
+// Same accessors against the Qwen3 fixture set (reference/fixtures_qwen3).
+inline std::string qwen3_ref_path(const std::string& name) {
+  return std::string(MLXFORGE_REF_FIXTURES_DIR_QWEN3) + "/" + name;
+}
+inline mx::array load_qwen3_npy(const std::string& name) { return mx::load(qwen3_ref_path(name)); }
+inline std::vector<int> load_qwen3_token_ids(const std::string& name) {
+  return load_token_ids_at(MLXFORGE_REF_FIXTURES_DIR_QWEN3, name);
+}
+
 struct CompareResult {
   bool ok = true;
   std::string message;

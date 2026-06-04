@@ -27,6 +27,10 @@ struct ChatRequest {
   // the chat template. `tool_choice` is "auto" (default) | "none" | "required".
   std::vector<std::string> tools;
   std::string tool_choice = "auto";
+  // Qwen3 reasoning toggle. Parsed from `enable_thinking` or
+  // `chat_template_kwargs.enable_thinking`; false suppresses the <think> block.
+  // Ignored by chat formats that don't support it (e.g. Llama-3.2).
+  bool enable_thinking = true;
 
   // Whether the model should be offered tools and its output parsed for calls.
   bool tools_enabled() const { return !tools.empty() && tool_choice != "none"; }

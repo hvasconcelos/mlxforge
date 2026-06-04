@@ -66,7 +66,10 @@ non-fp16 weights); `error` for caught exceptions in the worker loop.
 (completions), `max_tokens`, `temperature`, `top_p`, `top_k`, `stream`, `stop`,
 `n`, `seed`, plus `tools` / `tool_choice` for function calling (see
 [Tool / function calling](#tool--function-calling)). Chat requests are rendered
-through the model's chat template before tokenization.
+through the model's chat template before tokenization. For Qwen3, `enable_thinking`
+(or `chat_template_kwargs.enable_thinking`) toggles the reasoning block — `false`
+emits an empty `<think></think>` to suppress it; the field is ignored by chat
+formats that don't support it (e.g. Llama-3.2).
 
 **Responses:**
 

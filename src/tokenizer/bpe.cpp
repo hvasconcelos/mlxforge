@@ -125,15 +125,16 @@ uint32_t ascii_lower(uint32_t c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
 
 // Match one pre-token at codepoint index `p`, returning its length in
 // codepoints (always >= 1). Replicates, alternative-by-alternative and in
-// order, the Llama-3.2 Split regex:
+// order, the Llama-3.2 / Qwen Split regex (they differ only in the digit run
+// cap `\p{N}{1,digit_run_max}` — 3 for Llama, 1 for Qwen):
 //   (?i:'s|'t|'re|'ve|'m|'ll|'d)
 //   | [^\r\n\p{L}\p{N}]?\p{L}+
-//   | \p{N}{1,3}
+//   | \p{N}{1,digit_run_max}
 //   |  ?[^\s\p{L}\p{N}]+[\r\n]*
 //   | \s*[\r\n]+
 //   | \s+(?!\S)
 //   | \s+
-size_t match_piece(const std::vector<uint32_t>& cp, size_t p) {
+size_t match_piece(const std::vector<uint32_t>& cp, size_t p, int digit_run_max) {
   const size_t n = cp.size();
 
   // Alt 1: contractions, case-insensitive, tried in listed order.
@@ -161,10 +162,10 @@ size_t match_piece(const std::vector<uint32_t>& cp, size_t p) {
     // lead would still need a letter at p, but cp[p] is not one here).
   }
 
-  // Alt 3: \p{N}{1,3}
+  // Alt 3: \p{N}{1,digit_run_max}
   if (is_number(cp[p])) {
     size_t e = p;
-    while (e < n && e - p < 3 && is_number(cp[e])) ++e;
+    while (e < n && e - p < static_cast<size_t>(digit_run_max) && is_number(cp[e])) ++e;
     return e - p;
   }
 
@@ -282,7 +283,7 @@ void BpeTokenizer::encode_plain(const std::string& segment, std::vector<int>& ou
 
   const ByteMap& bm = byte_map();
   for (size_t p = 0; p < cp.size();) {
-    const size_t len = match_piece(cp, p);
+    const size_t len = match_piece(cp, p, digit_run_max_);
     // Map the piece's original bytes [off[p], off[p+len]) into the merge alphabet.
     std::string mapped;
     for (size_t b = off[p]; b < off[p + len]; ++b)
@@ -363,6 +364,13 @@ BpeTokenizer BpeTokenizer::from_blob(const std::string& tokenizer_json) {
   BpeTokenizer t;
   int max_id = -1;
 
+  // The number alternative of the pre-tokenizer split caps digit runs: Llama-3
+  // uses `\p{N}{1,3}`, Qwen and most tiktoken BPEs use `\p{N}` (one digit). Detect
+  // the cap from the pre_tokenizer subtree; default to 1 (single-digit).
+  if (auto pt = j.find("pre_tokenizer");
+      pt != j.end() && pt->dump().find("{1,3}") != std::string::npos)
+    t.digit_run_max_ = 3;
+
   const auto& vocab = (*model)["vocab"];
   if (!vocab.is_object()) throw std::runtime_error("bpe: model.vocab missing");
   t.token_to_id_.reserve(vocab.size() + 256);
@@ -388,8 +396,10 @@ BpeTokenizer BpeTokenizer::from_blob(const std::string& tokenizer_json) {
     t.merge_ranks_.emplace(std::move(key), rank++);
   }
 
-  // Added tokens: record ids/strings; flag the special ones for segmentation
-  // (the literal) and decode (skip). Mirrors tokenizer.cpp's parse_special_ids.
+  // Added tokens: HF isolates EVERY added token atomically before BPE, whether or
+  // not it is `special` (e.g. Qwen3's `<think>`/`</think>` are non-special added
+  // tokens but still single ids). So segment on all of them; the `special` flag
+  // only governs decode-skipping (special_ids_). Mirrors tokenizer.cpp's decode.
   if (auto at = j.find("added_tokens"); at != j.end() && at->is_array()) {
     for (const auto& tok : *at) {
       if (!tok.contains("id") || !tok.contains("content")) continue;
@@ -397,11 +407,9 @@ BpeTokenizer BpeTokenizer::from_blob(const std::string& tokenizer_json) {
       const std::string content = tok["content"].get<std::string>();
       max_id = std::max(max_id, id);
       t.token_to_id_[content] = id;
-      if (tok.value("special", false)) {
-        t.special_ids_.insert(id);
-        t.special_tokens_.emplace_back(content, id);
-        if (!content.empty()) t.special_first_bytes_.insert(static_cast<unsigned char>(content[0]));
-      }
+      t.special_tokens_.emplace_back(content, id);
+      if (!content.empty()) t.special_first_bytes_.insert(static_cast<unsigned char>(content[0]));
+      if (tok.value("special", false)) t.special_ids_.insert(id);
     }
   }
 
@@ -422,14 +430,16 @@ BpeTokenizer BpeTokenizer::from_gguf(const std::vector<std::string>& tokens,
                                      const std::vector<int>& token_types,
                                      const std::string& pre) {
   // The hand-rolled pre-tokenizer regex (match_piece) and byte-level pipeline
-  // are correct only for the Llama-3 byte-level BPE variants.
-  if (pre != "llama-bpe" && pre != "llama3" && pre != "gpt2") {
+  // are correct only for the Llama-3 / Qwen byte-level BPE variants.
+  if (pre != "llama-bpe" && pre != "llama3" && pre != "gpt2" && pre != "qwen2") {
     throw std::runtime_error("bpe: unsupported gguf pretokenizer '" + pre +
-                             "' (expected llama-bpe/llama3/gpt2)");
+                             "' (expected llama-bpe/llama3/gpt2/qwen2)");
   }
   if (tokens.empty()) throw std::runtime_error("bpe: gguf has no tokenizer.ggml.tokens");
 
   BpeTokenizer t;
+  // Llama-3 caps digit runs at 3 (`\p{N}{1,3}`); qwen2/gpt2 emit one digit each.
+  t.digit_run_max_ = (pre == "llama-bpe" || pre == "llama3") ? 3 : 1;
   t.token_to_id_.reserve(tokens.size());
   t.id_to_token_.assign(tokens.begin(), tokens.end());  // dense id -> token
   for (int id = 0; id < static_cast<int>(tokens.size()); ++id) {
