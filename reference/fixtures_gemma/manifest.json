@@ -1,0 +1,4 @@
+{
+  "model_repo": "mlx-community/gemma-2-2b-it-4bit",
+  "tokenizer_only": true
+}

@@ -47,6 +47,7 @@ add_library(mlxforge_core STATIC
   src/runtime/worker.cpp
   src/runtime/batching.cpp
   src/tokenizer/bpe.cpp
+  src/tokenizer/spm.cpp
   src/tokenizer/tokenizer.cpp
   src/server/openai.cpp
   src/server/anthropic.cpp

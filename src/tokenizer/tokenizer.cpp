@@ -10,6 +10,7 @@
 
 #include "core/logging.h"
 #include "tokenizer/bpe.h"
+#include "tokenizer/spm.h"
 
 namespace mlxforge {
 
@@ -41,12 +42,38 @@ std::string current_date() {
   return buf;
 }
 
-// Resolve the BOS id to actually prepend on encode. Some families (Qwen3) carry
-// a `bos_token_id` in config.json for metadata but their tokenizer does NOT
-// prepend it: tokenizer_config.json sets `add_bos_token: false` (and a null
-// `bos_token`). Honor that sibling file so encode matches the HF tokenizer; when
-// it's absent or doesn't disable BOS (Llama-3.2), keep the provided id.
-int effective_bos_id(const std::string& tokenizer_json_path, int bos_id) {
+// True if the fast tokenizer's post-processor unconditionally prepends a special
+// token whose id equals `bos_id`. The post-processor is authoritative for the HF
+// fast tokenizer, so this overrides a contradictory tokenizer_config flag: Gemma
+// sets add_bos_token=false yet its TemplateProcessing prepends <bos>.
+bool post_processor_prepends_bos(const std::string& tokenizer_json_blob, int bos_id) {
+  nlohmann::json j =
+      nlohmann::json::parse(tokenizer_json_blob, /*cb=*/nullptr, /*allow_exceptions=*/false);
+  if (j.is_discarded()) return false;
+  auto pp = j.find("post_processor");
+  if (pp == j.end() || pp->value("type", std::string()) != "TemplateProcessing") return false;
+  auto single = pp->find("single");
+  if (single == pp->end() || !single->is_array() || single->empty()) return false;
+  // The first template piece must be a SpecialToken; resolve its (string) id to a
+  // numeric id via the post-processor's special_tokens table.
+  auto first = (*single)[0].find("SpecialToken");
+  if (first == (*single)[0].end()) return false;
+  const std::string key = first->value("id", std::string());
+  auto st = pp->find("special_tokens");
+  if (st == pp->end() || !st->contains(key)) return false;
+  const auto& ids = (*st)[key].value("ids", nlohmann::json::array());
+  return !ids.empty() && ids[0].is_number_integer() && ids[0].get<int>() == bos_id;
+}
+
+// Resolve the BOS id to actually prepend on encode. The fast tokenizer's
+// post-processor wins when it prepends BOS (Gemma). Otherwise some families
+// (Qwen3) carry a `bos_token_id` in config.json for metadata but do NOT prepend
+// it: tokenizer_config.json sets `add_bos_token: false` (and a null `bos_token`).
+// Honor that sibling file so encode matches the HF tokenizer; when it's absent or
+// doesn't disable BOS (Llama-3.2), keep the provided id.
+int effective_bos_id(const std::string& tokenizer_json_blob, const std::string& tokenizer_json_path,
+                     int bos_id) {
+  if (bos_id >= 0 && post_processor_prepends_bos(tokenizer_json_blob, bos_id)) return bos_id;
   const size_t slash = tokenizer_json_path.find_last_of('/');
   const std::string dir = slash == std::string::npos ? "" : tokenizer_json_path.substr(0, slash + 1);
   std::ifstream f(dir + "tokenizer_config.json", std::ios::binary);
@@ -86,9 +113,11 @@ size_t utf8_complete_len(const std::string& s) {
 std::shared_ptr<EncoderBackend> make_backend(const std::string& path, const std::string& blob) {
   if (BpeTokenizer::is_supported(blob))
     return std::make_shared<BpeTokenizer>(BpeTokenizer::from_blob(blob));
+  if (SpmBpeTokenizer::is_supported(blob))
+    return std::make_shared<SpmBpeTokenizer>(SpmBpeTokenizer::from_blob(blob));
   throw std::runtime_error("tokenizer: '" + path +
-                           "' is not a supported tokenizer (only byte-level BPE, "
-                           "Llama-3.2-style, is implemented)");
+                           "' is not a supported tokenizer (only byte-level BPE "
+                           "(Llama-3.2/Qwen) and SentencePiece-BPE (Gemma) are implemented)");
 }
 }  // namespace
 
@@ -96,7 +125,7 @@ Tokenizer Tokenizer::from_file(const std::string& tokenizer_json_path, int bos_i
   const std::string blob = load_file(tokenizer_json_path);
   Tokenizer t;
   t.impl_ = make_backend(tokenizer_json_path, blob);
-  t.bos_id_ = effective_bos_id(tokenizer_json_path, bos_id);
+  t.bos_id_ = effective_bos_id(blob, tokenizer_json_path, bos_id);
   t.chat_format_ = fmt;
   log::info("tokenizer: loaded vocab={} special_tokens={} bos_id={}", t.impl_->vocab_size(),
             t.impl_->special_ids().size(), t.bos_id_);

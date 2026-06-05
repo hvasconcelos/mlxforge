@@ -73,6 +73,25 @@ MODELS = {
         "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
         "thinking": True,
     },
+    # Gemma-2 validates the from-scratch SentencePiece-BPE backend (Metaspace
+    # space->U+2581 normalization + byte_fallback), a different family from the
+    # byte-level Llama/Qwen BPE. The C++ engine has no Gemma model class, so this
+    # is tokenizer-only: an ungated mlx-community mirror (the official repo is
+    # gated) supplies the identical Gemma tokenizer, and only its tokenizer files
+    # are downloaded — no weights. The golden ids include the post-processor's
+    # leading <bos> (id 2), matching how the wrapper prepends BOS on encode.
+    "gemma": {
+        "repo": "mlx-community/gemma-2-2b-it-4bit",
+        "fixtures": "fixtures_gemma",
+        "tokenizer_only": True,
+        # Extra corpus lines exercising Gemma's own special tokens (split out
+        # before BPE) and the metaspace/byte-fallback paths.
+        "extra_corpus": [
+            "<start_of_turn>user\nHello<end_of_turn>",
+            "<bos>hi<eos>",
+            "café ▁ leading metaspace",
+        ],
+    },
 }
 
 # Fixed prompt set — committed so dumps are reproducible. Index 0 is the primary
@@ -168,11 +187,40 @@ def dump_hybrid_intermediates(model, save, primary_ids):
         save(f"block{idx}", layer(embeddings, mask, None))  # full decoder block
 
 
+def dump_tokenizer_only(spec):
+    """Tokenizer-only dump for a family the C++ engine tokenizes but does not run
+    (e.g. Gemma). Downloads just the tokenizer files (no weights) from an ungated
+    mirror and emits the golden corpus the C++ backend is validated against."""
+    from huggingface_hub import snapshot_download
+    from transformers import AutoTokenizer
+
+    fixtures_dir = os.path.join(os.path.dirname(__file__), spec["fixtures"])
+    os.makedirs(fixtures_dir, exist_ok=True)
+    print(f"downloading {spec['repo']} tokenizer files (no weights) ...")
+    # mlx-lm builds its tokenizer from transformers' AutoTokenizer, so the fast
+    # tokenizer's ids here match mlx-lm's tok.encode exactly.
+    path = snapshot_download(spec["repo"], allow_patterns=["*.json", "*.model", "tokenizer*"])
+    tok = AutoTokenizer.from_pretrained(path)
+
+    corpus_texts = TOKENIZER_CORPUS + spec.get("extra_corpus", [])
+    corpus = [{"text": s, "ids": [int(x) for x in tok.encode(s)]} for s in corpus_texts]
+    with open(os.path.join(fixtures_dir, "tokenizer_corpus.json"), "w") as f:
+        json.dump(corpus, f, ensure_ascii=False, indent=2)
+    print(f"  wrote tokenizer_corpus.json ({len(corpus)} strings)")
+    with open(os.path.join(fixtures_dir, "manifest.json"), "w") as f:
+        json.dump({"model_repo": spec["repo"], "tokenizer_only": True}, f, indent=2)
+    print(f"\ntokenizer-only dump complete -> {spec['fixtures']}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", choices=sorted(MODELS), default="llama")
     args = ap.parse_args()
     spec = MODELS[args.model]
+
+    if spec.get("tokenizer_only"):
+        dump_tokenizer_only(spec)
+        return
 
     MODEL_REPO = spec["repo"]
     COMPUTE_DTYPE = spec["compute_dtype"]

@@ -32,6 +32,7 @@ add_executable(mlxforge_tests
   model/qwen3_5_test.cpp
   tokenizer/tokenizer_test.cpp
   tokenizer/bpe_test.cpp
+  tokenizer/spm_test.cpp
   server/openai_test.cpp
   server/anthropic_test.cpp
   server/sse_test.cpp
@@ -82,6 +83,15 @@ if(_mlxforge_model_snapshots_qwen3_5)
   list(GET _mlxforge_model_snapshots_qwen3_5 0 MLXFORGE_MODEL_DIR_QWEN3_5)
 endif()
 
+# Gemma-2 tokenizer dir for the SentencePiece-BPE integration test (empty -> it
+# self-skips). Only the ungated mirror's tokenizer files are needed (no weights).
+file(GLOB _mlxforge_model_snapshots_gemma
+  "$ENV{HOME}/.cache/huggingface/hub/models--mlx-community--gemma-2-2b-it-4bit/snapshots/*")
+set(MLXFORGE_MODEL_DIR_GEMMA "")
+if(_mlxforge_model_snapshots_gemma)
+  list(GET _mlxforge_model_snapshots_gemma 0 MLXFORGE_MODEL_DIR_GEMMA)
+endif()
+
 # A local Llama GGUF file for the self-contained-loader integration tests
 # (empty -> the GGUF tests self-skip). Any *.gguf under the cached bartowski
 # Llama-3.2-1B-Instruct-GGUF repo is used.
@@ -98,11 +108,13 @@ target_compile_definitions(mlxforge_tests PRIVATE
   MLXFORGE_REF_FIXTURES_DIR_QWEN3="${CMAKE_SOURCE_DIR}/reference/fixtures_qwen3"
   MLXFORGE_REF_FIXTURES_DIR_QWEN3_MOE="${CMAKE_SOURCE_DIR}/reference/fixtures_qwen3_moe"
   MLXFORGE_REF_FIXTURES_DIR_QWEN3_5="${CMAKE_SOURCE_DIR}/reference/fixtures_qwen3_5"
+  MLXFORGE_REF_FIXTURES_DIR_GEMMA="${CMAKE_SOURCE_DIR}/reference/fixtures_gemma"
   MLXFORGE_MODEL_DIR="${MLXFORGE_MODEL_DIR}"
   MLXFORGE_MODEL_DIR_4BIT="${MLXFORGE_MODEL_DIR_4BIT}"
   MLXFORGE_MODEL_DIR_QWEN3="${MLXFORGE_MODEL_DIR_QWEN3}"
   MLXFORGE_MODEL_DIR_QWEN3_MOE="${MLXFORGE_MODEL_DIR_QWEN3_MOE}"
   MLXFORGE_MODEL_DIR_QWEN3_5="${MLXFORGE_MODEL_DIR_QWEN3_5}"
+  MLXFORGE_MODEL_DIR_GEMMA="${MLXFORGE_MODEL_DIR_GEMMA}"
   MLXFORGE_GGUF_MODEL="${MLXFORGE_GGUF_MODEL}")
 
 doctest_discover_tests(mlxforge_tests)

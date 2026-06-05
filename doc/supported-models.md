@@ -177,9 +177,13 @@ constants:
   block (`quantized`, `quant_group_size`, `quant_bits`), and the EOS/BOS token ids.
 - **`model_type`** selects the chat format (currently always the Llama-3.2 header
   format) via `chat_format_from_model_type`.
-- **`tokenizer.json`** drives BPE encode/decode and supplies the special-token ids
+- **`tokenizer.json`** drives encode/decode and supplies the special-token ids
   (`added_tokens[*].special`) that are skipped on decode — there are no hard-coded
-  token ids.
+  token ids. Two backends sit behind one `EncoderBackend` interface, picked by
+  inspecting the blob: **byte-level BPE** (`ByteLevel` decoder; Llama-3.2 / Qwen)
+  and **SentencePiece-BPE** (`byte_fallback` + metaspace; Gemma). BOS is resolved
+  from the fast tokenizer's post-processor first (Gemma prepends `<bos>` despite
+  `add_bos_token: false`), then the `tokenizer_config.json` flag.
 - A separate `lm_head.weight` is used if present; otherwise the embedding is tied.
 
 ## What is and isn't implemented
@@ -198,9 +202,10 @@ GGUF `Q4_0`/`Q4_1`/`Q8_0` (group_size 32) all run; GGUF `Q4_K`/`Q5_K`/`Q6_K`
 
 - **Sliding-window attention.** Only plain causal attention is supported, so
   models that rely on a sliding window are not.
-- **Non-Llama tokenizers / chat templates.** Only Llama-3.2-style byte-level BPE
-  and its header chat format are implemented (`Tokenizer::from_file` throws on
-  others, e.g. SentencePiece).
+- **Other tokenizer families / chat templates.** Byte-level BPE (Llama-3.2 /
+  Qwen) and SentencePiece-BPE (Gemma) are implemented; other families (e.g.
+  Unigram/WordPiece) make `Tokenizer::from_file` throw. Chat formats are limited
+  to the Llama-3.2 header format and Qwen ChatML.
 - **Tool / function-calling tokens**, vision/multimodal, embeddings endpoints,
   LoRA/adapters, speculative decoding, multi-model hosting, prefix sharing.
 
