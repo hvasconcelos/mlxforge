@@ -36,8 +36,15 @@ std::optional<std::string> sanitize_key(const std::string& raw) {
   if (ends_with(raw, ".inv_freq") || raw.find("rotary_emb.inv_freq") != std::string::npos) {
     return std::nullopt;
   }
+  // Drop the vision tower of a multimodal checkpoint (the engine is text-only):
+  // Qwen-VL / Qwen3.5 ship a ViT under "vision_tower.*" (and some wrappers under
+  // "(model.)visual.*") that the language model never reads.
+  for (const char* vp : {"vision_tower.", "model.visual.", "visual."}) {
+    if (raw.rfind(vp, 0) == 0) return std::nullopt;
+  }
   // Some wrapped/VLM checkpoints prefix the language tower; strip it so keys
-  // match the canonical "model.*" / "lm_head.*" forms.
+  // match the canonical "model.*" / "lm_head.*" forms (e.g. Qwen3.5's
+  // "language_model.model.embed_tokens.weight" -> "model.embed_tokens.weight").
   const std::string prefix = kLanguageModelPrefix;
   if (raw.rfind(prefix, 0) == 0) {
     return raw.substr(prefix.size());
@@ -105,8 +112,14 @@ void absorb(std::unordered_map<std::string, mx::array>& out,
     auto canon = sanitize_key(raw);
     if (!canon) continue;  // dropped buffer
     // Cast only floating tensors to fp16; packed 4-bit weights (uint32) and
-    // other integer tensors are kept as-is.
-    mx::array value = mx::issubdtype(arr.dtype(), mx::floating) ? mx::astype(arr, mx::float16) : arr;
+    // other integer tensors are kept as-is. Exception: Gated-DeltaNet's `A_log`
+    // (the per-head decay log-rate) is kept in its source fp32 — the recurrence
+    // exponentiates it twice (exp(-exp(A_log))) and fp16 there visibly drifts the
+    // decay. Mirrors mlx_lm's cast_predicate, which excludes A_log from the cast.
+    const bool keep_dtype = ends_with(*canon, ".A_log");
+    mx::array value = (!keep_dtype && mx::issubdtype(arr.dtype(), mx::floating))
+                          ? mx::astype(arr, mx::float16)
+                          : arr;
     out.emplace(*canon, value);
   }
 }

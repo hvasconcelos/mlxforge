@@ -63,6 +63,110 @@ TEST_CASE("ModelConfig ignores unknown/extra keys") {
   CHECK(c.eos_token_ids.empty());
 }
 
+TEST_CASE("ModelConfig parses the Qwen3.5 hybrid text_config") {
+  // A representative subset of mlx-community/Qwen3.5-0.8B-4bit's config.json: the
+  // text hyperparameters nest under "text_config", rope_theta lives in a
+  // "rope_parameters" sub-object, the quantization block stays at the top level,
+  // and the hybrid linear-attention fields select Gated-DeltaNet vs full layers.
+  auto j = nlohmann::json::parse(R"({
+    "architectures": ["Qwen3_5ForConditionalGeneration"],
+    "model_type": "qwen3_5",
+    "quantization": {"group_size": 64, "bits": 4},
+    "tie_word_embeddings": true,
+    "vision_config": {"depth": 12, "hidden_size": 768},
+    "text_config": {
+      "model_type": "qwen3_5_text",
+      "hidden_size": 1024,
+      "intermediate_size": 3584,
+      "num_hidden_layers": 24,
+      "num_attention_heads": 8,
+      "num_key_value_heads": 2,
+      "head_dim": 256,
+      "rms_norm_eps": 1e-06,
+      "vocab_size": 248320,
+      "max_position_embeddings": 262144,
+      "tie_word_embeddings": true,
+      "eos_token_id": 248044,
+      "attn_output_gate": true,
+      "full_attention_interval": 4,
+      "linear_num_key_heads": 16,
+      "linear_num_value_heads": 16,
+      "linear_key_head_dim": 128,
+      "linear_value_head_dim": 128,
+      "linear_conv_kernel_dim": 4,
+      "mlp_only_layers": [],
+      "rope_parameters": {
+        "mrope_interleaved": true,
+        "mrope_section": [11, 11, 10],
+        "rope_type": "default",
+        "rope_theta": 10000000,
+        "partial_rotary_factor": 0.25
+      }
+    }
+  })");
+  ModelConfig c = ModelConfig::from_json(j);
+
+  // model_type is the top-level architecture id (selects the chat format), not
+  // the nested "*_text" variant.
+  CHECK(c.model_type == "qwen3_5");
+
+  // Core hyperparameters read from text_config.
+  CHECK(c.n_layers == 24);
+  CHECK(c.hidden == 1024);
+  CHECK(c.n_heads == 8);
+  CHECK(c.n_kv_heads == 2);
+  CHECK(c.head_dim == 256);  // explicit, not hidden/n_heads (128)
+  CHECK(c.vocab == 248320);
+  CHECK(c.intermediate_size == 3584);
+  CHECK(c.rms_eps == doctest::Approx(1e-6f));
+  CHECK(c.tie_word_embeddings == true);
+  CHECK(c.eos_token_ids == std::vector<int>{248044});
+
+  // rope_theta and partial_rotary_factor come from the rope_parameters sub-object.
+  CHECK(c.rope_theta == doctest::Approx(10000000.0f));
+  CHECK(c.partial_rotary_factor == doctest::Approx(0.25f));
+
+  // Hybrid linear-attention fields.
+  CHECK(c.attn_output_gate == true);
+  CHECK(c.full_attention_interval == 4);
+  CHECK(c.linear_num_key_heads == 16);
+  CHECK(c.linear_num_value_heads == 16);
+  CHECK(c.linear_key_head_dim == 128);
+  CHECK(c.linear_value_head_dim == 128);
+  CHECK(c.linear_conv_kernel_dim == 4);
+
+  // Quantization (top-level block) still parses.
+  CHECK(c.quantized);
+  CHECK(c.quant_group_size == 64);
+  CHECK(c.quant_bits == 4);
+
+  // Layer dispatch: every 4th layer (indices 3, 7, ...) is full attention; the
+  // rest are Gated-DeltaNet linear-attention. Mirrors the mlx_lm reference.
+  CHECK(c.is_linear_layer(0));
+  CHECK(c.is_linear_layer(1));
+  CHECK(c.is_linear_layer(2));
+  CHECK_FALSE(c.is_linear_layer(3));
+  CHECK(c.is_linear_layer(4));
+  CHECK_FALSE(c.is_linear_layer(7));
+  CHECK_FALSE(c.is_linear_layer(23));
+  // Not a MoE model: no sparse layers.
+  CHECK_FALSE(c.is_moe_layer(0));
+}
+
+TEST_CASE("ModelConfig defaults: non-hybrid model has no linear layers, full rotary") {
+  auto j = nlohmann::json::parse(R"({
+    "num_hidden_layers": 2, "hidden_size": 8, "num_attention_heads": 4,
+    "num_key_value_heads": 2, "vocab_size": 100, "intermediate_size": 16,
+    "rope_theta": 10000.0, "rms_norm_eps": 1e-6
+  })");
+  ModelConfig c = ModelConfig::from_json(j);
+  CHECK(c.full_attention_interval == 0);
+  CHECK_FALSE(c.is_linear_layer(0));
+  CHECK_FALSE(c.is_linear_layer(1));
+  CHECK_FALSE(c.attn_output_gate);
+  CHECK(c.partial_rotary_factor == doctest::Approx(1.0f));  // full rotary
+}
+
 TEST_CASE("ModelConfig parses mixed-precision quantization overrides") {
   auto j = nlohmann::json::parse(R"({
     "num_hidden_layers": 2, "hidden_size": 8, "num_attention_heads": 4,

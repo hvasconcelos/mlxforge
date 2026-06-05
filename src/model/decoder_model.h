@@ -60,16 +60,20 @@ class DecoderModel {
 
   // Self-attention sublayer: QKV (RoPE at `offset`) -> optional cache append ->
   // SDPA (causal for multi-token chunks, unmasked for single-token decode) ->
-  // o_proj. Input/output are the residual-stream shape (B, L, hidden).
-  mx::array attention(const mx::array& x, int layer, int offset = 0,
-                      KVCache* cache = nullptr) const;
+  // o_proj. Input/output are the residual-stream shape (B, L, hidden). Virtual:
+  // Qwen3.5's full-attention layers override this with a gated, partial-RoPE
+  // variant; decoder_block() drives it, so the residual/MLP structure is shared.
+  virtual mx::array attention(const mx::array& x, int layer, int offset = 0,
+                              KVCache* cache = nullptr) const;
 
   // SwiGLU MLP sublayer: down(silu(gate(x)) * up(x)). The default feed-forward.
   mx::array mlp(const mx::array& x, int layer) const;
 
-  // One full decoder layer: attention + feed_forward() with residuals.
-  mx::array decoder_block(const mx::array& x, int layer, int offset = 0,
-                          KVCache* cache = nullptr) const;
+  // One full decoder layer: attention + feed_forward() with residuals. Virtual:
+  // Qwen3.5 overrides it to route linear-attention layers (no softmax KV cache)
+  // through Gated-DeltaNet instead of attention().
+  virtual mx::array decoder_block(const mx::array& x, int layer, int offset = 0,
+                                  KVCache* cache = nullptr) const;
 
   // Full forward pass: embedding -> n_layers decoder layers -> final RMSNorm ->
   // LM head (separate lm_head if present, else tied embedding). tokens (B, L) ->
@@ -81,7 +85,9 @@ class DecoderModel {
   // and a ragged additive fp16 mask drive correct left-padded attention. tokens
   // (B, L) -> logits (B, L, vocab). The whole batch is one graph (a single eval
   // by the caller realizes the step). Used by the continuous-batching scheduler.
-  mx::array forward(const mx::array& tokens, BatchKVCache& cache) const;
+  // Virtual: Qwen3.5 overrides it to dispatch linear layers through Gated-DeltaNet
+  // (carrying recurrent state in the cache) and full layers through gated attention.
+  virtual mx::array forward(const mx::array& tokens, BatchKVCache& cache) const;
 
   // Per-step additive fp16 attention mask [B, 1, N, T_kv] for a batched step:
   // 0 where a key is causally valid and not left-padding, -inf otherwise.

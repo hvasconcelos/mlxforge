@@ -65,6 +65,27 @@ struct ModelConfig {
   std::vector<int> mlp_only_layers; ///< ... and i is not in this dense-only list.
   bool norm_topk_prob = false;    ///< Renormalize the top-k routing scores to sum to 1.
 
+  // ----- Hybrid linear-attention (Qwen3.5 / Qwen3-Next) parameters -----
+  /// Qwen3.5 interleaves Gated-DeltaNet linear-attention layers with periodic
+  /// full (softmax) attention. A layer is full-attention iff (i+1) is a multiple
+  /// of `full_attention_interval`; the rest are linear. `full_attention_interval
+  /// == 0` means a non-hybrid model (every field below unused), leaving the plain
+  /// full-attention path unchanged. The full-attention layers add a sigmoid output
+  /// gate (`attn_output_gate`) and use partial RoPE (`partial_rotary_factor`).
+  int full_attention_interval = 0;   ///< (i+1) % interval == 0 => full attention (0 => not hybrid).
+  bool attn_output_gate = false;     ///< Full-attn output gate (q_proj is 2x width: queries||gate).
+  /// Gated-DeltaNet (linear-attention) dimensions. Mirror config.json's linear_*.
+  int linear_num_key_heads = 0;      ///< Q/K heads in the linear-attention layers.
+  int linear_num_value_heads = 0;    ///< V heads (>= key heads; GVA repeat = v/k).
+  int linear_key_head_dim = 0;       ///< Per-head Q/K width.
+  int linear_value_head_dim = 0;     ///< Per-head V width.
+  int linear_conv_kernel_dim = 0;    ///< Causal depthwise conv kernel size over the q/k/v stream.
+
+  /// Fraction of head_dim rotated by RoPE (1.0 => full rotary, the default for
+  /// Llama/Qwen3). Qwen3.5 rotates only the leading `partial_rotary_factor *
+  /// head_dim` dimensions; the tail is passed through un-rotated.
+  float partial_rotary_factor = 1.0f;
+
   // ----- Quantization parameters -----
   /// Quantization settings (present in quantized models, absent for fp16).
   /// `quantized` is informational only: the forward pass detects quantization
@@ -94,6 +115,15 @@ struct ModelConfig {
     for (int only : mlp_only_layers)
       if (only == i) return false;
     return (i + 1) % decoder_sparse_step == 0;
+  }
+
+  /// True if decoder layer `i` is a Gated-DeltaNet linear-attention layer rather
+  /// than a full (softmax) attention layer. Mirrors mlx_lm's Qwen3.5 DecoderLayer
+  /// rule: every `full_attention_interval`-th layer is full attention, the rest
+  /// linear. Non-hybrid models (interval 0) have no linear layers.
+  bool is_linear_layer(int i) const {
+    if (full_attention_interval <= 0) return false;
+    return (i + 1) % full_attention_interval != 0;
   }
 
   // ----- RoPE scaling -----
