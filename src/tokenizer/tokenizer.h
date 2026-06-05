@@ -11,7 +11,7 @@
 #include <vector>
 
 namespace mlxforge {
-class BpeTokenizer;  // from tokenizer/bpe.h
+class EncoderBackend;  // from tokenizer/encoder_backend.h
 }
 
 namespace mlxforge {
@@ -77,10 +77,11 @@ class Tokenizer {
                                           bool enable_thinking = true);
 
  private:
-  // BpeTokenizer is pure/const and thread-safe, so encode/decode need no mutex.
-  // It also owns the special-token ids (parsed from tokenizer.json) that decode
-  // skips, replacing the Llama-only "id >= 128000" heuristic.
-  std::shared_ptr<BpeTokenizer> impl_;
+  // The encode/decode engine, chosen by the from_* factories. Implementations
+  // are pure/const and thread-safe, so encode/decode need no mutex. The backend
+  // also owns the special-token ids (parsed from the tokenizer metadata) that
+  // decode skips, replacing the Llama-only "id >= 128000" heuristic.
+  std::shared_ptr<EncoderBackend> impl_;
   int bos_id_ = 128000;  // prepended on encode; -1 = none
   ChatFormat chat_format_ = ChatFormat::Llama3;
 };

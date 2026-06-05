@@ -17,9 +17,14 @@
 #include <utility>
 #include <vector>
 
+#include "tokenizer/encoder_backend.h"
+
 namespace mlxforge {
 
-class BpeTokenizer {
+// One concrete EncoderBackend: the byte-level BPE engine. The encode/decode/
+// vocab_size/special_ids overrides are the interface; is_supported/from_blob/
+// from_gguf are BPE-specific factories used by Tokenizer's backend selection.
+class BpeTokenizer : public EncoderBackend {
  public:
   // Whether this tokenizer.json is a byte-level BPE we can handle (Llama-3.2
   // style: model.type == "BPE" with a ByteLevel decoder). Returns false for
@@ -44,14 +49,14 @@ class BpeTokenizer {
   // Encode text to token ids. Does NOT prepend BOS — the Tokenizer wrapper owns
   // that, matching tokenizers-cpp's Encode (which skips the post-processor).
   // Special-token literals present in the input are emitted as their ids.
-  std::vector<int> encode(const std::string& text) const;
+  std::vector<int> encode(const std::string& text) const override;
 
   // Decode ids back to text. Special ids are skipped (matching the wrapper's
   // skip_special_tokens default); unknown/out-of-range ids are ignored.
-  std::string decode(const std::vector<int>& ids) const;
+  std::string decode(const std::vector<int>& ids) const override;
 
-  size_t vocab_size() const { return token_to_id_.size(); }
-  const std::unordered_set<int>& special_ids() const { return special_ids_; }
+  size_t vocab_size() const override { return token_to_id_.size(); }
+  const std::unordered_set<int>& special_ids() const override { return special_ids_; }
 
  private:
   // Append the ids for one pre-token piece (given as a byte-level/merge-alphabet

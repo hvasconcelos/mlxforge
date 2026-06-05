@@ -77,16 +77,24 @@ size_t utf8_complete_len(const std::string& s) {
     need = 4;  // 11110xxx
   return (s.size() - start >= need) ? s.size() : start;
 }
+
+// Select and build the encode/decode backend for a tokenizer.json blob. This is
+// the one place backend selection lives: a future SentencePiece/Metaspace family
+// adds a branch here (its own EncoderBackend) without touching the Tokenizer
+// wrapper or its callers. Throws if no implemented backend handles the blob.
+std::shared_ptr<EncoderBackend> make_backend(const std::string& path, const std::string& blob) {
+  if (BpeTokenizer::is_supported(blob))
+    return std::make_shared<BpeTokenizer>(BpeTokenizer::from_blob(blob));
+  throw std::runtime_error("tokenizer: '" + path +
+                           "' is not a supported tokenizer (only byte-level BPE, "
+                           "Llama-3.2-style, is implemented)");
+}
 }  // namespace
 
 Tokenizer Tokenizer::from_file(const std::string& tokenizer_json_path, int bos_id, ChatFormat fmt) {
   const std::string blob = load_file(tokenizer_json_path);
-  if (!BpeTokenizer::is_supported(blob))
-    throw std::runtime_error("tokenizer: '" + tokenizer_json_path +
-                             "' is not a byte-level BPE tokenizer (only Llama-3.2-style is "
-                             "supported)");
   Tokenizer t;
-  t.impl_ = std::make_shared<BpeTokenizer>(BpeTokenizer::from_blob(blob));
+  t.impl_ = make_backend(tokenizer_json_path, blob);
   t.bos_id_ = effective_bos_id(tokenizer_json_path, bos_id);
   t.chat_format_ = fmt;
   log::info("tokenizer: loaded vocab={} special_tokens={} bos_id={}", t.impl_->vocab_size(),
