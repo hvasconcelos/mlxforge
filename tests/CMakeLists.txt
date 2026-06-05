@@ -20,6 +20,7 @@ add_executable(mlxforge_tests
   cache/kv_budget_test.cpp
   sample/sampler_test.cpp
   runtime/single_stream_test.cpp
+  runtime/engine_test.cpp
   scheduler/scheduler_test.cpp
   scheduler/worker_test.cpp
   runtime/prefill_test.cpp

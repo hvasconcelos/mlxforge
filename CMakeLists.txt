@@ -41,6 +41,7 @@ add_library(mlxforge_core STATIC
   src/cache/kv_budget.cpp
   src/sample/sampler.cpp
   src/runtime/single_stream.cpp
+  src/runtime/engine.cpp
   src/scheduler/scheduler.cpp
   src/runtime/worker.cpp
   src/runtime/batching.cpp
