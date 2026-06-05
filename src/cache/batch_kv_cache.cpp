@@ -28,6 +28,8 @@ BatchKVCache::BatchKVCache(int n_layers, const std::vector<int>& left_padding)
     : batch_(static_cast<int>(left_padding.size())),
       keys_(n_layers),
       values_(n_layers),
+      conv_state_(n_layers),
+      recur_state_(n_layers),
       offset_(neg(left_padding)),
       left_padding_(mx::array(left_padding.data(), {static_cast<int>(left_padding.size())},
                               mx::int32)) {}
@@ -95,6 +97,16 @@ void BatchKVCache::pad_dummies(int extra) {
     keys_[l] = mx::concatenate({k, dk}, /*axis=*/0);
     values_[l] = mx::concatenate({v, dv}, /*axis=*/0);
   }
+  // Linear-attention layers: append `extra` zero state rows (fixed-size axes).
+  for (size_t l = 0; l < conv_state_.size(); ++l) {
+    if (!conv_state_[l].has_value()) continue;
+    const auto& c = *conv_state_[l];
+    const auto& r = *recur_state_[l];
+    mx::array dc = mx::zeros({extra, c.shape()[1], c.shape()[2]}, c.dtype());
+    mx::array dr = mx::zeros({extra, r.shape()[1], r.shape()[2], r.shape()[3]}, r.dtype());
+    conv_state_[l] = mx::concatenate({c, dc}, /*axis=*/0);
+    recur_state_[l] = mx::concatenate({r, dr}, /*axis=*/0);
+  }
   std::vector<int> doff(extra, 0);
   std::vector<int> dlp(extra, idx_);  // attend only to own position -> no NaN
   offset_ = mx::concatenate({offset_, mx::array(doff.data(), {extra}, mx::int32)}, 0);
@@ -109,6 +121,10 @@ void BatchKVCache::eval_state() {
     if (k.has_value()) state.push_back(*k);
   for (auto& v : values_)
     if (v.has_value()) state.push_back(*v);
+  for (auto& c : conv_state_)
+    if (c.has_value()) state.push_back(*c);
+  for (auto& r : recur_state_)
+    if (r.has_value()) state.push_back(*r);
   mx::eval(state);
 }
 
@@ -126,6 +142,11 @@ void BatchKVCache::filter(const std::vector<int>& keep) {
     if (keys_[l].has_value()) {
       keys_[l] = mx::take(*keys_[l], idxs, /*axis=*/0);
       values_[l] = mx::take(*values_[l], idxs, /*axis=*/0);
+    }
+    // Linear state is fixed-size; eviction is a plain batch-axis gather.
+    if (conv_state_[l].has_value()) {
+      conv_state_[l] = mx::take(*conv_state_[l], idxs, /*axis=*/0);
+      recur_state_[l] = mx::take(*recur_state_[l], idxs, /*axis=*/0);
     }
   }
   offset_ = mx::take(offset_, idxs, /*axis=*/0);
@@ -152,6 +173,8 @@ void BatchKVCache::merge(BatchKVCache& other) {
   if (batch_ == 0) {
     keys_ = other.keys_;
     values_ = other.values_;
+    conv_state_ = other.conv_state_;
+    recur_state_ = other.recur_state_;
     offset_ = other.offset_;
     left_padding_ = other.left_padding_;
     idx_ = other.idx_;
@@ -190,6 +213,13 @@ void BatchKVCache::merge(BatchKVCache& other) {
     auto b = pad_layer(other, l);
     keys_[l] = mx::concatenate({a.first, b.first}, /*axis=*/0);
     values_[l] = mx::concatenate({a.second, b.second}, /*axis=*/0);
+    // Linear state: fixed-size, so admission is a plain batch-axis concatenate
+    // (no sequence-length right-justification — the recurrent state already
+    // summarizes each row's history regardless of length).
+    if (conv_state_[l].has_value() && other.conv_state_[l].has_value()) {
+      conv_state_[l] = mx::concatenate({*conv_state_[l], *other.conv_state_[l]}, /*axis=*/0);
+      recur_state_[l] = mx::concatenate({*recur_state_[l], *other.recur_state_[l]}, /*axis=*/0);
+    }
   }
 
   // left_padding grows by the left-pad each side received; offset is unchanged.

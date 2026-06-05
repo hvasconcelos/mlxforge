@@ -30,8 +30,13 @@ class KVBudget {
 
   std::size_t budget_bytes() const { return budget_bytes_; }
 
+  // Fixed per-sequence bytes of a hybrid model's linear-attention streaming state
+  // (0 for non-hybrid models). Does not grow with sequence length.
+  std::size_t linear_state_bytes() const { return linear_state_bytes_; }
+
  private:
   std::size_t bytes_per_token_;
+  std::size_t linear_state_bytes_ = 0;
   std::size_t budget_bytes_;
 };
 

@@ -52,15 +52,34 @@ std::optional<RopeScaling> parse_rope_scaling(const nlohmann::json& j) {
   return rs;
 }
 
+// RoPE base frequency. Most configs expose a top-level "rope_theta"; Qwen3.5 nests
+// it (with partial_rotary_factor) under a "rope_parameters" sub-object instead.
+// Prefer the sub-object when present, else fall back to the required top-level key.
+float parse_rope_theta(const nlohmann::json& j) {
+  if (auto rp = j.find("rope_parameters"); rp != j.end() && rp->is_object()) {
+    if (rp->contains("rope_theta")) return rp->at("rope_theta").get<float>();
+  }
+  return require<float>(j, "rope_theta");
+}
+
 }  // namespace
 
 // Constructs and returns a ModelConfig from a nlohmann::json config (typically read from HuggingFace .json).
 // Throws if any required fields are missing or wrong type.
 // Uses sensible defaults for certain optional fields.
-ModelConfig ModelConfig::from_json(const nlohmann::json& j) {
+ModelConfig ModelConfig::from_json(const nlohmann::json& j_top) {
   ModelConfig c;
-  // model_type is optional; empty string if not present.
-  c.model_type = j.value("model_type", std::string{});
+  // Multimodal wrappers (Qwen3.5 "Qwen3_5ForConditionalGeneration") nest the
+  // text decoder's hyperparameters under "text_config"; the architecture id and
+  // quantization block stay at the top level. Read text hyperparameters from the
+  // nested object when present, everything else from the top level.
+  const nlohmann::json& j = j_top.contains("text_config") && j_top.at("text_config").is_object()
+                                ? j_top.at("text_config")
+                                : j_top;
+
+  // model_type is optional; empty string if not present. Prefer the top-level id
+  // (e.g. "qwen3_5") over the nested "*_text" variant — it selects the chat format.
+  c.model_type = j_top.value("model_type", j.value("model_type", std::string{}));
 
   // These are required for all transformer configs.
   c.n_layers = require<int>(j, "num_hidden_layers");
@@ -69,7 +88,7 @@ ModelConfig ModelConfig::from_json(const nlohmann::json& j) {
   c.n_kv_heads = require<int>(j, "num_key_value_heads");
   c.vocab = require<int>(j, "vocab_size");
   c.intermediate_size = require<int>(j, "intermediate_size");
-  c.rope_theta = require<float>(j, "rope_theta");
+  c.rope_theta = parse_rope_theta(j);  // top-level "rope_theta" or nested rope_parameters
   c.rms_eps = require<float>(j, "rms_norm_eps");
 
   // head_dim is sometimes omitted; default to hidden/n_heads if so.
@@ -77,11 +96,25 @@ ModelConfig ModelConfig::from_json(const nlohmann::json& j) {
   // Optional fields; fallback to reasonable defaults if not present.
   c.max_position_embeddings = j.value("max_position_embeddings", 0);
   c.tie_word_embeddings = j.value("tie_word_embeddings", true);
-  c.bos_token_id = j.value("bos_token_id", -1);
+  c.bos_token_id = j_top.value("bos_token_id", -1);
 
   // Parse eos_token_id (as int or vector<int>) and rope_scaling (optional sub-object).
   c.eos_token_ids = parse_eos_ids(j);
   c.rope_scaling = parse_rope_scaling(j);
+
+  // Hybrid linear-attention (Qwen3.5 / Qwen3-Next). Absent in non-hybrid configs:
+  // full_attention_interval stays 0, leaving every layer full attention and the
+  // linear_* fields unused. partial_rotary_factor defaults to 1.0 (full rotary).
+  c.full_attention_interval = j.value("full_attention_interval", 0);
+  c.attn_output_gate = j.value("attn_output_gate", false);
+  c.linear_num_key_heads = j.value("linear_num_key_heads", 0);
+  c.linear_num_value_heads = j.value("linear_num_value_heads", 0);
+  c.linear_key_head_dim = j.value("linear_key_head_dim", 0);
+  c.linear_value_head_dim = j.value("linear_value_head_dim", 0);
+  c.linear_conv_kernel_dim = j.value("linear_conv_kernel_dim", 0);
+  if (auto rp = j.find("rope_parameters"); rp != j.end() && rp->is_object()) {
+    c.partial_rotary_factor = rp->value("partial_rotary_factor", 1.0f);
+  }
 
   // MoE fields are optional: absent in dense configs (num_experts stays 0, which
   // leaves the dense SwiGLU path unchanged). moe_intermediate_size defaults to the
@@ -101,7 +134,7 @@ ModelConfig ModelConfig::from_json(const nlohmann::json& j) {
   // (the weight base, e.g. "model.layers.0.mlp.down_proj"). A per-module value
   // is an object with its own bits/group_size; a bare `false` means the module
   // is left dense (no override needed — it simply has no ".scales" tensor).
-  if (auto it = j.find("quantization"); it != j.end() && it->is_object()) {
+  if (auto it = j_top.find("quantization"); it != j_top.end() && it->is_object()) {
     c.quantized = true;
     c.quant_group_size = it->value("group_size", c.quant_group_size);
     c.quant_bits = it->value("bits", c.quant_bits);

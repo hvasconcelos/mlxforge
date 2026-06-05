@@ -29,6 +29,7 @@ add_executable(mlxforge_tests
   scheduler/validation_test.cpp
   model/qwen3_test.cpp
   model/qwen3_moe_test.cpp
+  model/qwen3_5_test.cpp
   tokenizer/tokenizer_test.cpp
   tokenizer/bpe_test.cpp
   server/openai_test.cpp
@@ -72,6 +73,15 @@ if(_mlxforge_model_snapshots_qwen3_moe)
   list(GET _mlxforge_model_snapshots_qwen3_moe 0 MLXFORGE_MODEL_DIR_QWEN3_MOE)
 endif()
 
+# Qwen3.5 hybrid model snapshot for the Gated-DeltaNet / gated-attention
+# integration tests (empty -> those tests self-skip).
+file(GLOB _mlxforge_model_snapshots_qwen3_5
+  "$ENV{HOME}/.cache/huggingface/hub/models--mlx-community--Qwen3.5-0.8B-4bit/snapshots/*")
+set(MLXFORGE_MODEL_DIR_QWEN3_5 "")
+if(_mlxforge_model_snapshots_qwen3_5)
+  list(GET _mlxforge_model_snapshots_qwen3_5 0 MLXFORGE_MODEL_DIR_QWEN3_5)
+endif()
+
 # A local Llama GGUF file for the self-contained-loader integration tests
 # (empty -> the GGUF tests self-skip). Any *.gguf under the cached bartowski
 # Llama-3.2-1B-Instruct-GGUF repo is used.
@@ -87,10 +97,12 @@ target_compile_definitions(mlxforge_tests PRIVATE
   MLXFORGE_REF_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/reference/fixtures"
   MLXFORGE_REF_FIXTURES_DIR_QWEN3="${CMAKE_SOURCE_DIR}/reference/fixtures_qwen3"
   MLXFORGE_REF_FIXTURES_DIR_QWEN3_MOE="${CMAKE_SOURCE_DIR}/reference/fixtures_qwen3_moe"
+  MLXFORGE_REF_FIXTURES_DIR_QWEN3_5="${CMAKE_SOURCE_DIR}/reference/fixtures_qwen3_5"
   MLXFORGE_MODEL_DIR="${MLXFORGE_MODEL_DIR}"
   MLXFORGE_MODEL_DIR_4BIT="${MLXFORGE_MODEL_DIR_4BIT}"
   MLXFORGE_MODEL_DIR_QWEN3="${MLXFORGE_MODEL_DIR_QWEN3}"
   MLXFORGE_MODEL_DIR_QWEN3_MOE="${MLXFORGE_MODEL_DIR_QWEN3_MOE}"
+  MLXFORGE_MODEL_DIR_QWEN3_5="${MLXFORGE_MODEL_DIR_QWEN3_5}"
   MLXFORGE_GGUF_MODEL="${MLXFORGE_GGUF_MODEL}")
 
 doctest_discover_tests(mlxforge_tests)

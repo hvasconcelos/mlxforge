@@ -34,6 +34,21 @@ TEST_CASE("sanitize_key canonicalizes a table of raw keys") {
   // Rotary inv_freq buffers are dropped (not weights).
   CHECK_FALSE(sanitize_key("model.layers.0.self_attn.rotary_emb.inv_freq").has_value());
   CHECK_FALSE(sanitize_key("model.rotary_emb.inv_freq").has_value());
+
+  // The vision tower of a multimodal checkpoint (Qwen3.5 / Qwen-VL) is dropped:
+  // the engine is text-only, so the ViT under vision_tower.* / (model.)visual.*
+  // is never loaded.
+  CHECK_FALSE(sanitize_key("vision_tower.blocks.0.attn.qkv.weight").has_value());
+  CHECK_FALSE(sanitize_key("vision_tower.patch_embed.proj.weight").has_value());
+  CHECK_FALSE(sanitize_key("model.visual.blocks.0.norm1.weight").has_value());
+  CHECK_FALSE(sanitize_key("visual.merger.mlp.0.weight").has_value());
+
+  // The language tower of the SAME checkpoint is kept (prefix stripped). Qwen3.5
+  // ships its decoder under "language_model.model.*".
+  CHECK(sanitize_key("language_model.model.layers.0.linear_attn.conv1d.weight").value() ==
+        "model.layers.0.linear_attn.conv1d.weight");
+  CHECK(sanitize_key("language_model.model.embed_tokens.weight").value() ==
+        "model.embed_tokens.weight");
 }
 
 TEST_CASE("parse_shard_index resolves the file each tensor key lives in") {

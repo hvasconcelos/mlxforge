@@ -24,7 +24,7 @@ import os
 import mlx.core as mx
 import numpy as np
 from mlx_lm import load
-from mlx_lm.models.base import create_attention_mask
+from mlx_lm.models.base import create_attention_mask, create_ssm_mask
 
 # Per-model dump settings. The C++ engine loads the SAME repo, so each reference
 # is self-consistent: any divergence in C++ is a real bug, not a model mismatch.
@@ -57,6 +57,18 @@ MODELS = {
     "qwen3_moe": {
         "repo": "mlx-community/Qwen3-30B-A3B-4bit",
         "fixtures": "fixtures_qwen3_moe",
+        "compute_dtype": mx.float16,
+        "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
+        "thinking": True,
+    },
+    # Qwen3.5 is a multimodal wrapper over a *hybrid* text decoder: 3 Gated-DeltaNet
+    # linear-attention layers then 1 gated full-attention layer, repeating. The
+    # engine loads only the text tower (the ViT is dropped). The 4bit repo keeps the
+    # download small; set_dtype(fp16) casts norms/scales to fp16 (packed 4-bit weights
+    # stay uint32), mirroring the C++ engine's load. ChatML with a thinking toggle.
+    "qwen3_5": {
+        "repo": "mlx-community/Qwen3.5-0.8B-4bit",
+        "fixtures": "fixtures_qwen3_5",
         "compute_dtype": mx.float16,
         "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
         "thinking": True,
@@ -106,6 +118,54 @@ TOKENIZER_CORPUS = [
     "URL: https://example.com/path?q=1&x=2#frag",
     "@user #hashtag $100 50% (parens) [brackets] {braces}",
 ]
+
+
+def _dump_greedy(model, save, prompt_ids):
+    """Greedy continuation as a full-recompute (no cache) argmax loop. An
+    independent oracle the cached C++ decode path must reproduce token-for-token."""
+    ids = list(prompt_ids)
+    greedy = []
+    for _ in range(GREEDY_MAX_NEW):
+        cur = mx.array(ids, dtype=mx.int32)[None]
+        next_logits = model(cur)[:, -1, :]
+        nxt = int(mx.argmax(next_logits, axis=-1).item())
+        greedy.append(nxt)
+        ids.append(nxt)
+    save("greedy_tokens", np.array(greedy, dtype=np.int32))
+
+
+def _write_manifest(fixtures_dir, manifest, tok):
+    manifest["eos_token_ids"] = sorted(int(x) for x in tok.eos_token_ids)
+    with open(os.path.join(fixtures_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"\nwrote manifest.json ({len(manifest['arrays'])} arrays)")
+
+
+def dump_hybrid_intermediates(model, save, primary_ids):
+    """Forward-pass intermediates for a Qwen3.5 hybrid text decoder.
+
+    The decoder nests under model.language_model.model and interleaves two
+    attention families, so it needs its own intermediate dump (the dense path
+    assumes model.model.* with a uniform self_attn). We probe the first layer of
+    each family — layer 0 (Gated-DeltaNet linear attention) and layer 3 (gated
+    full attention) — each run standalone on the embeddings, exactly the input a
+    C++ unit test feeds the corresponding stage. Finer per-stage tensors (conv
+    output, recurrent state, RoPE'd Q/K) are added as those C++ stages are built.
+    """
+    backbone = model.language_model.model  # Qwen3_5TextModel
+    embeddings = backbone.embed_tokens(primary_ids)  # (1, T, hidden)
+    save("embeddings", embeddings)
+
+    fa_mask = create_attention_mask(embeddings, cache=None)
+    ssm_mask = create_ssm_mask(embeddings, cache=None)
+    for idx in (0, 3):
+        layer = backbone.layers[idx]
+        mask = ssm_mask if layer.is_linear else fa_mask
+        sub = layer.linear_attn if layer.is_linear else layer.self_attn
+        x = layer.input_layernorm(embeddings)
+        save(f"attn_in{idx}", x)  # post input-RMSNorm (the sublayer input)
+        save(f"attn_out{idx}", sub(x, mask, None))  # sublayer output (pre-residual)
+        save(f"block{idx}", layer(embeddings, mask, None))  # full decoder block
 
 
 def main():
@@ -179,6 +239,19 @@ def main():
     # --- Forward-pass intermediates for the primary prompt -------------------
     primary_ids = mx.array(prompt_id_lists[0], dtype=mx.int32)[None]  # (1, T)
 
+    # Qwen3.5's hybrid decoder nests under model.language_model and mixes two
+    # attention families, so it dumps its own intermediates; the dense path below
+    # assumes a uniform model.model.* / self_attn layout.
+    if hasattr(model, "language_model"):
+        dump_hybrid_intermediates(model, save, primary_ids)
+        logits = model(primary_ids)  # (1, T, vocab)
+        logits_last = logits[:, -1, :]
+        save("logits_last", logits_last)
+        save("argmax", np.array(mx.argmax(logits_last, axis=-1), dtype=np.int32))
+        _dump_greedy(model, save, prompt_id_lists[0])
+        _write_manifest(FIXTURES_DIR, manifest, tok)
+        return
+
     # Embedding lookup (gates the embedding stage).
     embeddings = model.model.embed_tokens(primary_ids)  # (1, T, hidden)
     save("embeddings", embeddings)
@@ -236,22 +309,8 @@ def main():
     save("argmax", np.array(argmax, dtype=np.int32))
 
     # --- Greedy token stream (full-recompute reference; gates the greedy decode stream) ---
-    # Pure argmax loop, no cache, so it is an independent oracle the cached C++
-    # path must reproduce exactly.
-    ids = list(prompt_id_lists[0])
-    greedy = []
-    for _ in range(GREEDY_MAX_NEW):
-        cur = mx.array(ids, dtype=mx.int32)[None]
-        next_logits = model(cur)[:, -1, :]
-        nxt = int(mx.argmax(next_logits, axis=-1).item())
-        greedy.append(nxt)
-        ids.append(nxt)
-    save("greedy_tokens", np.array(greedy, dtype=np.int32))
-
-    manifest["eos_token_ids"] = sorted(int(x) for x in tok.eos_token_ids)
-    with open(os.path.join(FIXTURES_DIR, "manifest.json"), "w") as f:
-        json.dump(manifest, f, indent=2)
-    print(f"\nwrote manifest.json ({len(manifest['arrays'])} arrays)")
+    _dump_greedy(model, save, prompt_id_lists[0])
+    _write_manifest(FIXTURES_DIR, manifest, tok)
 
 
 if __name__ == "__main__":

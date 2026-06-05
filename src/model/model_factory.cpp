@@ -4,12 +4,19 @@
 
 #include "model/llama.h"
 #include "model/qwen3.h"
+#include "model/qwen3_5.h"
 #include "model/qwen3_moe.h"
 
 namespace mlxforge {
 
 std::unique_ptr<DecoderModel> create_model(ModelConfig config, Weights weights) {
-  // MoE is checked first: a Qwen3 MoE checkpoint also carries q_norm weights, and
+  // Qwen3.5 is checked first: its hybrid checkpoint also carries q_norm weights
+  // (on the full-attention layers), but the linear layers and per-layer dispatch
+  // need Qwen35Model. full_attention_interval > 0 marks the hybrid layout.
+  if (config.full_attention_interval > 0) {
+    return std::make_unique<Qwen35Model>(std::move(config), std::move(weights));
+  }
+  // MoE next: a Qwen3 MoE checkpoint also carries q_norm weights, and
   // Qwen3MoeModel inherits QK-Norm from Qwen3Model.
   if (config.num_experts > 0) {
     return std::make_unique<Qwen3MoeModel>(std::move(config), std::move(weights));

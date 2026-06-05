@@ -1,12 +1,14 @@
 # Supported models
 
-mlxforge runs LLaMA-family decoder-only transformers, including Qwen3 dense
-models. The forward pass (the `DecoderModel` base in `model/`) is shared across
-families; what differs per family is a small set of deltas — the chat template
-and special-token handling, plus any per-family forward-pass tweak (Qwen3's
-QK-Norm, Qwen3 MoE's sparse MLP) expressed as a subclass hook override — all
-selected automatically by `create_model` from `config.json` (`model_type`,
-`num_experts`) and the presence of the distinguishing weights.
+mlxforge runs LLaMA-family decoder-only transformers, including Qwen3 dense, Qwen3
+MoE, and Qwen3.5 hybrid (Gated-DeltaNet) models. The forward pass (the
+`DecoderModel` base in `model/`) is shared across families; what differs per family
+is a small set of deltas — the chat template and special-token handling, plus any
+per-family forward-pass tweak (Qwen3's QK-Norm, Qwen3 MoE's sparse MLP, Qwen3.5's
+gated attention + linear-attention layers) expressed as a subclass hook override —
+all selected automatically by `create_model` from `config.json` (`model_type`,
+`num_experts`, `full_attention_interval`) and the presence of the distinguishing
+weights.
 
 ## Families that run today
 
@@ -19,6 +21,7 @@ selected automatically by `create_model` from `config.json` (`model_type`,
 | Qwen3 (dense, 4-bit) | `mlx-community/Qwen3-4B-4bit` | 4-bit (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes |
 | Qwen3 (GGUF) | `Qwen/Qwen3-0.6B-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | ChatML (`<\|im_start\|>…`) | yes |
 | Qwen3 (MoE) | `mlx-community/Qwen3-30B-A3B-4bit` | 4-bit / fp16 (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes |
+| Qwen3.5 (hybrid) | `mlx-community/Qwen3.5-0.8B-4bit` | 4-bit (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes (text only) |
 
 **Qwen3 dense** models (0.6B/1.7B/4B/8B/14B/32B) run end-to-end. They add three
 deltas over Llama-3.2, all handled automatically: per-head **QK-Norm** (an
@@ -41,6 +44,23 @@ stacked into that form on load. The experts run via MLX's gather matmul
 (`gather_qmm` when quantized, `gather_mm` otherwise), so 4-bit experts with an 8-bit
 router (the common mixed-precision layout) work transparently through the per-weight
 quantization detection.
+
+**Qwen3.5 (hybrid)** models (e.g. 0.8B) run their **text tower** end-to-end. Qwen3.5 is
+a multimodal checkpoint over a Qwen3-Next-style *hybrid* decoder; the vision tower
+(`vision_tower.*`) is dropped on load and the language model runs. It is selected by
+`config.json`'s `full_attention_interval`, and interleaves two token-mixing families
+(`config.is_linear_layer`): every `full_attention_interval`-th layer is **gated
+full attention**, the rest are **Gated-DeltaNet linear attention**. The full layers
+extend Qwen3 attention (QK-Norm) with a sigmoid **output gate** (`q_proj` is 2× width:
+`queries‖gate`) and **partial RoPE** (only the leading `head_dim · partial_rotary_factor`
+dims are rotated; the MRoPE config is a no-op for text). The linear layers replace
+attention entirely with Gated-DeltaNet: a causal depthwise `Conv1d` → SiLU, L2/RMS-normed
+Q/K, a delta-rule recurrence with exponential gating (`g = exp(-exp(A_log)·softplus(a +
+dt_bias))`, `beta = sigmoid(b)`), a gated RMSNorm, and `out_proj`. `A_log` is kept fp32.
+For continuous batching the cache is **hybrid**: the full layers grow a KV cache, the
+linear layers carry a fixed-size conv buffer + recurrent state per sequence (so KV memory
+scales with only the full-attention layers). The chat template is ChatML; with thinking
+enabled (the default) it opens the reasoning block (`<think>`) in the generation prompt.
 
 Other LLaMA-family models will be re-onboarded as needed; because the forward
 pass is shared, that work is mostly tokenizer/chat-format plus any small

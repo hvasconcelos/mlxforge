@@ -12,6 +12,7 @@
 #include "core/weights.h"
 #include "model/llama.h"
 #include "model/qwen3.h"
+#include "model/qwen3_5.h"
 #include "model/qwen3_moe.h"
 
 namespace mlxforge::test {
@@ -63,6 +64,23 @@ inline Qwen3MoeModel& shared_qwen3_moe_model() {
     ModelConfig cfg = ModelConfig::from_file(qwen3_moe_model_dir() + "/config.json");
     Weights w = load_weights(qwen3_moe_model_dir(), cfg);
     return Qwen3MoeModel(std::move(cfg), std::move(w));
+  }();
+  return model;
+}
+
+// Same, for the Qwen3.5 hybrid model (Gated-DeltaNet + gated full-attention).
+inline std::string qwen3_5_model_dir() { return MLXFORGE_MODEL_DIR_QWEN3_5; }
+
+inline bool qwen3_5_model_available() {
+  const std::string d = qwen3_5_model_dir();
+  return !d.empty() && std::ifstream(d + "/config.json").good();
+}
+
+inline Qwen35Model& shared_qwen3_5_model() {
+  static Qwen35Model model = [] {
+    ModelConfig cfg = ModelConfig::from_file(qwen3_5_model_dir() + "/config.json");
+    Weights w = load_weights(qwen3_5_model_dir(), cfg);
+    return Qwen35Model(std::move(cfg), std::move(w));
   }();
   return model;
 }
