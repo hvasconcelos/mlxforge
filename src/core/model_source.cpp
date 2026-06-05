@@ -102,11 +102,30 @@ std::string mlxforge_cache_root() {
 }
 
 namespace {
+std::string to_lower(std::string s) {
+  for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return s;
+}
+
 bool has_gguf_suffix(const std::string& s) {
   if (s.size() < 5) return false;
-  std::string tail = s.substr(s.size() - 5);
-  for (char& c : tail) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-  return tail == ".gguf";
+  return to_lower(s.substr(s.size() - 5)) == ".gguf";
+}
+
+// In a previously-downloaded GGUF cache dir, find a `.gguf` whose name contains
+// `tag` (case-insensitive), so a re-run reuses it without a network round-trip.
+// Returns the path, or "" if the dir is absent or holds no matching file.
+std::string find_cached_gguf(const fs::path& dir, const std::string& tag) {
+  std::error_code ec;
+  if (!fs::is_directory(dir, ec)) return "";
+  const std::string want = to_lower(tag);
+  for (const auto& e : fs::directory_iterator(dir, ec)) {
+    if (!e.is_regular_file(ec)) continue;
+    const std::string name = e.path().filename().string();
+    if (has_gguf_suffix(name) && to_lower(name).find(want) != std::string::npos)
+      return e.path().string();
+  }
+  return "";
 }
 }  // namespace
 
@@ -137,6 +156,30 @@ std::string resolve_model_dir(const std::string& spec) {
     }
     throw std::runtime_error("model: directory '" + spec +
                              "' has no config.json (did you mean its snapshots/<rev>/ subdir?)");
+  }
+
+  // GGUF download: a "org/name:VARIANT" spec (the ':' signals a single-file GGUF
+  // fetch; the variant, default Q4_0, selects which quant). The colon keeps this
+  // distinct from a bare repo id, which still resolves to the safetensors path.
+  if (!fs::exists(spec, ec)) {
+    const auto colon = spec.find(':');
+    if (colon != std::string::npos) {
+      const std::string repo = spec.substr(0, colon);
+      std::string tag = spec.substr(colon + 1);
+      if (tag.empty()) tag = "Q4_0";
+      if (looks_like_repo_id(repo)) {
+        const fs::path dir =
+            fs::path(mlxforge_cache_root()) / (flat_cache_name(repo) + "-gguf");
+        const std::string cached = find_cached_gguf(dir, tag);
+        if (!cached.empty()) {
+          log::info("model: using cached GGUF '{}'", cached);
+          return cached;
+        }
+        log::info("model: '{}' GGUF ({}) not cached; downloading to '{}'", repo, tag,
+                  dir.string());
+        return hf_download_gguf(repo, dir.string(), tag);
+      }
+    }
   }
 
   // Tiers 2-4: an HF repo id.

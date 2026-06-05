@@ -176,3 +176,24 @@ TEST_CASE("select_files_to_download throws when weights or config are missing") 
   CHECK_THROWS_AS(select_files_to_download({"model.safetensors", "tokenizer.json"}),
                   std::runtime_error);  // no config.json
 }
+
+TEST_CASE("select_gguf_file picks the one .gguf matching the variant tag") {
+  const std::vector<std::string> siblings = {
+      "README.md",                  "config.json",
+      "model-Q4_0.gguf",            "model-Q8_0.gguf",
+      "model-Q4_K_M.gguf"};
+  CHECK(select_gguf_file(siblings, "Q4_0") == "model-Q4_0.gguf");
+  CHECK(select_gguf_file(siblings, "Q8_0") == "model-Q8_0.gguf");
+  // Case-insensitive substring match.
+  CHECK(select_gguf_file(siblings, "q4_k_m") == "model-Q4_K_M.gguf");
+}
+
+TEST_CASE("select_gguf_file throws on no .gguf, no match, or an ambiguous tag") {
+  CHECK_THROWS_AS(select_gguf_file({"config.json", "model.safetensors"}, "Q4_0"),
+                  std::runtime_error);  // no .gguf at all
+  CHECK_THROWS_AS(select_gguf_file({"model-Q4_0.gguf"}, "Q8_0"),
+                  std::runtime_error);  // tag matches nothing
+  // "Q4" is a substring of both -> ambiguous.
+  CHECK_THROWS_AS(select_gguf_file({"model-Q4_0.gguf", "model-Q4_K_M.gguf"}, "Q4"),
+                  std::runtime_error);
+}

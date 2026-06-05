@@ -3,6 +3,7 @@
 #include <unistd.h>  // getpid
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
@@ -132,6 +133,79 @@ curl_slist* common_setup(CURL* h, const std::string& url) {
                            std::to_string(status) + ")");
 }
 
+// Fetch the model-info listing JSON for `repo_id` at `revision`. Throws on a
+// network or HTTP error (with gated/not-found specifics).
+std::string fetch_model_info(const std::string& repo_id, const std::string& revision) {
+  ensure_curl_global();
+  const std::string api_url =
+      "https://huggingface.co/api/models/" + repo_id + "?revision=" + revision;
+  std::string api_body;
+  CURL* h = curl_easy_init();
+  if (!h) throw std::runtime_error("hf: failed to init curl");
+  curl_slist* headers = common_setup(h, api_url);
+  curl_easy_setopt(h, CURLOPT_ACCEPT_ENCODING, "");  // allow gzip for the JSON
+  curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, write_to_string);
+  curl_easy_setopt(h, CURLOPT_WRITEDATA, &api_body);
+  const CURLcode rc = curl_easy_perform(h);
+  long status = 0;
+  curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status);
+  if (headers) curl_slist_free_all(headers);
+  curl_easy_cleanup(h);
+  if (rc != CURLE_OK)
+    throw std::runtime_error("hf: model-info request failed: " +
+                             std::string(curl_easy_strerror(rc)));
+  if (status < 200 || status >= 300) throw_http_error(status, repo_id, "model-info");
+  return api_body;
+}
+
+// Download a single repo file to `out_path` (its parent is created). Throws on a
+// network or HTTP error.
+void download_file(const std::string& repo_id, const std::string& revision,
+                   const std::string& file, const fs::path& out_path) {
+  std::error_code ec;
+  fs::create_directories(out_path.parent_path(), ec);  // nested rfilenames
+  std::ofstream os(out_path, std::ios::binary | std::ios::trunc);
+  if (!os) throw std::runtime_error("hf: cannot write '" + out_path.string() + "'");
+
+  const std::string url =
+      "https://huggingface.co/" + repo_id + "/resolve/" + revision + "/" + url_encode_path(file);
+  CURL* h = curl_easy_init();
+  if (!h) throw std::runtime_error("hf: failed to init curl");
+  curl_slist* headers = common_setup(h, url);
+  Progress prog{file};
+  curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, write_to_ofstream);
+  curl_easy_setopt(h, CURLOPT_WRITEDATA, &os);
+  curl_easy_setopt(h, CURLOPT_NOPROGRESS, 0L);
+  curl_easy_setopt(h, CURLOPT_XFERINFOFUNCTION, xferinfo);
+  curl_easy_setopt(h, CURLOPT_XFERINFODATA, &prog);
+  const CURLcode rc = curl_easy_perform(h);
+  long status = 0;
+  curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status);
+  if (headers) curl_slist_free_all(headers);
+  curl_easy_cleanup(h);
+  os.close();
+
+  if (rc != CURLE_OK)
+    throw std::runtime_error("hf: download of '" + file +
+                             "' failed: " + std::string(curl_easy_strerror(rc)));
+  if (status < 200 || status >= 300) throw_http_error(status, repo_id, "download of " + file);
+}
+
+bool ends_with_ci(const std::string& s, const std::string& suf) {
+  if (s.size() < suf.size()) return false;
+  for (size_t i = 0; i < suf.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(s[s.size() - suf.size() + i])) !=
+        std::tolower(static_cast<unsigned char>(suf[i])))
+      return false;
+  }
+  return true;
+}
+
+std::string to_lower(std::string s) {
+  for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+  return s;
+}
+
 }  // namespace
 
 std::vector<std::string> parse_repo_siblings(const std::string& model_info_json) {
@@ -179,36 +253,39 @@ std::vector<std::string> select_files_to_download(const std::vector<std::string>
 
   if (!has_config) throw std::runtime_error("hf: repo has no config.json");
   if (!has_safetensors)
-    throw std::runtime_error("hf: repo has no .safetensors weights (this engine loads safetensors only)");
+    throw std::runtime_error(
+        "hf: repo has no .safetensors weights; for a GGUF repo pass 'org/name:VARIANT' "
+        "(e.g. 'org/name:Q4_0') to fetch a single .gguf");
   return out;
+}
+
+std::string select_gguf_file(const std::vector<std::string>& siblings, const std::string& tag) {
+  std::vector<std::string> ggufs, matches;
+  const std::string want = to_lower(tag);
+  for (const auto& f : siblings) {
+    if (!ends_with_ci(f, ".gguf")) continue;
+    ggufs.push_back(f);
+    if (to_lower(f).find(want) != std::string::npos) matches.push_back(f);
+  }
+
+  auto join = [](const std::vector<std::string>& v) {
+    std::string s;
+    for (size_t i = 0; i < v.size(); ++i) s += (i ? ", " : "") + v[i];
+    return s;
+  };
+  if (ggufs.empty()) throw std::runtime_error("hf: repo has no .gguf files");
+  if (matches.empty())
+    throw std::runtime_error("hf: no .gguf matches variant '" + tag + "' (available: " +
+                             join(ggufs) + ")");
+  if (matches.size() > 1)
+    throw std::runtime_error("hf: variant '" + tag + "' is ambiguous, matches: " + join(matches));
+  return matches.front();
 }
 
 std::string hf_download_repo(const std::string& repo_id, const std::string& dest_dir,
                              const std::string& revision) {
-  ensure_curl_global();
-
-  // 1. List the repo's files via the model-info API.
-  const std::string api_url = "https://huggingface.co/api/models/" + repo_id +
-                              "?revision=" + revision;
-  std::string api_body;
-  {
-    CURL* h = curl_easy_init();
-    if (!h) throw std::runtime_error("hf: failed to init curl");
-    curl_slist* headers = common_setup(h, api_url);
-    curl_easy_setopt(h, CURLOPT_ACCEPT_ENCODING, "");  // allow gzip for the JSON
-    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, write_to_string);
-    curl_easy_setopt(h, CURLOPT_WRITEDATA, &api_body);
-    const CURLcode rc = curl_easy_perform(h);
-    long status = 0;
-    curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status);
-    if (headers) curl_slist_free_all(headers);
-    curl_easy_cleanup(h);
-    if (rc != CURLE_OK)
-      throw std::runtime_error("hf: model-info request failed: " +
-                               std::string(curl_easy_strerror(rc)));
-    if (status < 200 || status >= 300) throw_http_error(status, repo_id, "model-info");
-  }
-
+  // 1. List the repo's files and pick the inference set.
+  const std::string api_body = fetch_model_info(repo_id, revision);
   std::vector<std::string> files;
   try {
     files = select_files_to_download(parse_repo_siblings(api_body));
@@ -237,36 +314,7 @@ std::string hf_download_repo(const std::string& repo_id, const std::string& dest
     }
   } guard{tmp_dir};
 
-  for (const auto& file : files) {
-    const std::string url =
-        "https://huggingface.co/" + repo_id + "/resolve/" + revision + "/" + url_encode_path(file);
-    const fs::path out_path = tmp_dir / file;
-    fs::create_directories(out_path.parent_path(), ec);  // nested rfilenames
-
-    std::ofstream os(out_path, std::ios::binary | std::ios::trunc);
-    if (!os) throw std::runtime_error("hf: cannot write '" + out_path.string() + "'");
-
-    CURL* h = curl_easy_init();
-    if (!h) throw std::runtime_error("hf: failed to init curl");
-    curl_slist* headers = common_setup(h, url);
-    Progress prog{file};
-    curl_easy_setopt(h, CURLOPT_WRITEFUNCTION, write_to_ofstream);
-    curl_easy_setopt(h, CURLOPT_WRITEDATA, &os);
-    curl_easy_setopt(h, CURLOPT_NOPROGRESS, 0L);
-    curl_easy_setopt(h, CURLOPT_XFERINFOFUNCTION, xferinfo);
-    curl_easy_setopt(h, CURLOPT_XFERINFODATA, &prog);
-    const CURLcode rc = curl_easy_perform(h);
-    long status = 0;
-    curl_easy_getinfo(h, CURLINFO_RESPONSE_CODE, &status);
-    if (headers) curl_slist_free_all(headers);
-    curl_easy_cleanup(h);
-    os.close();
-
-    if (rc != CURLE_OK)
-      throw std::runtime_error("hf: download of '" + file +
-                               "' failed: " + std::string(curl_easy_strerror(rc)));
-    if (status < 200 || status >= 300) throw_http_error(status, repo_id, "download of " + file);
-  }
+  for (const auto& file : files) download_file(repo_id, revision, file, tmp_dir / file);
 
   // 3. Commit: replace any stale dest, then atomically rename temp into place.
   fs::remove_all(final_dir, ec);
@@ -276,6 +324,53 @@ std::string hf_download_repo(const std::string& repo_id, const std::string& dest
 
   log::info("hf: model '{}' ready at '{}'", repo_id, final_dir.string());
   return final_dir.string();
+}
+
+std::string hf_download_gguf(const std::string& repo_id, const std::string& dest_dir,
+                             const std::string& tag, const std::string& revision) {
+  // 1. List the repo and pick the single .gguf matching `tag`.
+  const std::string api_body = fetch_model_info(repo_id, revision);
+  std::string file;
+  try {
+    file = select_gguf_file(parse_repo_siblings(api_body), tag);
+  } catch (const nlohmann::json::exception& e) {
+    throw std::runtime_error("hf: could not parse model-info for '" + repo_id + "': " + e.what());
+  }
+
+  // 2. The .gguf is self-contained; download just it into dest_dir (additively, so
+  //    multiple cached variants of the same repo coexist).
+  const fs::path final_dir(dest_dir);
+  std::error_code ec;
+  fs::create_directories(final_dir, ec);
+  if (ec) throw std::runtime_error("hf: cannot create '" + final_dir.string() + "': " + ec.message());
+
+  const fs::path final_path = final_dir / file;
+  if (fs::is_regular_file(final_path, ec)) {
+    log::info("hf: GGUF '{}' already present at '{}'", file, final_path.string());
+    return final_path.string();
+  }
+
+  log::info("hf: downloading GGUF '{}' for '{}' (rev {})", file, repo_id, revision);
+  const fs::path tmp_path = final_dir / (file + ".incomplete-" + std::to_string(::getpid()));
+  struct FileGuard {
+    fs::path path;
+    bool committed = false;
+    ~FileGuard() {
+      if (!committed) {
+        std::error_code e;
+        fs::remove(path, e);
+      }
+    }
+  } guard{tmp_path};
+
+  download_file(repo_id, revision, file, tmp_path);
+  fs::rename(tmp_path, final_path, ec);
+  if (ec)
+    throw std::runtime_error("hf: cannot finalize '" + final_path.string() + "': " + ec.message());
+  guard.committed = true;
+
+  log::info("hf: GGUF '{}' ready at '{}'", file, final_path.string());
+  return final_path.string();
 }
 
 }  // namespace mlxforge
