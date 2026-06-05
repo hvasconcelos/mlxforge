@@ -77,7 +77,11 @@ TEST_CASE("Qwen3 MoE: decoder block 0 output matches the reference") {
   assert_close(model.decoder_block(emb, /*layer=*/0), load_qwen3_moe_npy("block0.npy"));
 }
 
-TEST_CASE("Qwen3 MoE: full forward first-token argmax + greedy stream match") {
+// Skipped by default: the full 48-layer 30B-A3B forward + greedy continuation
+// loop is the heaviest case in the suite. Run it explicitly when validating the
+// sparse forward pass (`mlxforge_tests --no-skip --test-case="Qwen3 MoE: full*"`).
+TEST_CASE("Qwen3 MoE: full forward first-token argmax + greedy stream match" *
+          doctest::skip()) {
   if (!qwen3_moe_ready()) {
     MESSAGE("Qwen3 MoE model/fixtures not present; skipping golden-reference check");
     return;
