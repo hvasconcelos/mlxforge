@@ -24,17 +24,10 @@
 #include <string>
 #include <vector>
 
-#include "core/config.h"
-#include "core/gguf.h"
 #include "core/logging.h"
-#include "core/model_source.h"
-#include "core/weights.h"
-#include "model/model_factory.h"
-#include "runtime/worker.h"
-#include "scheduler/scheduler.h"
+#include "runtime/engine.h"
 #include "server/config.h"
 #include "server/http_server.h"
-#include "tokenizer/tokenizer.h"
 
 // Internal namespace for non-exported globals and helpers.
 namespace {
@@ -127,70 +120,35 @@ int main(int argc, char** argv) {
     return 2;
   }
 
-  // Resolve the model directory:
-  //   - Accepts a local dir or a HuggingFace repo id.
-  //   - If necessary, downloads or finds in cache (never on worker thread).
-  std::string dir;
+  // Build the inference engine: it resolves the model spec, loads the config +
+  // tokenizer on this thread, and starts the GPU worker (which loads the weights
+  // on its own thread, where the MLX arrays must live). This is the HTTP-free
+  // engine boundary; the server below is just one consumer of it.
+  std::unique_ptr<mlxforge::Engine> engine;
   try {
-    dir = mlxforge::resolve_model_dir(sc.model_dir);
+    engine = std::make_unique<mlxforge::Engine>(
+        mlxforge::EngineConfig{sc.model_dir, sc.max_waiting});
   } catch (const std::exception& e) {
     mlxforge::log::error("model error: {}", e.what());
     return 2;
   }
 
-  // Load the config + tokenizer on the main thread. For GGUF this parses only
-  // the metadata (no weight tensors): MLX arrays are thread-bound, so the worker
-  // must create the weights itself.
-  const bool is_gguf = mlxforge::is_gguf_path(dir);
-  mlxforge::ModelConfig cfg;
-  mlxforge::Tokenizer tok;
-  if (is_gguf) {
-    mlxforge::GgufModel head = mlxforge::load_gguf_config_and_tokenizer(dir);
-    cfg = std::move(head.config);
-    tok = mlxforge::Tokenizer::from_gguf(head.tokens, head.merges, head.token_types, head.pre,
-                                         head.bos_id,
-                                         mlxforge::chat_format_from_model_type(cfg.model_type));
-  } else {
-    cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
-    tok = mlxforge::Tokenizer::from_file(dir + "/tokenizer.json", cfg.bos_token_id,
-                                         mlxforge::chat_format_from_model_type(cfg.model_type));
-  }
-
-  // Create inference scheduler and set waiting queue bound.
-  mlxforge::Scheduler scheduler;
-  scheduler.set_max_waiting(sc.max_waiting);
-
-  // Construct and start the GPU worker thread (loads weights + builds the model
-  // on the worker thread, where the MLX arrays must live).
-  mlxforge::Worker worker(
-      [dir, is_gguf] {
-        if (is_gguf) {
-          mlxforge::GgufModel g = mlxforge::load_gguf_model(dir);
-          return mlxforge::create_model(std::move(g.config), std::move(g.weights));
-        }
-        mlxforge::ModelConfig wcfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
-        auto weights = mlxforge::load_weights(dir, wcfg);
-        return mlxforge::create_model(std::move(wcfg), std::move(weights));
-      },
-      &scheduler);
-  worker.start();
-
-  // Instantiate HTTP server (OpenAI API-compatible).
-  //   - Scheduler handles queuing/batching of inference requests.
-  //   - Tokenizer used for prompt/input processing and token streaming.
-  //   - cfg names the currently loaded model.
+  // Instantiate HTTP server (OpenAI API-compatible) over the engine.
+  //   - engine.scheduler() handles queuing/batching of inference requests.
+  //   - engine.tokenizer() is used for prompt processing and token streaming.
+  //   - engine.config() names the currently loaded model.
   //   - The model spec the user passed is the served model name: it is echoed in
   //     responses and /v1/models, and requests naming a different model are
   //     rejected (an OpenAI client must target the loaded model).
-  //   - Readiness/metrics checks are lambda-captured from worker.
+  //   - Readiness/metrics are read from the engine's worker.
   mlxforge::HttpServer server(
-      &scheduler,
-      &tok,
-      cfg,
+      &engine->scheduler(),
+      &engine->tokenizer(),
+      engine->config(),
       sc.model_dir,
-      [&worker] { return worker.ready(); },
+      [&engine] { return engine->ready(); },
       sc.max_ctx,
-      [&worker] { return worker.metrics(); }
+      [&engine] { return engine->metrics(); }
   );
 
   // Set global server pointer for signal handler shutdown.
@@ -209,7 +167,7 @@ int main(int argc, char** argv) {
 
   // After listen() returns, begin draining worker batch before exit.
   mlxforge::log::info("draining in-flight requests...");
-  worker.stop();  // drains active batch and stops worker thread
+  engine->stop();  // drains active batch and stops worker thread
 
   return 0;
 }
