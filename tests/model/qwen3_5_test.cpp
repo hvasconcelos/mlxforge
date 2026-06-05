@@ -10,7 +10,10 @@
 
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "core/config.h"
 #include "mlx/ops.h"
@@ -20,6 +23,7 @@
 #include "scheduler/scheduler.h"
 #include "support/model_fixture.h"
 #include "support/reference.h"
+#include "tokenizer/tokenizer.h"
 
 using namespace mlxforge::test;
 
@@ -315,6 +319,43 @@ TEST_CASE("Qwen3.5: greedy continuation reproduces the reference token stream") 
     ids.push_back(tok);
   }
   assert_tokens_equal(got, expected);
+}
+
+TEST_CASE("Qwen3.5: tokenizer matches the mlx-lm golden ids (ChatML)") {
+  if (!qwen3_5_ready()) {
+    MESSAGE("Qwen3.5 model/fixtures not present; skipping");
+    return;
+  }
+  const std::string dir = qwen3_5_model_dir();
+  mlxforge::ModelConfig cfg = mlxforge::ModelConfig::from_file(dir + "/config.json");
+  // model_type "qwen3_5" must select the Qwen3.5 ChatML chat format.
+  CHECK(mlxforge::chat_format_from_model_type(cfg.model_type) == mlxforge::ChatFormat::Qwen35);
+
+  // Qwen has no BOS token; the byte-level BPE tokenizer.json loads like Qwen3's.
+  mlxforge::Tokenizer tok = mlxforge::Tokenizer::from_file(
+      dir + "/tokenizer.json", cfg.bos_token_id,
+      mlxforge::chat_format_from_model_type(cfg.model_type));
+
+  std::ifstream f(qwen3_5_ref_path("tokenizer_corpus.json"), std::ios::binary);
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  nlohmann::json corpus = nlohmann::json::parse(ss.str());
+  REQUIRE(corpus.is_array());
+  for (const auto& entry : corpus) {
+    const std::string text = entry["text"].get<std::string>();
+    const std::vector<int> expected = entry["ids"].get<std::vector<int>>();
+    INFO("input: " << text);
+    assert_tokens_equal(tok.encode(text), expected);
+  }
+
+  // ChatML chat prompt matches the real Qwen3.5 template (thinking on by default,
+  // and the thinking-disabled variant).
+  std::vector<mlxforge::Tokenizer::Message> messages = {
+      {"user", "What is the capital of France?"}};
+  CHECK(tok.apply_chat_template(messages) == load_qwen3_5_token_ids("chat_ids.npy"));
+  CHECK(tok.apply_chat_template(messages, /*add_generation_prompt=*/true, /*today_date=*/"",
+                                /*tools=*/{}, /*enable_thinking=*/false) ==
+        load_qwen3_5_token_ids("chat_ids_nothink.npy"));
 }
 
 TEST_CASE("Qwen3.5: continuous-batching worker generates the correct tokens") {

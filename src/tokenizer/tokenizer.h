@@ -18,10 +18,12 @@ namespace mlxforge {
 
 // Which chat template to render. Selected from config.json's model_type so the
 // forward pass (shared) and the prompt formatting (per-family) stay decoupled.
-enum class ChatFormat { Llama3, Qwen3 };
+// Qwen35 is ChatML like Qwen3 but, with thinking enabled, opens the reasoning
+// block (`<think>\n`) in the generation prompt instead of leaving it to the model.
+enum class ChatFormat { Llama3, Qwen3, Qwen35 };
 
-// Map a config.json model_type to a chat format: "qwen3"/"qwen2" -> Qwen3 (ChatML),
-// everything else -> Llama3.
+// Map a config.json model_type to a chat format: "qwen3"/"qwen3_moe"/"qwen2" ->
+// Qwen3, "qwen3_5" -> Qwen35 (both ChatML), everything else -> Llama3.
 ChatFormat chat_format_from_model_type(const std::string& model_type);
 
 class Tokenizer {

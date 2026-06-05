@@ -16,6 +16,7 @@ namespace mlxforge {
 // Returns the chat format for a given model_type string: Qwen3/Qwen2 render the
 // ChatML template, everything else falls back to Llama-3.2.
 ChatFormat chat_format_from_model_type(const std::string& model_type) {
+  if (model_type == "qwen3_5") return ChatFormat::Qwen35;
   if (model_type == "qwen3" || model_type == "qwen3_moe" || model_type == "qwen2")
     return ChatFormat::Qwen3;
   return ChatFormat::Llama3;
@@ -206,7 +207,7 @@ std::string render_llama3(const std::vector<Tokenizer::Message>& messages,
 // fresh generation, the common case, match byte-for-byte; see the golden test).
 std::string render_qwen3(const std::vector<Tokenizer::Message>& messages,
                          bool add_generation_prompt, bool enable_thinking,
-                         const std::vector<std::string>& tools) {
+                         const std::vector<std::string>& tools, bool open_think) {
   std::ostringstream os;
 
   // Leading system turn: the user's system message (if the first message is one)
@@ -247,7 +248,10 @@ std::string render_qwen3(const std::vector<Tokenizer::Message>& messages,
 
   if (add_generation_prompt) {
     os << "<|im_start|>assistant\n";
-    if (!enable_thinking) os << "<think>\n\n</think>\n\n";
+    if (!enable_thinking)
+      os << "<think>\n\n</think>\n\n";
+    else if (open_think)  // Qwen3.5 opens the reasoning block; Qwen3 leaves it to the model.
+      os << "<think>\n";
   }
   return os.str();
 }
@@ -259,8 +263,9 @@ std::string Tokenizer::render_chat_template(const std::vector<Message>& messages
                                             const std::string& today_date, ChatFormat fmt,
                                             const std::vector<std::string>& tools,
                                             bool enable_thinking) {
-  if (fmt == ChatFormat::Qwen3)
-    return render_qwen3(messages, add_generation_prompt, enable_thinking, tools);
+  if (fmt == ChatFormat::Qwen3 || fmt == ChatFormat::Qwen35)
+    return render_qwen3(messages, add_generation_prompt, enable_thinking, tools,
+                        /*open_think=*/fmt == ChatFormat::Qwen35);
   return render_llama3(messages, add_generation_prompt, today_date, tools);
 }
 

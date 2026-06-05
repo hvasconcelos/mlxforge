@@ -119,9 +119,8 @@ std::pair<mx::array, mx::array> Qwen35Model::gated_delta(
   // carried across calls. The delta rule: decay the state, read the current key
   // (kv_mem), form the error-corrected value (delta), write it back keyed by k,
   // then read with q. A masked (left-padding) step freezes the state.
-  mx::array state =
-      init_state.has_value() ? mx::astype(*init_state, mx::float32) : mx::zeros({B, Hv, Dv, Dk},
-                                                                                mx::float32);
+  mx::array state = init_state.has_value() ? mx::astype(*init_state, mx::float32)
+                                           : mx::zeros({B, Hv, Dv, Dk}, mx::float32);
   std::vector<mx::array> ys;
   ys.reserve(S);
   for (int t = 0; t < S; ++t) {
@@ -159,8 +158,7 @@ mx::array Qwen35Model::linear_attention(const mx::array& x, int layer, KVCache* 
     init_conv = st.first;
     init_recur = st.second;
   }
-  mx::array out_conv = mx::zeros({1, 1, 1}, mx::float16);  // populated below
-  mx::array out_recur = mx::zeros({1, 1, 1, 1}, mx::float32);
+  mx::array out_conv = mx::zeros({1}), out_recur = mx::zeros({1});  // out-params, set below
   mx::array y = linear_attention_impl(x, layer, init_conv, init_recur, no_mask, out_conv, out_recur);
   if (cache) cache->set_linear_state(layer, out_conv, out_recur);
   return y;
@@ -313,7 +311,7 @@ mx::array Qwen35Model::forward(const mx::array& tokens, BatchKVCache& cache) con
         init_conv = st.first;
         init_recur = st.second;
       }
-      mx::array out_conv = mx::zeros({1}), out_recur = mx::zeros({1});
+      mx::array out_conv = mx::zeros({1}), out_recur = mx::zeros({1});  // out-params, set below
       sub = linear_attention_impl(h, layer, init_conv, init_recur, ssm_mask, out_conv, out_recur);
       cache.set_linear_state(layer, out_conv, out_recur);
     } else {
