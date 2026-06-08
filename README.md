@@ -1,13 +1,44 @@
 # mlxforge
 
-A from-scratch Local inference engine in **C++ on Apple MLX**, served behind an
-**OpenAI-compatible HTTP API** with **continuous batching**.
+**`libmlxforge` — an embeddable, batched MLX LLM engine you bind from any language.**
+A from-scratch local inference engine in **C++ on Apple MLX** with **continuous
+batching**, exposed through a stable C ABI so Node (first), then Swift and Rust, can
+embed the *same batched engine* in-process — not just array ops, and not one stream at a
+time.
 
-mlxforge loads raw safetensors weights, runs a numerically-correct transformer
-forward pass on the Metal GPU, and serves concurrent users through a vLLM-style
-single-worker / three-queue scheduler. Every numerically-sensitive phase is
-validated against an `mlx-lm` golden reference, because the failure mode here is
-**silent garbage, not a crash**.
+mlxforge loads raw safetensors / GGUF weights, runs a numerically-correct transformer
+forward pass on the Metal GPU, and serves many concurrent requests through a vLLM-style
+single-worker / three-queue scheduler. Every numerically-sensitive phase is validated
+against an `mlx-lm` golden reference, because the failure mode here is **silent garbage,
+not a crash** — the guarantee an embedded engine has to make.
+
+> **The library is the product.** The OpenAI-compatible HTTP server and the CLI in this
+> repo are **QA harnesses** that exercise and prove the engine's stability (the server
+> load-tests the scheduler/batching; the CLI runs the golden-reference and weight
+> smoke tests). They are dev/QA tools, not the deliverable — see
+> [Validating the engine](#validating-the-engine-harnesses).
+
+## Why mlxforge (vs the rest of the MLX ecosystem)
+
+Apple Silicon already has plenty of ways to run a local model — but each existing option
+is either an *array framework* (you build the engine yourself), a *single-stream* LLM
+lib, or a *Python server* you can't embed. None is a complete, batched engine bindable
+from another language. That's the gap mlxforge fills:
+
+| Option | What it is | In-process | MLX-native | Batched / concurrent |
+| --- | --- | :---: | :---: | :---: |
+| `mlx-c` / `mlx-rs` / `mlx-rust` | array-framework bindings | ✅ | ✅ | build it yourself |
+| **`node-llama-cpp`** | Node LLM lib (llama.cpp/GGUF) | ✅ | ❌ | ⚠️ weak |
+| **`node-mlx`** | Node LLM lib (MLX) | ✅ | ✅ | ❌ single-stream |
+| Apple **`MLXLLM`** (mlx-swift) | Swift LLM lib | ✅ | ✅ | ❌ single-stream |
+| **`vllm-mlx`** / **`omlx`** | Python MLX servers | ❌ (HTTP) | ✅ | ✅ |
+| Ollama (`+ ollama` npm) | Go sidecar (MLX since 0.19) | ❌ (HTTP) | ✅ | ✅ |
+| **mlxforge** | **batched engine + C ABI** | ✅ | ✅ | ✅ |
+
+mlxforge is the only row that is **in-process + MLX-native + batched** — and the only
+batched MLX engine you can bind from Node/Swift/Rust instead of running as a separate
+Python/Go process. See [`doc/embedding.md`](./doc/embedding.md) for the full thesis and
+the C-ABI / Node quickstart.
 
 Primary model: `mlx-community/Llama-3.2-1B-Instruct` (fp16 by default; optional
 4-bit). 16 layers, hidden 2048, 32 query / 8 KV heads (GQA), head_dim 64,
@@ -19,8 +50,13 @@ Llama-3.2, Qwen3 (dense / MoE), and Qwen3.5 hybrid models today, from safetensor
 
 ## Features
 
+- **Embeddable batched engine** — `runtime/engine` is an HTTP-free, in-process engine
+  (one GPU worker + scheduler + batched KV cache) designed to be wrapped by a stable
+  `extern "C"` ABI (`src/capi/mlxforge.h`, *in progress*) and bound from other
+  languages. Concurrent requests share one batched engine. This is the product.
 - **Numerically correct** — forward-pass logits and greedy tokens match `mlx-lm`
-  (golden-reference `.npy` fixtures gate every step).
+  (golden-reference `.npy` fixtures gate every step). The guarantee an engine embedded
+  in someone else's app has to make.
 - **KV cache** — single-sequence and batched (`BatchKVCache`), left-padded,
   grown in 256-token blocks, with `filter` (eviction) / `merge` (admission).
 - **Continuous batching** — one GPU worker thread owns all MLX state and is the
@@ -31,10 +67,12 @@ Llama-3.2, Qwen3 (dense / MoE), and Qwen3.5 hybrid models today, from safetensor
 - **C++ tokenizer** — a from-scratch byte-level BPE over HF `tokenizer.json`
   (no Rust), the Llama-3.2 chat template (selected from `config.json`'s
   `model_type`), and UTF-8-safe incremental detokenization.
-- **OpenAI server** (cpp-httplib) — `/v1/chat/completions`, `/v1/completions`,
-  `/v1/models`, `/health`; non-streaming and SSE streaming; tool / function
-  calling (`tools` / `tool_choice` → `tool_calls`); cancellation on client
-  disconnect; per-request metrics; OpenAI-shaped errors (400/429/503).
+- **OpenAI server harness** (cpp-httplib) — a concurrency/load harness that drives the
+  engine over HTTP: `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/health`;
+  non-streaming and SSE streaming; tool / function calling (`tools` / `tool_choice` →
+  `tool_calls`); cancellation on client disconnect; per-request metrics; OpenAI-shaped
+  errors (400/429/503). Built only when `MLXFORGE_BUILD_SERVER=ON`; the released library
+  ships without it.
 - **Optional 4-bit quantization** — `quantized_matmul` (group_size 64), ~0.65
   GiB resident vs ~2.3 GiB fp16.
 - **Configurable logging** (spdlog) — `debug`/`info`/`warn`/`error` across the
@@ -144,12 +182,21 @@ reference/.venv/bin/python reference/dump_ref.py --model qwen3     # -> referenc
 reference/.venv/bin/python reference/dump_ref.py --model qwen3_5   # -> reference/fixtures_qwen3_5/
 ```
 
-## Run the server
+## Validating the engine (harnesses)
+
+The server and CLI below are **not the product** — they are how we drive and validate
+`libmlxforge`. The server is the scheduler/batching concurrency & load harness; the CLI
+is the golden-reference and weight-inspection smoke test. The shippable library is the C
+ABI in [`doc/embedding.md`](./doc/embedding.md); these binaries are built only with
+`MLXFORGE_BUILD_SERVER` / `MLXFORGE_BUILD_CLI` on (the default for dev/CI).
+
+### The server harness
 
 ```sh
 ./build/mlxforge -m "$MODEL_DIR" --port 8080 --max-ctx 8192 --max-waiting 256
 ```
 
+It speaks the OpenAI API so existing clients and load tools can hammer the scheduler.
 Then use the official `openai` client:
 
 ```python
@@ -173,7 +220,7 @@ Config knobs are also read from the environment (`MLXFORGE_HOST`, `MLXFORGE_PORT
 `MLXFORGE_MAX_CTX`, `MLXFORGE_MAX_WAITING`, `MLXFORGE_KV_BUDGET`). `SIGINT`/`SIGTERM`
 trigger a graceful shutdown that drains in-flight requests.
 
-## Run the CLI
+### The CLI harness
 
 ```sh
 # stream generated text from a chat prompt
@@ -238,8 +285,12 @@ reference/.venv/bin/python reference/dump_ref.py
 
 ## Architecture
 
+The request lifecycle below is drawn through the **server harness** (the most familiar
+entry point); an embedder reaches the same `scheduler → worker` core directly through
+the C ABI over `runtime/engine`, with no HTTP involved.
+
 ```
-HTTP request ─▶ server/http_server (cpp-httplib)
+HTTP request ─▶ server/http_server (cpp-httplib)   ← harness; C-ABI callers skip this
                 │  parse OpenAI JSON, apply chat template, tokenize
                 ▼
             scheduler/  ── waiting queue (mutex + cv) ──▶ runtime/worker
@@ -271,15 +322,20 @@ Source layout (`src/`):
 | `scheduler/scheduler` | the waiting queue + handoff |
 | `runtime/worker` | the single GPU worker: admit / decode / evict loop |
 | `runtime/batching` | prefill pass + batch-size bucketing |
-| `runtime/single_stream` | the CLI's greedy generation loop |
+| `runtime/single_stream` | the CLI harness's greedy generation loop |
+| `runtime/engine` | **the embeddable engine** — HTTP-free object that resolves a spec, loads config/tokenizer, and boots the worker; what the C ABI wraps |
 | `tokenizer/tokenizer` | tokenizer facade: chat template, streaming detokenizer |
 | `tokenizer/bpe` | from-scratch byte-level BPE (encode/decode) over `tokenizer.json` |
-| `server/openai` | OpenAI request parse + response serialize (pure) |
-| `server/http_server` | routes, blocking + SSE handlers, error shapes |
-| `server/config` | CLI/env server configuration |
+| **`capi/` (planned)** | **the product** — stable `extern "C"` ABI (`mlxforge.h`) wrapping `runtime/engine`; the public surface every binding links |
+| **`bindings/` (planned)** | language bindings over the C ABI (`bindings/node` first; then Swift, Rust) |
+| `server/openai` *(harness)* | OpenAI request parse + response serialize (pure) |
+| `server/http_server` *(harness)* | routes, blocking + SSE handlers, error shapes |
+| `server/config` *(harness)* | CLI/env server configuration |
 
 For the full design see the [`doc/`](./doc) folder:
 
+- [`doc/embedding.md`](./doc/embedding.md) — **start here**: the library / cross-language
+  batched-engine thesis, the competitive landscape, and the C-ABI + Node quickstart.
 - [`doc/architecture.md`](./doc/architecture.md) — engine architecture, the
   single-GPU-thread model, request lifecycle, continuous batching.
 - [`doc/llm-architecture.md`](./doc/llm-architecture.md) — the transformer
@@ -287,8 +343,8 @@ For the full design see the [`doc/`](./doc) folder:
   sampling, quantization).
 - [`doc/supported-models.md`](./doc/supported-models.md) — model families,
   adding a new one, the golden-reference discipline.
-- [`doc/applications.md`](./doc/applications.md) — the server and CLI binaries
-  and the OpenAI API surface.
+- [`doc/applications.md`](./doc/applications.md) — the server and CLI **harnesses**
+  (how the engine is driven and validated) and the OpenAI API surface they expose.
 - [`doc/contributing.md`](./doc/contributing.md) — build/test workflow,
   conventions, and the hard-won numerical gotchas.
 
