@@ -21,6 +21,7 @@ weights.
 | Qwen3 (dense, 4-bit) | `mlx-community/Qwen3-4B-4bit` | 4-bit (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes |
 | Qwen3 (GGUF) | `Qwen/Qwen3-0.6B-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | ChatML (`<\|im_start\|>…`) | yes |
 | Qwen3 (MoE) | `mlx-community/Qwen3-30B-A3B-4bit` | 4-bit / fp16 (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes |
+| Qwen3 (MoE, GGUF) | `Qwen/Qwen3-30B-A3B-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | ChatML (`<\|im_start\|>…`) | yes |
 | Qwen3.5 (hybrid) | `mlx-community/Qwen3.5-0.8B-4bit` | 4-bit (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes (text only) |
 
 **Qwen3 dense** models (0.6B/1.7B/4B/8B/14B/32B) run end-to-end. They add three
@@ -111,12 +112,16 @@ the safetensors weights (single `model.safetensors`, or sharded
 ### GGUF (single-file, self-contained)
 
 A `.gguf` file bundles the config, tokenizer, and weights in one file (no
-`config.json` / `tokenizer.json` on disk). Point either binary at the file path:
+`config.json` / `tokenizer.json` on disk). Point either binary at a local file
+path, or at a GGUF repo id with a `:VARIANT` suffix (the variant, default `Q4_0`,
+selects which quant the engine downloads — a single `.gguf`, cached per variant):
 
 ```sh
-hf download bartowski/Llama-3.2-1B-Instruct-GGUF --include "*Q4_K_M.gguf"
+# Local file path:
 ./build/mlxforge-cli generate /path/to/Llama-3.2-1B-Instruct-Q4_K_M.gguf "What is the capital of France?" 64
-./build/mlxforge -m /path/to/Llama-3.2-1B-Instruct-Q4_K_M.gguf --port 8080
+# Or auto-download one .gguf from a GGUF repo (org/name:VARIANT):
+./build/mlxforge-cli generate bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_0 "What is the capital of France?" 64
+./build/mlxforge -m bartowski/Llama-3.2-1B-Instruct-GGUF:Q4_K_M --port 8080
 ```
 
 `core/gguf` parses the file itself (it does **not** use `mx::load_gguf`, whose
@@ -140,8 +145,14 @@ golden weights):
 - Anything else (`Q2_K`, `Q3_K`, `Q5_0/Q5_1`, `IQ*`, …) is **rejected with a clear
   error** rather than risk silent garbage.
 
-Only the `llama` architecture is accepted; others are rejected. Auto-download of a
-GGUF *repo id* is not wired yet — download the `.gguf` and pass its path.
+The `llama`, `qwen2`, `qwen3`, and `qwen3moe` architectures are accepted. A
+`qwen3moe` file maps the router (`ffn_gate_inp`) and the stacked experts
+(`ffn_{gate,up,down}_exps`, one 3-D tensor whose reversed dims land as
+`(num_experts, out, in)`) onto the same `mlp.switch_mlp.*` form the safetensors
+path uses, so the MoE forward pass is shared. Qwen3.5 / `qwen3next` (hybrid
+gated-DeltaNet) is **rejected with a clear error**: its linear-attention tensors
+have no settled, validated GGUF layout yet. A GGUF *repo id* auto-downloads via the
+`org/name:VARIANT` spec above; a bare repo id still resolves to safetensors.
 
 > **Note on the gated fp16 repo.** The official fp16 Llama-3.2 repo is gated
 > behind a Llama license + HF token. The public `-bf16` repo is the *same
@@ -166,9 +177,13 @@ constants:
   block (`quantized`, `quant_group_size`, `quant_bits`), and the EOS/BOS token ids.
 - **`model_type`** selects the chat format (currently always the Llama-3.2 header
   format) via `chat_format_from_model_type`.
-- **`tokenizer.json`** drives BPE encode/decode and supplies the special-token ids
+- **`tokenizer.json`** drives encode/decode and supplies the special-token ids
   (`added_tokens[*].special`) that are skipped on decode — there are no hard-coded
-  token ids.
+  token ids. Two backends sit behind one `EncoderBackend` interface, picked by
+  inspecting the blob: **byte-level BPE** (`ByteLevel` decoder; Llama-3.2 / Qwen)
+  and **SentencePiece-BPE** (`byte_fallback` + metaspace; Gemma). BOS is resolved
+  from the fast tokenizer's post-processor first (Gemma prepends `<bos>` despite
+  `add_bos_token: false`), then the `tokenizer_config.json` flag.
 - A separate `lm_head.weight` is used if present; otherwise the embedding is tied.
 
 ## What is and isn't implemented
@@ -187,9 +202,10 @@ GGUF `Q4_0`/`Q4_1`/`Q8_0` (group_size 32) all run; GGUF `Q4_K`/`Q5_K`/`Q6_K`
 
 - **Sliding-window attention.** Only plain causal attention is supported, so
   models that rely on a sliding window are not.
-- **Non-Llama tokenizers / chat templates.** Only Llama-3.2-style byte-level BPE
-  and its header chat format are implemented (`Tokenizer::from_file` throws on
-  others, e.g. SentencePiece).
+- **Other tokenizer families / chat templates.** Byte-level BPE (Llama-3.2 /
+  Qwen) and SentencePiece-BPE (Gemma) are implemented; other families (e.g.
+  Unigram/WordPiece) make `Tokenizer::from_file` throw. Chat formats are limited
+  to the Llama-3.2 header format and Qwen ChatML.
 - **Tool / function-calling tokens**, vision/multimodal, embeddings endpoints,
   LoRA/adapters, speculative decoding, multi-model hosting, prefix sharing.
 

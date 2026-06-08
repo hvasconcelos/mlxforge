@@ -483,6 +483,14 @@ std::string remap_block_module(const std::string& rest) {
       {"ffn_up", "mlp.up_proj"},             {"ffn_down", "mlp.down_proj"},
       {"ffn_norm", "post_attention_layernorm"},
       {"attn_q_norm", "self_attn.q_norm"},   {"attn_k_norm", "self_attn.k_norm"},
+      // Qwen3-MoE: the router and the per-layer stacked experts. ggml stores the
+      // expert tensors as one 3-D tensor whose reversed dims land as
+      // (num_experts, out, in) — exactly the stacked switch_mlp form the forward
+      // pass (gather_mm / gather_qmm) consumes, so the dense, K-quant (dequantized
+      // to fp16) and legacy-quant layouts all map through here unchanged.
+      {"ffn_gate_inp", "mlp.gate"},          {"ffn_gate_exps", "mlp.switch_mlp.gate_proj"},
+      {"ffn_up_exps", "mlp.switch_mlp.up_proj"},
+      {"ffn_down_exps", "mlp.switch_mlp.down_proj"},
   };
   auto it = kTable.find(rest);
   return it == kTable.end() ? std::string{} : it->second;
@@ -573,19 +581,35 @@ void unpermute_qk(Weights& w, const ModelConfig& c) {
 
 ModelConfig config_from_gguf(const GgufMetadata& m) {
   const std::string arch = gm_str(m, "general.architecture");
-  if (arch != "llama" && arch != "qwen3" && arch != "qwen2") {
+  // Qwen3.5 / Qwen3-Next (hybrid gated-DeltaNet) has no settled, validated GGUF
+  // tensor layout; reject it explicitly rather than risk silent garbage from an
+  // unverified linear-attention mapping.
+  if (arch == "qwen3next") {
+    throw std::runtime_error(
+        "gguf: Qwen3.5/qwen3next GGUF is not yet supported (its gated-DeltaNet "
+        "linear-attention layers have no validated GGUF tensor mapping)");
+  }
+  if (arch != "llama" && arch != "qwen2" && arch != "qwen3" && arch != "qwen3moe") {
     throw std::runtime_error("gguf: unsupported architecture '" + arch +
-                             "' (expected llama/qwen2/qwen3)");
+                             "' (expected llama/qwen2/qwen3/qwen3moe)");
   }
   // Metadata keys are namespaced by architecture (e.g. "qwen3.block_count").
   const std::string p = arch + ".";
   ModelConfig c;
-  c.model_type = arch;
+  // Match the safetensors model_type so the chat format and any downstream
+  // dispatch behave identically; the metadata prefix `p` stays the ggml arch.
+  c.model_type = (arch == "qwen3moe") ? "qwen3_moe" : arch;
   c.n_layers = gm_int(m, p + "block_count");
   c.hidden = gm_int(m, p + "embedding_length");
   c.n_heads = gm_int(m, p + "attention.head_count");
   c.n_kv_heads = gm_int_or(m, p + "attention.head_count_kv", c.n_heads);
-  c.intermediate_size = gm_int(m, p + "feed_forward_length");
+  // MoE (Qwen3-MoE): every layer routes `num_experts_per_tok` of `num_experts`
+  // experts, each of width `moe_intermediate_size`. The dense feed_forward_length
+  // is absent for an all-MoE model, so fall back to the expert width.
+  c.num_experts = gm_int_or(m, p + "expert_count", 0);
+  c.num_experts_per_tok = gm_int_or(m, p + "expert_used_count", 0);
+  c.moe_intermediate_size = gm_int_or(m, p + "expert_feed_forward_length", 0);
+  c.intermediate_size = gm_int_or(m, p + "feed_forward_length", c.moe_intermediate_size);
   // Qwen3 sets an explicit head dim (attention.key_length) that need not equal
   // hidden/n_heads; llama derives it from the rope dimension count.
   c.head_dim = gm_int_or(m, p + "attention.key_length",
@@ -632,8 +656,9 @@ GgufModel load_gguf_config_and_tokenizer(const std::string& gguf_path) {
   // thread (creates no MLX arrays), which lets the server build the config +
   // tokenizer on the main thread while the worker loads the weights.
   GgufModel g = model_head_from_metadata(parse_gguf_metadata(gguf_path));
-  log::info("gguf: header '{}' llama layers={} hidden={} vocab={} tokens={} pre='{}'", gguf_path,
-            g.config.n_layers, g.config.hidden, g.config.vocab, g.tokens.size(), g.pre);
+  log::info("gguf: header '{}' {} layers={} hidden={} vocab={} tokens={} pre='{}'", gguf_path,
+            g.config.model_type, g.config.n_layers, g.config.hidden, g.config.vocab,
+            g.tokens.size(), g.pre);
   return g;
 }
 
@@ -672,9 +697,10 @@ GgufModel load_gguf_model(const std::string& gguf_path) {
   unpermute_qk(g.weights, g.config);  // undo llama.cpp's q/k rope permutation
   index_gguf_quant(g.weights);
 
-  log::info("gguf: llama layers={} hidden={} heads={}/{} head_dim={} vocab={} quant_weights={} "
+  log::info("gguf: {} layers={} hidden={} heads={}/{} head_dim={} vocab={} quant_weights={} "
             "tokens={} merges={} pre='{}'",
-            g.config.n_layers, g.config.hidden, g.config.n_heads, g.config.n_kv_heads,
+            g.config.model_type, g.config.n_layers, g.config.hidden, g.config.n_heads,
+            g.config.n_kv_heads,
             g.config.head_dim, g.config.vocab, g.weights.quant.size(), g.tokens.size(),
             g.merges.size(), g.pre);
   return g;

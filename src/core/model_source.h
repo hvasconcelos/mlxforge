@@ -3,7 +3,9 @@
 // Turn a user-supplied model spec into a concrete local directory holding
 // config.json / tokenizer.json / safetensors. A spec is either:
 //   * a local directory (used as-is), or
-//   * a HuggingFace repo id like "mlx-community/Llama-3.2-1B-Instruct-4bit".
+//   * a local ".gguf" file (used as-is), or
+//   * a HuggingFace repo id like "mlx-community/Llama-3.2-1B-Instruct-4bit", or
+//   * a GGUF repo id with a variant tag, "org/name:Q4_0" (downloads one .gguf).
 //
 // This is the single entry point the CLI and server call before loading a model,
 // giving llama.cpp-style ergonomics: pass a folder or a repo id and it just
@@ -19,9 +21,10 @@ namespace mlxforge {
 // Resolution order:
 //   1. an existing directory containing config.json            -> use as-is
 //   2. an existing HF-style parent dir (.../models--org--name) -> its snapshot
-//   3. a repo id already in the HF hub cache                   -> that snapshot
-//   4. a repo id already in the mlxforge cache                 -> that download
-//   5. a repo id not cached anywhere                           -> download it
+//   3. an "org/name:VARIANT" spec                              -> one cached/fetched .gguf
+//   4. a repo id already in the HF hub cache                   -> that snapshot
+//   5. a repo id already in the mlxforge cache                 -> that download
+//   6. a repo id not cached anywhere                           -> download it
 // Throws std::runtime_error if `spec` is neither a usable directory nor a
 // well-formed repo id, or on download failure.
 std::string resolve_model_dir(const std::string& spec);

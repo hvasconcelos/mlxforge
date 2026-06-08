@@ -32,4 +32,18 @@ std::vector<std::string> parse_repo_siblings(const std::string& model_info_json)
 // *.safetensors (a repo this engine cannot load). Exposed for unit testing.
 std::vector<std::string> select_files_to_download(const std::vector<std::string>& siblings);
 
+// Download a single self-contained `.gguf` file from `repo_id` (a GGUF repo
+// typically ships many quant variants) at `revision` into `dest_dir`, picking the
+// one whose name contains `tag` (case-insensitive, e.g. "Q4_0"). Returns the path
+// to the downloaded `.gguf`. Reuses an already-present file without re-fetching.
+// Throws on network/HTTP error, or if `tag` matches zero or more than one `.gguf`.
+std::string hf_download_gguf(const std::string& repo_id, const std::string& dest_dir,
+                             const std::string& tag, const std::string& revision = "main");
+
+// From a repo's file list, pick the single `.gguf` whose name contains `tag`
+// (case-insensitive substring). Pure. Throws — listing the candidates — if the
+// repo has no `.gguf` files, or if `tag` matches zero or more than one. Exposed
+// for unit testing.
+std::string select_gguf_file(const std::vector<std::string>& siblings, const std::string& tag);
+
 }  // namespace mlxforge

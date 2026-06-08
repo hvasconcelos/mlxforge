@@ -4,10 +4,12 @@
 // special-token skipping — so swapping the underlying algorithm touches only
 // the factory in tokenizer.cpp, not the wrapper or its callers.
 //
-// Today the only implementation is the from-scratch byte-level BPE engine
-// (BpeTokenizer, tokenizer/bpe.h). A future SentencePiece/Metaspace family
-// becomes a sibling implementation selected by Tokenizer::from_file; nothing
-// else has to change because everything routes through this interface.
+// Two implementations exist, selected by Tokenizer::from_file: the from-scratch
+// byte-level BPE engine (BpeTokenizer, tokenizer/bpe.h; Llama-3.2 / Qwen) and the
+// SentencePiece-style BPE engine (SpmBpeTokenizer, tokenizer/spm.h; Gemma, with
+// metaspace normalization + byte_fallback). Adding another family is a sibling
+// implementation here; nothing else changes because callers route through this
+// interface.
 #pragma once
 
 #include <string>
