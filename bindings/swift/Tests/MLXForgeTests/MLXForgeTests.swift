@@ -44,4 +44,20 @@ final class MLXForgeTests: XCTestCase {
     XCTAssertNotNil(obj?["city"])
     XCTAssertTrue(obj?["population"] is Int, "population must be an integer: \(out)")
   }
+
+  func testEmbeddingsIfModelPresent() async throws {
+    guard let dir = ProcessInfo.processInfo.environment["MLXFORGE_MODEL_DIR"], !dir.isEmpty else {
+      throw XCTSkip("MLXFORGE_MODEL_DIR not set; skipping embeddings test")
+    }
+    let engine = try await Engine.load(dir)
+    func dot(_ a: [Float], _ b: [Float]) -> Float { zip(a, b).reduce(0) { $0 + $1.0 * $1.1 } }
+
+    let a = try await engine.embed("The cat sat on the warm mat.")
+    let b = try await engine.embed("A kitten is resting on a soft rug.")
+    let c = try await engine.embed("The stock market fell sharply amid economic fears.")
+    XCTAssertFalse(a.isEmpty)
+    XCTAssertEqual(a.count, b.count)
+    XCTAssertEqual(dot(a, a), 1.0, accuracy: 0.02)   // unit-normalized
+    XCTAssertGreaterThan(dot(a, b), dot(a, c))        // semantic ordering
+  }
 }

@@ -60,6 +60,11 @@ export class Engine {
   text(prompt: string, sampling?: SamplingOptions): Stream;
   /** Run a chat to completion and return the full string. */
   complete(messages: ChatMessage[], sampling?: SamplingOptions): Promise<string>;
+  /**
+   * Embed text into a unit-normalized vector. pooling: 0 = mean (default),
+   * 1 = last token.
+   */
+  embed(text: string, pooling?: number): Promise<Float32Array>;
   dispose(): void;
 }
 

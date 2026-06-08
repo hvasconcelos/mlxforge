@@ -72,6 +72,10 @@ class Worker {
   // close their token queues).
   void evict_finished();
 
+  // Handle a one-shot embedding request: forward_hidden -> pool -> normalize into
+  // req.embedding_result, then close its token queue. Runs on the worker thread.
+  void handle_embedding(Request& req);
+
   // Constrained decoding helpers. ensure_token_bytes builds the id->output-bytes
   // table once (from the tokenizer); grammar_mask returns an additive (1, vocab)
   // fp32 mask (-inf on tokens the grammar forbids at its current state); advance

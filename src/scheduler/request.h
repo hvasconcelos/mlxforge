@@ -77,11 +77,18 @@ struct Request {
   std::string json_schema;
   std::unique_ptr<JsonGrammar> grammar;  // runtime grammar state (worker-owned)
 
+  // Embedding request: when true the worker runs a single forward pass, pools +
+  // normalizes the hidden states into `embedding_result`, and closes `tokens`
+  // (no generation). `pooling` is a mlxforge::Pooling value.
+  bool embedding = false;
+  int pooling = 0;
+  std::vector<float> embedding_result;
+
   // Set by the submitting thread (e.g. client disconnect); read by the worker.
   std::atomic<bool> cancelled{false};
 
   TokenQueue tokens;                 // worker pushes generated ids, then close()s
-  std::string finish_reason;         // "stop" | "length" | "cancel" (worker sets)
+  std::string finish_reason;         // "stop" | "length" | "cancel" | "embed"
 
   // Metrics: enqueue stamped on submit, first_token/finish stamped by the worker.
   using Clock = std::chrono::steady_clock;

@@ -113,6 +113,32 @@ public final class Engine {
     return out
   }
 
+  /// Embed text into a unit-normalized vector. `pooling`: 0 = mean (default),
+  /// 1 = last token. Any LLaMA/Qwen model works; an embedding-tuned model
+  /// produces a better vector.
+  public func embed(_ text: String, pooling: Int32 = 0) async throws -> [Float] {
+    let handle = self.handle
+    return try await withCheckedThrowingContinuation { cont in
+      // The C call blocks until the worker runs the forward pass; run it off the
+      // Swift-concurrency thread.
+      DispatchQueue.global(qos: .userInitiated).async {
+        var out: UnsafeMutablePointer<Float>?
+        var len: Int = 0
+        var err: UnsafeMutablePointer<CChar>?
+        let rc = mlxforge_embed(handle, text, pooling, &out, &len, &err)
+        if rc == 0, let out = out {
+          let vec = Array(UnsafeBufferPointer(start: out, count: len))
+          mlxforge_floats_free(out)
+          cont.resume(returning: vec)
+        } else {
+          let message = err.map { String(cString: $0) } ?? "embed failed"
+          mlxforge_string_free(err)
+          cont.resume(throwing: MLXForgeError(message: message))
+        }
+      }
+    }
+  }
+
   private func submitChat(_ messages: [ChatMessage], _ sampling: Sampling) throws -> OpaquePointer {
     // Own the C strings for the duration of the submit call.
     var owned: [UnsafeMutablePointer<CChar>] = []

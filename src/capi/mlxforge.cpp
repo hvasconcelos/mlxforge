@@ -82,6 +82,8 @@ int mlxforge_abi_version(void) { return MLXFORGE_ABI_VERSION; }
 
 void mlxforge_string_free(char* s) { std::free(s); }
 
+void mlxforge_floats_free(float* p) { std::free(p); }
+
 mlxforge_engine* mlxforge_engine_create(const char* model_spec,
                                         const mlxforge_engine_opts* opts, char** err) {
   if (err) *err = nullptr;
@@ -117,6 +119,42 @@ int mlxforge_engine_ready(mlxforge_engine* engine) {
 
 const char* mlxforge_engine_model_name(mlxforge_engine* engine) {
   return (engine) ? engine->model_name.c_str() : "";
+}
+
+int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float** out,
+                   size_t* out_len, char** err) {
+  if (err) *err = nullptr;
+  if (out) *out = nullptr;
+  if (out_len) *out_len = 0;
+  if (!engine || !engine->engine) {
+    set_err(err, "engine is null");
+    return 1;
+  }
+  if (!out || !out_len) {
+    set_err(err, "out/out_len must not be null");
+    return 1;
+  }
+  try {
+    std::vector<float> v = engine->engine->embed(text ? text : "", pooling);
+    if (v.empty()) {
+      set_err(err, "embedding failed (empty input or model error)");
+      return 1;
+    }
+    float* buf = static_cast<float*>(std::malloc(v.size() * sizeof(float)));
+    if (!buf) {
+      set_err(err, "out of memory");
+      return 1;
+    }
+    std::memcpy(buf, v.data(), v.size() * sizeof(float));
+    *out = buf;
+    *out_len = v.size();
+    return 0;
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error computing embedding");
+  }
+  return 1;
 }
 
 void mlxforge_engine_free(mlxforge_engine* engine) {

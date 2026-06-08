@@ -72,8 +72,18 @@ const out = await engine.complete([{ role: "user", content: "Tell me about Paris
 JSON.parse(out); // always valid
 ```
 
+### Embeddings
+
+```js
+const a = await engine.embed("The cat sat on the mat."); // Float32Array, unit-normalized
+const b = await engine.embed("A kitten rests on a rug.");
+const cosine = a.reduce((s, x, i) => s + x * b[i], 0);   // ~0.88
+```
+
+Any LLaMA/Qwen model works (decoder hidden states, mean-pooled + normalized); an
+embedding-tuned model produces a better vector.
+
 ## Status
 
-Streaming, batched concurrency, and JSON-constrained structured output are
-implemented. Embeddings are on the roadmap (a new encoder model family, not just
-binding work).
+Streaming, batched concurrency, JSON-constrained structured output, and
+embeddings are implemented. Prebuilt binary distribution is on the roadmap.

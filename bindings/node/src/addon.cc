@@ -148,6 +148,53 @@ Napi::Value RequestWrap::Next(const Napi::CallbackInfo& info) {
   return deferred.Promise();
 }
 
+// Runs the blocking mlxforge_embed off the event loop and resolves a Float32Array.
+class EmbedWorker : public Napi::AsyncWorker {
+ public:
+  EmbedWorker(Napi::Env env, mlxforge_engine* eng, std::string text, int pooling,
+              Napi::Promise::Deferred deferred)
+      : Napi::AsyncWorker(env),
+        eng_(eng),
+        text_(std::move(text)),
+        pooling_(pooling),
+        deferred_(deferred) {}
+
+  void Execute() override {
+    char* err = nullptr;
+    float* v = nullptr;
+    size_t n = 0;
+    int rc = mlxforge_embed(eng_, text_.c_str(), pooling_, &v, &n, &err);
+    if (rc == 0 && v) {
+      data_.assign(v, v + n);
+      mlxforge_floats_free(v);
+    } else {
+      errmsg_ = err ? err : "embed failed";
+    }
+    mlxforge_string_free(err);
+  }
+
+  void OnOK() override {
+    Napi::HandleScope scope(Env());
+    if (!errmsg_.empty()) {
+      deferred_.Reject(Napi::Error::New(Env(), errmsg_).Value());
+      return;
+    }
+    auto arr = Napi::Float32Array::New(Env(), data_.size());
+    for (size_t i = 0; i < data_.size(); ++i) arr[i] = data_[i];
+    deferred_.Resolve(arr);
+  }
+
+  void OnError(const Napi::Error& e) override { deferred_.Reject(e.Value()); }
+
+ private:
+  mlxforge_engine* eng_;
+  std::string text_;
+  int pooling_;
+  Napi::Promise::Deferred deferred_;
+  std::vector<float> data_;
+  std::string errmsg_;
+};
+
 // ---- Engine ---------------------------------------------------------------
 
 class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
@@ -159,6 +206,7 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
                                        InstanceMethod("modelName", &EngineWrap::ModelName),
                                        InstanceMethod("submitChat", &EngineWrap::SubmitChat),
                                        InstanceMethod("submitText", &EngineWrap::SubmitText),
+                                       InstanceMethod("embed", &EngineWrap::Embed),
                                        InstanceMethod("dispose", &EngineWrap::Dispose),
                                    });
     exports.Set("Engine", f);
@@ -262,6 +310,21 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
     char* err = nullptr;
     mlxforge_request* req = mlxforge_submit_text(eng_, prompt.c_str(), &s, &err);
     return finish_submit(env, req, err);
+  }
+
+  Napi::Value Embed(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    auto deferred = Napi::Promise::Deferred::New(env);
+    if (!eng_) {
+      deferred.Reject(Napi::Error::New(env, "engine is disposed").Value());
+      return deferred.Promise();
+    }
+    std::string text =
+        (info.Length() >= 1 && info[0].IsString()) ? info[0].As<Napi::String>().Utf8Value() : "";
+    int pooling =
+        (info.Length() >= 2 && info[1].IsNumber()) ? info[1].As<Napi::Number>().Int32Value() : 0;
+    (new EmbedWorker(env, eng_, std::move(text), pooling, deferred))->Queue();
+    return deferred.Promise();
   }
 
   void Dispose(const Napi::CallbackInfo&) { free_engine(); }

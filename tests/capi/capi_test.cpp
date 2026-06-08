@@ -95,6 +95,50 @@ TEST_CASE("C ABI generates text and batches concurrent requests deterministicall
   mlxforge_engine_free(eng);
 }
 
+TEST_CASE("C ABI embeddings are unit-normalized, deterministic, and semantic") {
+  if (!model_available()) {
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
+    return;
+  }
+  char* err = nullptr;
+  mlxforge_engine* eng = mlxforge_engine_create(model_dir().c_str(), nullptr, &err);
+  REQUIRE_MESSAGE(eng != nullptr, (err ? err : "engine_create failed"));
+  while (!mlxforge_engine_ready(eng))
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+  auto embed = [&](const char* text) {
+    float* v = nullptr;
+    size_t n = 0;
+    int rc = mlxforge_embed(eng, text, /*pooling=*/0, &v, &n, &err);
+    REQUIRE_MESSAGE(rc == 0, (err ? err : "embed failed"));
+    std::vector<float> out(v, v + n);
+    mlxforge_floats_free(v);
+    return out;
+  };
+  auto dot = [](const std::vector<float>& a, const std::vector<float>& b) {
+    double s = 0;
+    for (size_t i = 0; i < a.size(); ++i) s += double(a[i]) * b[i];
+    return s;
+  };
+
+  const std::vector<float> a = embed("The cat sat on the warm mat.");
+  const std::vector<float> b = embed("A kitten is resting on a soft rug.");
+  const std::vector<float> c = embed("The stock market fell sharply amid economic fears.");
+
+  REQUIRE(a.size() > 0);
+  CHECK(a.size() == b.size());
+  CHECK(a.size() == c.size());
+  CHECK(dot(a, a) == doctest::Approx(1.0).epsilon(0.02));  // unit-normalized
+
+  const std::vector<float> a2 = embed("The cat sat on the warm mat.");
+  CHECK(dot(a, a2) == doctest::Approx(1.0).epsilon(1e-4));  // deterministic
+
+  // The two animal sentences should be closer than either is to the finance one.
+  CHECK(dot(a, b) > dot(a, c));
+
+  mlxforge_engine_free(eng);
+}
+
 TEST_CASE("C ABI constrained decoding forces well-formed JSON") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");

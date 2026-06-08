@@ -55,6 +55,7 @@ add_library(mlxforge_core STATIC
   src/sample/sampler.cpp
   src/sample/json_grammar.cpp
   src/runtime/single_stream.cpp
+  src/runtime/embedding.cpp
   src/runtime/engine.cpp
   src/scheduler/scheduler.cpp
   src/runtime/worker.cpp

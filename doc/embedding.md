@@ -4,11 +4,9 @@ This is the document to read first. It explains **what mlxforge is for**, why it
 occupies a niche nothing else in the MLX ecosystem does, and how you will embed it.
 
 > **Status.** Real today: the engine, the **C ABI** (`src/capi/mlxforge.h` →
-> `libmlxforge`, gated by `tests/capi`), the **Node** binding (`bindings/node`,
-> `@mlxforge/node`), the **Swift** package (`bindings/swift`, `MLXForge`), and
-> **JSON-constrained structured output** (`json_schema` sampling option) — every
-> example below compiles and runs. Still active work (marked **design target**):
-> embeddings, a new encoder model family rather than binding work.
+> `libmlxforge`, gated by `tests/capi`), the **Node** and **Swift** bindings,
+> **JSON-constrained structured output** (`json_schema`), and **embeddings**
+> (`mlxforge_embed` / `engine.embed`). Every example below compiles and runs.
 
 ## The product is the library
 
@@ -189,22 +187,40 @@ The grammar engine is `src/sample/json_grammar.{h,cpp}` (pure, unit-tested in
 `runtime/worker`. It is opt-in and costs a per-step host-side vocab scan, so leave it
 off for unconstrained generation.
 
-## Remaining: embeddings (design target)
+## Embeddings
 
-Embeddings (a new BERT/BGE-style encoder model family + an `mlxforge_embed` entry point)
-are the next increment, documented as a gap rather than implied — see the roadmap.
+`engine.embed(text)` returns a unit-normalized vector. Rather than a separate BERT/
+WordPiece stack, embeddings reuse the existing decoder and BPE tokenizer: the model runs
+to its final hidden states (no LM head — `DecoderModel::forward_hidden`), which are
+pooled over the sequence (mean by default, or last-token) and L2-normalized. So *any*
+LLaMA/Qwen checkpoint yields an embedding, and an embedding-tuned checkpoint (e.g.
+Qwen3-Embedding) yields a good one. Embedding requests flow through the same scheduler as
+generation (a one-shot forward; no tokens streamed).
+
+```js
+const a = await engine.embed("The cat sat on the mat.");      // Float32Array (unit norm)
+const b = await engine.embed("A kitten rests on a rug.");
+const cos = a.reduce((s, x, i) => s + x * b[i], 0);           // ~0.88
+```
+
+```swift
+let v = try await engine.embed("The cat sat on the mat.")     // [Float], unit-normalized
+```
+
+Validated in `tests/capi` (unit norm, determinism, and that semantically-similar text
+scores higher than dissimilar text). A cross-tool golden fixture vs `sentence-transformers`
+is a future hardening step.
 
 ## What is real today vs. design target
 
 - **Real now:** the batched engine (`runtime/engine`, `scheduler/`, `cache/`), the
   tokenizer + chat templates, GGUF + safetensors loading, greedy / temperature / top-k /
-  top-p sampling, **JSON-constrained structured output** (`json_grammar` + per-row logit
-  masking), tool/function-calling plumbing, the golden-reference gate, the C ABI
-  (`src/capi/mlxforge.h` → `libmlxforge`, validated by `tests/capi`), and the Node and
-  Swift bindings (`bindings/node`, `bindings/swift`). Every example above compiles and
-  runs today.
-- **Design target (in progress):** an embeddings path (a new encoder model family +
-  `mlxforge_embed`). Net-new engine work, documented as a gap until it lands golden-gated.
+  top-p sampling, JSON-constrained structured output, **embeddings**, tool/function-calling
+  plumbing, the golden-reference gate, the C ABI (`src/capi/mlxforge.h` → `libmlxforge`),
+  and the Node and Swift bindings. Every example above compiles and runs today.
+- **Future hardening:** cross-tool golden fixtures for embeddings (vs
+  `sentence-transformers`); full JSON-Schema beyond the current object/scalar subset;
+  prebuilt binary distribution (roadmap M4).
 
 ## See also
 

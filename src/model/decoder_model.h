@@ -81,6 +81,12 @@ class DecoderModel {
   // the cache is appended and advanced by L (prefill once, then decode L=1).
   mx::array forward(const mx::array& tokens, KVCache* cache = nullptr) const;
 
+  // Same forward pass through the final RMSNorm but WITHOUT the LM head: tokens
+  // (B, L) -> hidden states (B, L, hidden). Used for embeddings (pool + normalize
+  // these). forward() == lm_head(forward_hidden()), so the golden logits gate
+  // still covers this path.
+  mx::array forward_hidden(const mx::array& tokens, KVCache* cache = nullptr) const;
+
   // Batched forward over a BatchKVCache: per-row RoPE offsets (cache.offset())
   // and a ragged additive fp16 mask drive correct left-padded attention. tokens
   // (B, L) -> logits (B, L, vocab). The whole batch is one graph (a single eval

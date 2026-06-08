@@ -83,6 +83,16 @@ class Engine {
     return collect(this.chat(messages, sampling));
   }
 
+  /**
+   * Embed text into a unit-normalized vector (Float32Array). pooling: 0 = mean
+   * (default), 1 = last token. Any LLaMA/Qwen model works; an embedding-tuned
+   * model produces a better vector.
+   * @returns {Promise<Float32Array>}
+   */
+  embed(text, pooling = 0) {
+    return this._h.embed(text, pooling);
+  }
+
   dispose() {
     this._h.dispose();
   }

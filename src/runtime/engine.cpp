@@ -1,11 +1,13 @@
 #include "runtime/engine.h"
 
+#include <memory>
 #include <utility>
 
 #include "core/gguf.h"
 #include "core/model_source.h"
 #include "core/weights.h"
 #include "model/model_factory.h"
+#include "scheduler/request.h"
 
 namespace mlxforge {
 
@@ -83,6 +85,21 @@ Engine::Engine(EngineConfig cfg, Loaded loaded)
 
   // Start the background worker thread: loads heavy weights and enters run loop.
   worker_.start();
+}
+
+std::vector<float> Engine::embed(const std::string& text, int pooling) {
+  auto req = std::make_shared<Request>();
+  req->prompt_ids = tok_.encode(text);
+  req->embedding = true;
+  req->pooling = pooling;
+  if (!scheduler_.submit(req)) return {};  // queue full
+
+  // Block until the worker runs the forward pass and closes the queue (an
+  // embedding request produces no tokens).
+  int tok = 0;
+  while (req->tokens.pop(tok)) {
+  }
+  return req->embedding_result;
 }
 
 // Properly destruct the Engine: ensures worker thread is drained before scheduler dies.

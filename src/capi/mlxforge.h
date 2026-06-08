@@ -81,6 +81,9 @@ int mlxforge_abi_version(void);
  * NULL is ignored. */
 void mlxforge_string_free(char* s);
 
+/* Free a float array returned by the library (mlxforge_embed). NULL is ignored. */
+void mlxforge_floats_free(float* p);
+
 /* ---- Engine ---------------------------------------------------------------*/
 
 /* Create an engine for a model spec: a local directory, a HuggingFace repo id,
@@ -105,6 +108,17 @@ const char* mlxforge_engine_model_name(mlxforge_engine* engine);
 /* Drain in-flight work, stop the worker thread, and destroy the engine. Any
  * still-open requests must not be used afterward. NULL is ignored. */
 void mlxforge_engine_free(mlxforge_engine* engine);
+
+/* ---- Embeddings -----------------------------------------------------------*/
+
+/* Embed `text` into a unit-normalized vector (synchronous: blocks until the
+ * worker runs the forward pass). `pooling` is 0 = mean over the sequence
+ * (default), 1 = last token. On success returns 0, sets *out to a newly
+ * allocated float array of length *out_len (free with mlxforge_floats_free).
+ * On failure returns non-zero and sets *err. Any LLaMA/Qwen checkpoint works; an
+ * embedding-tuned checkpoint produces a higher-quality vector. */
+int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float** out,
+                   size_t* out_len, char** err);
 
 /* ---- Requests -------------------------------------------------------------*/
 

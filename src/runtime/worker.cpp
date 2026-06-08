@@ -7,6 +7,7 @@
 
 #include "core/logging.h"
 #include "runtime/batching.h"
+#include "runtime/embedding.h"
 #include "sample/sampler.h"
 #include "tokenizer/tokenizer.h"
 
@@ -44,6 +45,18 @@ bool consume(Request& req, int& produced, int id) {
 }  // namespace
 
 Worker::~Worker() { stop(); }
+
+void Worker::handle_embedding(Request& req) {
+  try {
+    req.embedding_result =
+        embed_pooled(*model_, req.prompt_ids, static_cast<Pooling>(req.pooling));
+    req.finish_reason = "embed";
+  } catch (const std::exception& e) {
+    log::error("worker: embedding error: {}", e.what());
+    req.finish_reason = "error";
+  }
+  req.tokens.close();  // unblock the waiting submitter
+}
 
 void Worker::ensure_token_bytes(int vocab) {
   if (token_bytes_built_ || !tok_) return;
@@ -128,7 +141,17 @@ void Worker::run() {
     }
 
     try {
-      if (!incoming.empty()) admit(incoming);
+      if (!incoming.empty()) {
+        // Embedding requests are one-shot (forward -> pool -> close); handle them
+        // inline and only admit the generation requests into the decode batch.
+        std::vector<std::shared_ptr<Request>> gen;
+        gen.reserve(incoming.size());
+        for (auto& r : incoming) {
+          if (r->embedding) handle_embedding(*r);
+          else gen.push_back(std::move(r));
+        }
+        if (!gen.empty()) admit(gen);
+      }
       evict_finished();  // a row may finish on its very first token
       if (reqs_.empty()) continue;
 
