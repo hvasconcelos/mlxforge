@@ -24,6 +24,16 @@ class KVCache {
   int offset() const { return offset_; }
   void advance(int n_tokens) { offset_ += n_tokens; }
 
+  int n_layers() const { return static_cast<int>(keys_.size()); }
+
+  // Stored K/V for a layer (each (1, n_kv_heads, offset, head_dim), no capacity
+  // padding). Valid only after the layer has been written. Lets a prefilled
+  // single sequence be handed to the batched cache for continuous-batching decode
+  // (BatchKVCache::from_single_sequence).
+  std::pair<mx::array, mx::array> fetch(int layer) const {
+    return {*keys_[layer], *values_[layer]};
+  }
+
   // Append this layer's K/V (each (1, n_kv_heads, L, head_dim)) along the
   // sequence axis and return the full cached (keys, values) to attend over.
   std::pair<mx::array, mx::array> update_and_fetch(int layer, const mx::array& k,

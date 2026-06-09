@@ -153,10 +153,20 @@ reference/.venv/bin/python reference/dump_ref.py
   not 3D `(t,h,w)` positions). `Qwen3VLModel` hand-rolls a half-split rotation
   with a per-frequency t/h/w selector; text tokens have `t==h==w` so it reduces to
   ordinary 1D RoPE (and a generated/decode token is a scalar position one past the
-  prompt's max — it jumps over the image's spatial extent). Vision is served
-  **single-stream** (`runtime/multimodal_stream`); the continuous-batching worker
-  is still text-only (`BatchKVCache` can't yet carry per-row 3D positions). Every
-  vision stage is golden-gated against `mlx-vlm` (`reference/fixtures_qwen3_vl/`).
+  prompt's max — it jumps over the image's spatial extent). Vision serving is
+  **prefill-single, decode-batched** (like vLLM/omlx): the ViT + image-merge +
+  3D-M-RoPE prefill runs single-stream (`runtime/multimodal_stream`), then the
+  prompt's K/V is adopted into a batch-1 `BatchKVCache`
+  (`BatchKVCache::from_single_sequence`) and **merged into the continuous-batching
+  decode pool** (`Worker::admit_multimodal`) — a generated VL token is pure text
+  (`t==h==w`), so it decodes through the ordinary batched forward alongside text
+  rows. No per-row 3D positions are needed in the cache: the batched mask works in
+  physical-slot space (`idx`/`left_padding`) while RoPE uses a *separate* per-row
+  `offset`, so a VL row just carries `offset = max(3D position)+1` (well below its
+  image-padded token count). The prefill itself stays single (the ViT can't batch
+  ragged grids). Every vision stage is golden-gated against `mlx-vlm`
+  (`reference/fixtures_qwen3_vl/`), and batched decode is gated equal to the
+  single-stream stream (`tests/model/qwen3_vl_test.cpp`).
 
 ## Where things live
 
@@ -169,7 +179,8 @@ in `apps/` (`mlxforge` server, `mlxforge-cli`), tests mirror the module path und
 `src/model/qwen3_vl.{h,cpp}` is the fused model (image merge + interleaved M-RoPE +
 DeepStack + cached decode); `src/vision/` does image decode (`stb_image`) +
 preprocess (smart-resize/normalize/patchify); `runtime/multimodal_stream.{h,cpp}` is
-the single-stream image→text path. Selected by `create_model` on a `vision_config`.
+the image→text path (single-stream prefill + batched-decode packaging). Selected by
+`create_model` on a `vision_config`.
 
 **Product-facing surface:** `src/capi/` is the stable `extern "C"` ABI
 (`mlxforge.h`) wrapping `runtime/engine` — the public surface — and `bindings/`

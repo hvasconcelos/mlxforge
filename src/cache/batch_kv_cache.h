@@ -31,6 +31,18 @@ class BatchKVCache {
   // One cache for all layers; `left_padding[i]` is the pad count of batch row i.
   BatchKVCache(int n_layers, const std::vector<int>& left_padding);
 
+  // Build a batch-1 cache from one already-prefilled sequence's per-layer K/V
+  // (each (1, n_kv_heads, seq, head_dim)). `decode_offset` seeds the per-row RoPE
+  // position for the next (decode) token. For an interleaved-M-RoPE prompt
+  // (Qwen3-VL) this is one past the prompt's max 3D position, which sits BELOW its
+  // token count (the image collapses many tokens into few positions) — so offset
+  // is passed explicitly rather than derived from seq, and the standard batched
+  // decode (whose mask works in physical-slot space while RoPE uses offset) is
+  // numerically correct unchanged. left_padding is 0 (a fresh single-row prefill
+  // has no padding). Used to admit a vision prompt into the decode pool (merge()).
+  static BatchKVCache from_single_sequence(
+      std::vector<std::pair<mx::array, mx::array>> kv_per_layer, int seq, int decode_offset);
+
   int batch_size() const { return batch_; }
   int idx() const { return idx_; }  // populated sequence length (_idx)
   // Allocated capacity along the sequence axis (0 before the first write).

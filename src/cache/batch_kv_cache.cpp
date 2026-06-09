@@ -34,6 +34,21 @@ BatchKVCache::BatchKVCache(int n_layers, const std::vector<int>& left_padding)
       left_padding_(mx::array(left_padding.data(), {static_cast<int>(left_padding.size())},
                               mx::int32)) {}
 
+BatchKVCache BatchKVCache::from_single_sequence(
+    std::vector<std::pair<mx::array, mx::array>> kv_per_layer, int seq, int decode_offset) {
+  const int n_layers = static_cast<int>(kv_per_layer.size());
+  BatchKVCache c(n_layers, std::vector<int>{0});  // batch 1, no left padding
+  for (int l = 0; l < n_layers; ++l) {
+    c.keys_[l] = std::move(kv_per_layer[l].first);
+    c.values_[l] = std::move(kv_per_layer[l].second);
+  }
+  c.idx_ = seq;  // physical sequence length (drives the attention mask)
+  int off = decode_offset;
+  c.offset_ = mx::array(&off, {1}, mx::int32);  // decoupled RoPE position
+  mx::eval(c.offset_);
+  return c;
+}
+
 int BatchKVCache::s_cap() const {
   return keys_[0].has_value() ? keys_[0]->shape()[2] : 0;
 }

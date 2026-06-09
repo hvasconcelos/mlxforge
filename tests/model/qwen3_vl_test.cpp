@@ -12,11 +12,13 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
+#include "cache/batch_kv_cache.h"
 #include "cache/kv_cache.h"
 #include "core/config.h"
 #include "core/weights.h"
 #include "model/model_factory.h"
 #include "model/qwen3_vl.h"
+#include "runtime/batching.h"
 #include "runtime/multimodal_stream.h"
 #include "runtime/worker.h"
 #include "scheduler/request.h"
@@ -324,6 +326,77 @@ TEST_CASE("Qwen3-VL: worker serves a multimodal request from another thread") {
   // by the component tests that feed the committed features directly).
   CHECK(got.size() == 10);
   CHECK(req->finish_reason == "length");
+}
+
+namespace {
+// Greedy ids from a (B, vocab) logits batch.
+std::vector<int> argmax_rows(const mx::array& logits) {
+  mx::array a = mx::contiguous(mx::astype(mx::argmax(logits, /*axis=*/-1), mx::int32));
+  mx::eval(a);
+  return std::vector<int>(a.data<int32_t>(), a.data<int32_t>() + a.size());
+}
+}  // namespace
+
+TEST_CASE("Qwen3-VL: batched decode path reproduces the single-stream greedy tokens") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping batched-decode equivalence test");
+    return;
+  }
+  // The continuous-batching serving path (prefill-single, decode-batched): the
+  // prompt's K/V is adopted into a batch-1 BatchKVCache and decoded through the
+  // ordinary text batched forward. A generated VL token is pure text (t==h==w),
+  // so this MUST match the single-stream cached-decode stream token-for-token.
+  const Qwen3VLModel& m = shared_qwen3_vl_model();
+  mx::array feats = load_qwen3_vl_npy("vit_out.npy");
+  std::vector<mx::array> deepstack = {load_qwen3_vl_npy("deepstack_0.npy"),
+                                      load_qwen3_vl_npy("deepstack_1.npy"),
+                                      load_qwen3_vl_npy("deepstack_2.npy")};
+  std::vector<int> ids = load_qwen3_vl_token_ids("input_ids.npy");
+  mx::array pos = mrope_position_ids(ids, grid_fixture(), qwen3_vl_config());
+
+  GenerateResult r = greedy_generate_multimodal_batched(m, ids, feats, deepstack, pos,
+                                                        /*max_tokens=*/10, /*eos_ids=*/{});
+  assert_tokens_equal(r.tokens, load_qwen3_vl_token_ids("greedy_tokens.npy"));
+}
+
+TEST_CASE("Qwen3-VL: a vision row decodes correctly batched next to a text row") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping mixed batched-decode test");
+    return;
+  }
+  // The real cross-contamination gate: a vision row (M-RoPE offset decoupled from
+  // its long, image-padded length) and a SHORTER pure-text row share one decode
+  // batch. The merge right-justifies the text row (ragged left padding) while each
+  // row keeps its own RoPE offset. The vision row must still reproduce the
+  // single-stream greedy stream despite the heterogeneous neighbor.
+  const Qwen3VLModel& m = shared_qwen3_vl_model();
+  mx::array feats = load_qwen3_vl_npy("vit_out.npy");
+  std::vector<mx::array> deepstack = {load_qwen3_vl_npy("deepstack_0.npy"),
+                                      load_qwen3_vl_npy("deepstack_1.npy"),
+                                      load_qwen3_vl_npy("deepstack_2.npy")};
+  std::vector<int> ids = load_qwen3_vl_token_ids("input_ids.npy");
+  mx::array pos = mrope_position_ids(ids, grid_fixture(), qwen3_vl_config());
+
+  // Vision row -> batch-1 cache; a short text prompt (the prompt's trailing text
+  // tokens, no image) -> its own batch-1 cache; merge into one batch-2 cache.
+  MultimodalPrefill vl = prefill_multimodal_batched(m, ids, feats, deepstack, pos);
+  std::vector<int> text_prompt(ids.end() - 6, ids.end());
+  PrefillResult text = prefill(m, {text_prompt});
+
+  BatchKVCache cache = std::move(vl.cache);
+  cache.merge(text.cache);  // batch order: [vision, text]
+  const int vocab = vl.last_logits.shape()[1];
+
+  std::vector<int> feed = {argmax_rows(vl.last_logits)[0],
+                           argmax_rows(mx::reshape(text.last_logits, {1, vocab}))[0]};
+  std::vector<int> vision_tokens = {feed[0]};
+  for (int i = 1; i < 10; ++i) {
+    mx::array inputs(feed.data(), {2, 1}, mx::int32);
+    mx::array logits = m.forward(inputs, cache);  // (2, 1, vocab), batched path
+    feed = argmax_rows(mx::reshape(logits, {2, vocab}));
+    vision_tokens.push_back(feed[0]);
+  }
+  assert_tokens_equal(vision_tokens, load_qwen3_vl_token_ids("greedy_tokens.npy"));
 }
 
 TEST_CASE("Qwen3-VL: cached KV decode reproduces the greedy tokens") {

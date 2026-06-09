@@ -66,7 +66,7 @@ void Worker::handle_embedding(Request& req) {
   req.tokens.close();  // unblock the waiting submitter
 }
 
-void Worker::handle_multimodal(Request& req) {
+void Worker::admit_multimodal(const std::shared_ptr<Request>& req) {
   try {
     auto* vl = dynamic_cast<Qwen3VLModel*>(model_.get());
     if (vl == nullptr || !model_->config().has_vision_tower()) {
@@ -77,33 +77,41 @@ void Worker::handle_multimodal(Request& req) {
       vit_ = std::make_unique<VitEncoder>(*model_->config().vision, model_->weights());
     }
     std::vector<mx::array> images;
-    images.reserve(req.mm_images.size());
-    for (const auto& bytes : req.mm_images) images.push_back(decode_image(bytes.data(), bytes.size()));
+    images.reserve(req->mm_images.size());
+    for (const auto& bytes : req->mm_images)
+      images.push_back(decode_image(bytes.data(), bytes.size()));
 
-    int produced = 0;
-    auto on_token = [&](int id) {
-      if (produced == 0) req.first_token_time = Request::Clock::now();
-      req.tokens.push(id);
-      ++produced;
-    };
     // A caller that pre-rendered the full chat history (the server) supplies
     // prompt_ids with the image placeholders already expanded (any number of
-    // images); the simple path (C ABI / CLI) supplies just mm_text + one image.
-    GenerateResult r;
-    if (!req.prompt_ids.empty()) {
-      r = generate_multimodal(*vl, *vit_, req.prompt_ids, images, req.max_tokens, req.eos_ids,
-                              on_token);
-    } else {
+    // images); the simple path (C ABI / CLI) supplies just mm_text + image(s).
+    std::vector<int> prompt_ids = req->prompt_ids;
+    if (prompt_ids.empty()) {
       if (tok_ == nullptr) throw std::runtime_error("multimodal text prompt needs a tokenizer");
-      r = generate_from_images(*vl, *vit_, *tok_, req.mm_text, images, req.max_tokens, req.eos_ids,
-                               on_token);
+      prompt_ids = render_multimodal_prompt(*tok_, *vl, req->mm_text, images);
     }
-    req.finish_reason = r.hit_eos ? "stop" : "length";
+    // The row decodes as ordinary text from here, so its history/metrics treat the
+    // expanded prompt (image placeholders included) as the prompt.
+    req->prompt_ids = prompt_ids;
+
+    // Prefill single-stream (all fallible work — ViT, scatter, M-RoPE — happens
+    // before we touch the shared batch), then admit into the decode pool.
+    MultimodalPrefillInputs in = prepare_multimodal_prefill(*vl, *vit_, prompt_ids, images);
+    MultimodalPrefill pf =
+        prefill_multimodal_batched(*vl, prompt_ids, in.features, in.deepstack, in.position_ids);
+
+    if (!cache_) {
+      cache_ = std::make_unique<BatchKVCache>(std::move(pf.cache));
+    } else {
+      cache_->merge(pf.cache);
+    }
+    register_rows({req}, pf.last_logits);
+    log::debug("worker: admitted multimodal request (prompt={}, batch now {})", prompt_ids.size(),
+               reqs_.size());
   } catch (const std::exception& e) {
-    log::error("worker: multimodal error: {}", e.what());
-    req.finish_reason = "error";
+    log::error("worker: multimodal admit error: {}", e.what());
+    req->finish_reason = "error";
+    req->tokens.close();
   }
-  req.tokens.close();
 }
 
 void Worker::ensure_token_bytes(int vocab) {
@@ -190,13 +198,15 @@ void Worker::run() {
 
     try {
       if (!incoming.empty()) {
-        // Embedding and multimodal requests are one-shot (handled inline, on this
-        // thread); only text-generation requests are admitted into the decode batch.
+        // Embedding requests are one-shot (handled inline). Multimodal requests are
+        // prefilled single-stream then admitted into the decode batch (one prefill
+        // each — the ViT can't batch ragged grids). Text-generation requests are
+        // prefilled together and admitted as a group.
         std::vector<std::shared_ptr<Request>> gen;
         gen.reserve(incoming.size());
         for (auto& r : incoming) {
           if (r->embedding) handle_embedding(*r);
-          else if (r->is_multimodal()) handle_multimodal(*r);
+          else if (r->is_multimodal()) admit_multimodal(r);
           else gen.push_back(std::move(r));
         }
         if (!gen.empty()) admit(gen);
@@ -233,9 +243,14 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
   } else {
     cache_->merge(pr.cache);
   }
+  register_rows(incoming, pr.last_logits);
+}
 
+void Worker::register_rows(const std::vector<std::shared_ptr<Request>>& incoming,
+                           const mx::array& last_logits) {
   // Register the new rows before sampling so sample_rows() can read their params,
-  // penalty history (seeded with the prompt) and RNG key.
+  // penalty history (seeded with the prompt) and RNG key. `last_logits` rows are
+  // aligned to the new tail of the batch (row i -> reqs_[base + i]).
   const int base = static_cast<int>(reqs_.size());
   for (size_t i = 0; i < incoming.size(); ++i) {
     reqs_.push_back(incoming[i]);
@@ -256,7 +271,7 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
   }
 
   std::vector<int> first =
-      read_ids(sample_rows(pr.last_logits, base, static_cast<int>(incoming.size())));
+      read_ids(sample_rows(last_logits, base, static_cast<int>(incoming.size())));
 
   for (size_t i = 0; i < incoming.size(); ++i) {
     const int b = base + static_cast<int>(i);

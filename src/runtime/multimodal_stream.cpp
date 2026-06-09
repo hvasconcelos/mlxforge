@@ -70,14 +70,12 @@ GenerateResult greedy_generate_multimodal(const Qwen3VLModel& model,
   return result;
 }
 
-GenerateResult generate_multimodal(const Qwen3VLModel& model, const VitEncoder& vit,
-                                   const std::vector<int>& prompt_ids,
-                                   const std::vector<mx::array>& images_rgb, int max_tokens,
-                                   const std::vector<int>& eos_ids,
-                                   const std::function<void(int)>& on_token,
-                                   const PreprocessConfig* pcfg) {
+MultimodalPrefillInputs prepare_multimodal_prefill(const Qwen3VLModel& model, const VitEncoder& vit,
+                                                   const std::vector<int>& prompt_ids,
+                                                   const std::vector<mx::array>& images_rgb,
+                                                   const PreprocessConfig* pcfg) {
   const ModelConfig& cfg = model.config();
-  if (images_rgb.empty()) throw std::runtime_error("generate_multimodal: no images");
+  if (images_rgb.empty()) throw std::runtime_error("prepare_multimodal_prefill: no images");
   const PreprocessConfig pc = pcfg ? *pcfg : PreprocessConfig::from(*cfg.vision);
 
   // Smart-resize + preprocess + ViT-encode each image; collect per-image merged
@@ -117,23 +115,29 @@ GenerateResult generate_multimodal(const Qwen3VLModel& model, const VitEncoder& 
     for (const auto& per_image : deepstack_parts) layer_parts.push_back(per_image[layer]);
     deepstack.push_back(cat(layer_parts));
   }
-
-  mx::array pos = mrope_position_ids(prompt_ids, grids, cfg);
-  return greedy_generate_multimodal(model, prompt_ids, features, deepstack, pos, max_tokens, eos_ids,
-                                    on_token);
+  return {features, std::move(deepstack), mrope_position_ids(prompt_ids, grids, cfg)};
 }
 
-GenerateResult generate_from_images(const Qwen3VLModel& model, const VitEncoder& vit,
-                                    const Tokenizer& tokenizer, const std::string& user_text,
-                                    const std::vector<mx::array>& images_rgb, int max_tokens,
-                                    const std::vector<int>& eos_ids,
-                                    const std::function<void(int)>& on_token,
-                                    const PreprocessConfig* pcfg) {
-  // Single-turn convenience: size each placeholder run from its image's
-  // dimensions (CPU math), render a one-user-message prompt with that many image
-  // blocks, then generate. The full chat history is handled by the caller building
-  // prompt_ids directly for generate_multimodal (the server path).
-  PreprocessConfig pc = pcfg ? *pcfg : PreprocessConfig::from(*model.config().vision);
+GenerateResult generate_multimodal(const Qwen3VLModel& model, const VitEncoder& vit,
+                                   const std::vector<int>& prompt_ids,
+                                   const std::vector<mx::array>& images_rgb, int max_tokens,
+                                   const std::vector<int>& eos_ids,
+                                   const std::function<void(int)>& on_token,
+                                   const PreprocessConfig* pcfg) {
+  MultimodalPrefillInputs in = prepare_multimodal_prefill(model, vit, prompt_ids, images_rgb, pcfg);
+  return greedy_generate_multimodal(model, prompt_ids, in.features, in.deepstack, in.position_ids,
+                                    max_tokens, eos_ids, on_token);
+}
+
+std::vector<int> render_multimodal_prompt(const Tokenizer& tokenizer, const Qwen3VLModel& model,
+                                          const std::string& user_text,
+                                          const std::vector<mx::array>& images_rgb,
+                                          const PreprocessConfig* pcfg) {
+  // Size each placeholder run from its image's dimensions (CPU math) and render a
+  // one-user-message prompt with that many image blocks. Must use the SAME
+  // preprocessing config the ViT prefill will use, or the placeholder count and
+  // the merged-patch count disagree.
+  const PreprocessConfig pc = pcfg ? *pcfg : PreprocessConfig::from(*model.config().vision);
   std::vector<int> counts;
   counts.reserve(images_rgb.size());
   for (const auto& rgb : images_rgb)
@@ -143,8 +147,78 @@ GenerateResult generate_from_images(const Qwen3VLModel& model, const VitEncoder&
   msg.role = "user";
   msg.content = user_text;
   msg.image_token_counts = counts;
-  std::vector<int> ids = tokenizer.apply_chat_template({msg}, /*add_generation_prompt=*/true);
+  return tokenizer.apply_chat_template({msg}, /*add_generation_prompt=*/true);
+}
+
+GenerateResult generate_from_images(const Qwen3VLModel& model, const VitEncoder& vit,
+                                    const Tokenizer& tokenizer, const std::string& user_text,
+                                    const std::vector<mx::array>& images_rgb, int max_tokens,
+                                    const std::vector<int>& eos_ids,
+                                    const std::function<void(int)>& on_token,
+                                    const PreprocessConfig* pcfg) {
+  // Single-turn convenience: template the prompt, then generate. The full chat
+  // history is handled by the caller building prompt_ids directly for
+  // generate_multimodal (the server path).
+  const PreprocessConfig pc = pcfg ? *pcfg : PreprocessConfig::from(*model.config().vision);
+  std::vector<int> ids = render_multimodal_prompt(tokenizer, model, user_text, images_rgb, &pc);
   return generate_multimodal(model, vit, ids, images_rgb, max_tokens, eos_ids, on_token, &pc);
+}
+
+MultimodalPrefill prefill_multimodal_batched(const Qwen3VLModel& model,
+                                             const std::vector<int>& prompt_ids,
+                                             const mx::array& features,
+                                             const std::vector<mx::array>& deepstack,
+                                             const mx::array& position_ids) {
+  // Reuse the golden-gated single-stream prefill verbatim (it writes the prompt's
+  // K/V into a single-sequence cache), then adopt that K/V into a batch-1
+  // BatchKVCache. The decode RoPE position continues one past the prompt's max
+  // M-RoPE position (the prompt's positions jump over the image's spatial extent),
+  // which is well below the token count — so it is seeded explicitly, decoupled
+  // from the cache's physical length.
+  KVCache kv(model.config().n_layers);
+  mx::array logits = model.prefill(prompt_ids, features, deepstack, position_ids, kv);
+  const int seq = static_cast<int>(prompt_ids.size());
+  const int vocab = logits.shape()[2];
+  mx::array last = mx::reshape(mx::slice(logits, {0, seq - 1, 0}, {1, seq, vocab}), {1, vocab});
+  const int decode_offset = static_cast<int>(mx::max(position_ids).item<int>()) + 1;
+
+  std::vector<std::pair<mx::array, mx::array>> kv_per_layer;
+  kv_per_layer.reserve(kv.n_layers());
+  for (int l = 0; l < kv.n_layers(); ++l) kv_per_layer.push_back(kv.fetch(l));
+  BatchKVCache cache = BatchKVCache::from_single_sequence(std::move(kv_per_layer), seq,
+                                                          decode_offset);
+  cache.eval_state();  // materialize K/V + bookkeeping (detach from the prefill graph)
+  mx::eval(last);
+  return {std::move(cache), last};
+}
+
+GenerateResult greedy_generate_multimodal_batched(const Qwen3VLModel& model,
+                                                  const std::vector<int>& prompt_ids,
+                                                  const mx::array& features,
+                                                  const std::vector<mx::array>& deepstack,
+                                                  const mx::array& position_ids, int max_tokens,
+                                                  const std::vector<int>& eos_ids,
+                                                  const std::function<void(int)>& on_token) {
+  auto is_eos = [&](int id) {
+    return std::find(eos_ids.begin(), eos_ids.end(), id) != eos_ids.end();
+  };
+  MultimodalPrefill pf =
+      prefill_multimodal_batched(model, prompt_ids, features, deepstack, position_ids);
+
+  GenerateResult result;
+  int next = greedy_row(pf.last_logits);  // (1, vocab)
+  for (int i = 0; i < max_tokens; ++i) {
+    if (is_eos(next)) {
+      result.hit_eos = true;
+      break;
+    }
+    result.tokens.push_back(next);
+    if (on_token) on_token(next);
+    mx::array step(&next, {1, 1}, mx::int32);
+    mx::array logits = model.forward(step, pf.cache);  // (1, 1, vocab), batched path
+    next = greedy_row(mx::reshape(logits, {1, logits.shape()[2]}));
+  }
+  return result;
 }
 
 GenerateResult generate_from_image(const Qwen3VLModel& model, const VitEncoder& vit,
