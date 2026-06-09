@@ -32,8 +32,10 @@ extern "C" {
 #endif
 
 /* Bumped on any additive ABI change; never on a breaking one (those get a new
- * symbol). Query at runtime with mlxforge_abi_version(). */
-#define MLXFORGE_ABI_VERSION 1
+ * symbol). Query at runtime with mlxforge_abi_version().
+ *   v2: mlxforge_embed_ex + mlxforge_embed_opts (Qwen3-Embedding conventions:
+ *       last-token pooling, trailing EOS, instruction prefix). */
+#define MLXFORGE_ABI_VERSION 2
 
 typedef struct mlxforge_engine mlxforge_engine;
 typedef struct mlxforge_request mlxforge_request;
@@ -116,9 +118,33 @@ void mlxforge_engine_free(mlxforge_engine* engine);
  * (default), 1 = last token. On success returns 0, sets *out to a newly
  * allocated float array of length *out_len (free with mlxforge_floats_free).
  * On failure returns non-zero and sets *err. Any LLaMA/Qwen checkpoint works; an
- * embedding-tuned checkpoint produces a higher-quality vector. */
+ * embedding-tuned checkpoint produces a higher-quality vector.
+ *
+ * This is the simple form: pooling is explicit and no EOS/instruction is added.
+ * For Qwen3-Embedding conventions (last-token + EOS + instruction) or to let the
+ * model pick its own defaults, use mlxforge_embed_ex. */
 int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float** out,
                    size_t* out_len, char** err);
+
+/* Options for mlxforge_embed_ex. `pooling`/`add_eos` are tri-state: use -1 to
+ * defer to the model's detected default (a Qwen3-Embedding checkpoint ->
+ * last-token pooling + trailing EOS; a plain LLM -> mean pooling, no EOS).
+ * Note: a zero-initialized (`{0}`) struct therefore means *explicit* mean
+ * pooling + no EOS + normalize-on; to get the model's defaults pass NULL, or set
+ * pooling and add_eos to -1. */
+typedef struct {
+  int pooling;             /* -1 = model default; 0 = mean; 1 = last token */
+  int add_eos;             /* -1 = model default; 0 = off; 1 = append EOS id */
+  int skip_normalize;      /* 0 = L2-normalize (default); 1 = return raw pooled */
+  const char* instruction; /* optional; wraps as "Instruct: {it}\nQuery: {text}" */
+} mlxforge_embed_opts;
+
+/* Embed `text` with explicit options (Qwen3-Embedding conventions). `opts` may
+ * be NULL for all model-detected defaults. Output and error contract identical
+ * to mlxforge_embed. */
+int mlxforge_embed_ex(mlxforge_engine* engine, const char* text,
+                      const mlxforge_embed_opts* opts, float** out, size_t* out_len,
+                      char** err);
 
 /* ---- Requests -------------------------------------------------------------*/
 

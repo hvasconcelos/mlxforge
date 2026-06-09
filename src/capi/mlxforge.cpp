@@ -121,8 +121,13 @@ const char* mlxforge_engine_model_name(mlxforge_engine* engine) {
   return (engine) ? engine->model_name.c_str() : "";
 }
 
-int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float** out,
-                   size_t* out_len, char** err) {
+namespace {
+
+// Shared embed core: run the engine, then copy the vector into a malloc buffer
+// the caller frees with mlxforge_floats_free. Returns 0 on success.
+int embed_into(mlxforge_engine* engine, const char* text,
+               const mlxforge::EmbedOptions& opts, float** out, size_t* out_len,
+               char** err) {
   if (err) *err = nullptr;
   if (out) *out = nullptr;
   if (out_len) *out_len = 0;
@@ -135,7 +140,7 @@ int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float
     return 1;
   }
   try {
-    std::vector<float> v = engine->engine->embed(text ? text : "", pooling);
+    std::vector<float> v = engine->engine->embed(text ? text : "", opts);
     if (v.empty()) {
       set_err(err, "embedding failed (empty input or model error)");
       return 1;
@@ -155,6 +160,30 @@ int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float
     set_err(err, "unknown error computing embedding");
   }
   return 1;
+}
+
+}  // namespace
+
+int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float** out,
+                   size_t* out_len, char** err) {
+  // Simple form: explicit pooling, no EOS/instruction (back-compat with v1).
+  mlxforge::EmbedOptions opts;
+  opts.pooling = pooling;
+  opts.add_eos = 0;
+  return embed_into(engine, text, opts, out, out_len, err);
+}
+
+int mlxforge_embed_ex(mlxforge_engine* engine, const char* text,
+                      const mlxforge_embed_opts* o, float** out, size_t* out_len,
+                      char** err) {
+  mlxforge::EmbedOptions opts;  // defaults: pooling -1, add_eos -1, normalize
+  if (o) {
+    opts.pooling = o->pooling;
+    opts.add_eos = o->add_eos;
+    opts.normalize = (o->skip_normalize == 0);
+    if (o->instruction && *o->instruction) opts.instruction = o->instruction;
+  }
+  return embed_into(engine, text, opts, out, out_len, err);
 }
 
 void mlxforge_engine_free(mlxforge_engine* engine) {

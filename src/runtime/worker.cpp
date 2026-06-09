@@ -48,8 +48,9 @@ Worker::~Worker() { stop(); }
 
 void Worker::handle_embedding(Request& req) {
   try {
-    req.embedding_result =
-        embed_pooled(*model_, req.prompt_ids, static_cast<Pooling>(req.pooling));
+    req.embedding_result = embed_pooled(*model_, req.prompt_ids,
+                                        static_cast<Pooling>(req.pooling),
+                                        req.embedding_normalize);
     req.finish_reason = "embed";
   } catch (const std::exception& e) {
     log::error("worker: embedding error: {}", e.what());

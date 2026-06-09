@@ -5,6 +5,30 @@ All notable changes to **mlxforge** are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **First-class Qwen3-Embedding support.** A bare `engine.embed(text)` now
+  self-selects the checkpoint's embedding convention: the engine sniffs the
+  sentence-transformers pooling sidecar (`1_Pooling/config.json`) and, for a
+  `pooling_mode_lasttoken` model (Qwen3-Embedding), defaults to **last-token
+  pooling** with a **trailing EOS** (`<|endoftext|>`); plain LLMs keep mean
+  pooling. Retrieval queries take an instruction that renders as
+  `Instruct: {instruction}\nQuery:{text}` (Qwen's `get_detailed_instruct`).
+- **Backbone-root weight layout.** The loader normalizes checkpoints saved at the
+  decoder root (`layers.N.*` / `embed_tokens` / `norm`, no `model.` prefix or
+  `lm_head`) to the canonical `model.*` form, so the official
+  `Qwen/Qwen3-Embedding-0.6B` repo loads directly.
+- **C ABI v2** — `mlxforge_embed_ex` + `mlxforge_embed_opts` (pooling / add_eos /
+  skip_normalize / instruction; `-1` defers to the model default). `mlxforge_embed`
+  is unchanged. The Node, Swift, and Rust bindings expose the same options.
+- **Embedding harnesses** — a `mlxforge-cli embed` subcommand and an
+  OpenAI-compatible `POST /v1/embeddings` server endpoint (string or array input).
+- **Golden gate** — `reference/dump_ref.py --model qwen3_embedding` dumps the real
+  model's pooled query/document vectors + token ids; `tests/runtime/embedding_test.cpp`
+  asserts the C++ pooled vector and tokenization (no-BOS + appended EOS) match.
+
 ## [0.1.0] - 2026-06-09
 
 First release of **`libmlxforge`** — an embeddable, continuously batched LLM

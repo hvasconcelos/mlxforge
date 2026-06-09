@@ -24,14 +24,15 @@ json error_body(const std::string& message, const std::string& type, const std::
 
 HttpServer::HttpServer(Scheduler* scheduler, const Tokenizer* tokenizer, ModelConfig config,
                        std::string model_name, std::function<bool()> ready, int max_ctx,
-                       std::function<WorkerMetrics()> metrics)
+                       std::function<WorkerMetrics()> metrics, EmbedFn embed)
     : sched_(scheduler),
       tok_(tokenizer),
       cfg_(std::move(config)),
       model_name_(std::move(model_name)),
       ready_(std::move(ready)),
       max_ctx_(max_ctx),
-      metrics_(std::move(metrics)) {
+      metrics_(std::move(metrics)),
+      embed_(std::move(embed)) {
   // Each streaming connection holds a worker thread for its whole lifetime, so
   // size the pool well above the expected concurrency (default is ~8).
   svr_.new_task_queue = [] { return new httplib::ThreadPool(64); };
@@ -403,6 +404,44 @@ void HttpServer::setup_routes() {
   });
   svr_.Post("/v1/completions", [handle](const httplib::Request& req, httplib::Response& res) {
     handle(false, req, res);
+  });
+
+  // OpenAI-compatible embeddings. Reuses the engine's embed seam (so the model's
+  // detected conventions — last-token pooling + EOS for Qwen3-Embedding — apply).
+  svr_.Post("/v1/embeddings", [this, fail](const httplib::Request& http_req,
+                                           httplib::Response& res) {
+    log::debug("{} {} ({} bytes)", http_req.method, http_req.path, http_req.body.size());
+    if (!embed_) {
+      fail(res, 501, "embeddings are not enabled on this server", "server_error",
+           "not_implemented");
+      return;
+    }
+    if (ready_ && !ready_()) {
+      fail(res, 503, "model is still loading", "server_error", "model_loading");
+      return;
+    }
+    try {
+      EmbeddingsRequest er = parse_embeddings_request(json::parse(http_req.body));
+      std::vector<std::vector<float>> vecs;
+      vecs.reserve(er.input.size());
+      int prompt_tokens = 0;
+      for (const auto& text : er.input) {
+        // Default options: the engine applies the model's detected conventions.
+        std::vector<float> v = embed_(text, EmbedOptions{});
+        if (v.empty()) {
+          fail(res, 500, "embedding failed", "server_error", "embed_failed");
+          return;
+        }
+        prompt_tokens += static_cast<int>(tok_->encode(text).size());
+        vecs.push_back(std::move(v));
+      }
+      res.set_content(make_embeddings_response(model_name_, vecs, prompt_tokens).dump(),
+                      "application/json");
+    } catch (const json::parse_error& e) {
+      fail(res, 400, e.what(), "invalid_request_error", "bad_json");
+    } catch (const std::exception& e) {
+      fail(res, 400, e.what(), "invalid_request_error", "invalid_params");
+    }
   });
 
   // Anthropic Messages API. Same generation pipeline as the OpenAI handler; only

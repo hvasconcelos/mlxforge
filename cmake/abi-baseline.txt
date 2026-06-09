@@ -1,5 +1,6 @@
 mlxforge_abi_version
 mlxforge_embed
+mlxforge_embed_ex
 mlxforge_engine_create
 mlxforge_engine_free
 mlxforge_engine_model_name

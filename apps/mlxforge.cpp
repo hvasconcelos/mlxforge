@@ -148,7 +148,11 @@ int main(int argc, char** argv) {
       sc.model_dir,
       [&engine] { return engine->ready(); },
       sc.max_ctx,
-      [&engine] { return engine->metrics(); }
+      [&engine] { return engine->metrics(); },
+      // Embeddings seam: the engine applies the model's detected conventions.
+      [&engine](const std::string& text, const mlxforge::EmbedOptions& opts) {
+        return engine->embed(text, opts);
+      }
   );
 
   // Set global server pointer for signal handler shutdown.

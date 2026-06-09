@@ -148,22 +148,32 @@ Napi::Value RequestWrap::Next(const Napi::CallbackInfo& info) {
   return deferred.Promise();
 }
 
-// Runs the blocking mlxforge_embed off the event loop and resolves a Float32Array.
+// Runs the blocking mlxforge_embed_ex off the event loop and resolves a
+// Float32Array. Carries the full option set (pooling/add_eos/instruction/
+// normalize); -1 pooling/add_eos defer to the model's detected defaults.
 class EmbedWorker : public Napi::AsyncWorker {
  public:
-  EmbedWorker(Napi::Env env, mlxforge_engine* eng, std::string text, int pooling,
-              Napi::Promise::Deferred deferred)
+  EmbedWorker(Napi::Env env, mlxforge_engine* eng, std::string text, int pooling, int add_eos,
+              int skip_normalize, std::string instruction, Napi::Promise::Deferred deferred)
       : Napi::AsyncWorker(env),
         eng_(eng),
         text_(std::move(text)),
         pooling_(pooling),
+        add_eos_(add_eos),
+        skip_normalize_(skip_normalize),
+        instruction_(std::move(instruction)),
         deferred_(deferred) {}
 
   void Execute() override {
     char* err = nullptr;
     float* v = nullptr;
     size_t n = 0;
-    int rc = mlxforge_embed(eng_, text_.c_str(), pooling_, &v, &n, &err);
+    mlxforge_embed_opts opts = {};
+    opts.pooling = pooling_;
+    opts.add_eos = add_eos_;
+    opts.skip_normalize = skip_normalize_;
+    opts.instruction = instruction_.empty() ? nullptr : instruction_.c_str();
+    int rc = mlxforge_embed_ex(eng_, text_.c_str(), &opts, &v, &n, &err);
     if (rc == 0 && v) {
       data_.assign(v, v + n);
       mlxforge_floats_free(v);
@@ -190,6 +200,9 @@ class EmbedWorker : public Napi::AsyncWorker {
   mlxforge_engine* eng_;
   std::string text_;
   int pooling_;
+  int add_eos_;
+  int skip_normalize_;
+  std::string instruction_;
   Napi::Promise::Deferred deferred_;
   std::vector<float> data_;
   std::string errmsg_;
@@ -321,9 +334,28 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
     }
     std::string text =
         (info.Length() >= 1 && info[0].IsString()) ? info[0].As<Napi::String>().Utf8Value() : "";
-    int pooling =
-        (info.Length() >= 2 && info[1].IsNumber()) ? info[1].As<Napi::Number>().Int32Value() : 0;
-    (new EmbedWorker(env, eng_, std::move(text), pooling, deferred))->Queue();
+    // Default to the model's detected behavior (-1): a Qwen3-Embedding checkpoint
+    // self-selects last-token pooling + a trailing EOS.
+    int pooling = -1, add_eos = -1, skip_normalize = 0;
+    std::string instruction;
+    if (info.Length() >= 2) {
+      if (info[1].IsNumber()) {
+        pooling = info[1].As<Napi::Number>().Int32Value();  // legacy: embed(text, pooling)
+      } else if (info[1].IsObject()) {
+        Napi::Object o = info[1].As<Napi::Object>();
+        if (o.Has("pooling") && o.Get("pooling").IsNumber())
+          pooling = o.Get("pooling").As<Napi::Number>().Int32Value();
+        if (o.Has("addEos") && o.Get("addEos").IsBoolean())
+          add_eos = o.Get("addEos").As<Napi::Boolean>().Value() ? 1 : 0;
+        if (o.Has("normalize") && o.Get("normalize").IsBoolean())
+          skip_normalize = o.Get("normalize").As<Napi::Boolean>().Value() ? 0 : 1;
+        if (o.Has("instruction") && o.Get("instruction").IsString())
+          instruction = o.Get("instruction").As<Napi::String>().Utf8Value();
+      }
+    }
+    (new EmbedWorker(env, eng_, std::move(text), pooling, add_eos, skip_normalize,
+                     std::move(instruction), deferred))
+        ->Queue();
     return deferred.Promise();
   }
 

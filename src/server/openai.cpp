@@ -152,6 +152,46 @@ nlohmann::json make_usage(int prompt_tokens, int completion_tokens) {
           {"total_tokens", prompt_tokens + completion_tokens}};
 }
 
+EmbeddingsRequest parse_embeddings_request(const json& body) {
+  EmbeddingsRequest r;
+  r.model = body.value("model", "");
+  if (body.contains("encoding_format") && body["encoding_format"].is_string())
+    r.encoding_format = body["encoding_format"].get<std::string>();
+  if (r.encoding_format != "float")
+    throw std::runtime_error("only encoding_format 'float' is supported");
+
+  auto it = body.find("input");
+  if (it == body.end() || it->is_null()) throw std::runtime_error("'input' is required");
+  if (it->is_string()) {
+    r.input = {it->get<std::string>()};
+  } else if (it->is_array()) {
+    if (it->empty()) throw std::runtime_error("'input' array must not be empty");
+    for (const auto& e : *it) {
+      if (!e.is_string())
+        throw std::runtime_error("'input' must be a string or array of strings");
+      r.input.push_back(e.get<std::string>());
+    }
+  } else {
+    throw std::runtime_error("'input' must be a string or array of strings");
+  }
+  return r;
+}
+
+nlohmann::json make_embeddings_response(const std::string& model,
+                                        const std::vector<std::vector<float>>& embeddings,
+                                        int prompt_tokens) {
+  json data = json::array();
+  for (size_t i = 0; i < embeddings.size(); ++i)
+    data.push_back({{"object", "embedding"}, {"index", i}, {"embedding", embeddings[i]}});
+  return {
+      {"object", "list"},
+      {"data", std::move(data)},
+      {"model", model},
+      // Embeddings produce no completion tokens; report prompt == total.
+      {"usage", {{"prompt_tokens", prompt_tokens}, {"total_tokens", prompt_tokens}}},
+  };
+}
+
 nlohmann::json make_chat_completion(const std::string& id, long created, const std::string& model,
                                     const std::string& content, const std::string& finish_reason,
                                     int prompt_tokens, int completion_tokens) {

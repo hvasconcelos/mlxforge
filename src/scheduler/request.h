@@ -78,10 +78,12 @@ struct Request {
   std::unique_ptr<JsonGrammar> grammar;  // runtime grammar state (worker-owned)
 
   // Embedding request: when true the worker runs a single forward pass, pools +
-  // normalizes the hidden states into `embedding_result`, and closes `tokens`
-  // (no generation). `pooling` is a mlxforge::Pooling value.
+  // (optionally) normalizes the hidden states into `embedding_result`, and
+  // closes `tokens` (no generation). `pooling` is a mlxforge::Pooling value;
+  // `embedding_normalize` L2-normalizes the pooled vector (the default).
   bool embedding = false;
   int pooling = 0;
+  bool embedding_normalize = true;
   std::vector<float> embedding_result;
 
   // Set by the submitting thread (e.g. client disconnect); read by the worker.

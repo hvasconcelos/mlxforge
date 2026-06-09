@@ -192,24 +192,53 @@ off for unconstrained generation.
 `engine.embed(text)` returns a unit-normalized vector. Rather than a separate BERT/
 WordPiece stack, embeddings reuse the existing decoder and BPE tokenizer: the model runs
 to its final hidden states (no LM head — `DecoderModel::forward_hidden`), which are
-pooled over the sequence (mean by default, or last-token) and L2-normalized. So *any*
-LLaMA/Qwen checkpoint yields an embedding, and an embedding-tuned checkpoint (e.g.
-Qwen3-Embedding) yields a good one. Embedding requests flow through the same scheduler as
-generation (a one-shot forward; no tokens streamed).
+pooled over the sequence and L2-normalized. So *any* LLaMA/Qwen checkpoint yields an
+embedding, and an embedding-tuned checkpoint yields a good one. Embedding requests flow
+through the same scheduler as generation (a one-shot forward; no tokens streamed).
+
+**Qwen3-Embedding works out of the box.** A bare `embed(text)` self-selects the model's
+convention: the engine sniffs the sentence-transformers pooling sidecar
+(`1_Pooling/config.json`) in the model dir, and a `pooling_mode_lasttoken` checkpoint —
+i.e. Qwen3-Embedding — defaults to **last-token pooling** with a **trailing EOS**
+(`<|endoftext|>`), exactly as the reference recipe requires. A plain LLM keeps mean
+pooling and no EOS. The canonical `Qwen/Qwen3-Embedding-0.6B` repo stores its decoder at
+the *root* (no `model.` prefix, no `lm_head`); the loader normalizes that backbone-root
+layout to the engine's `model.*` form, so the official repo loads directly.
 
 ```js
-const a = await engine.embed("The cat sat on the mat.");      // Float32Array (unit norm)
-const b = await engine.embed("A kitten rests on a rug.");
-const cos = a.reduce((s, x, i) => s + x * b[i], 0);           // ~0.88
+// Documents: just embed them.
+const doc = await engine.embed("The capital of China is Beijing.");
+// Retrieval queries: pass the task instruction (Qwen3-Embedding convention,
+// rendered as "Instruct: {instruction}\nQuery:{text}").
+const q = await engine.embed("What is the capital of China?", {
+  instruction: "Given a web search query, retrieve relevant passages that answer the query",
+});
+const cos = q.reduce((s, x, i) => s + x * doc[i], 0);        // high for a relevant doc
 ```
+
+The second argument accepts an options object — `{ pooling, addEos, instruction, normalize }`
+(or a legacy pooling number) — and the C ABI mirrors it with `mlxforge_embed_ex`
+(`mlxforge_embed_opts`); `pooling`/`add_eos` left at `-1` defer to the detected default.
+The Swift and Rust bindings expose the same options (`embed(_:pooling:addEos:instruction:normalize:)`,
+`Engine::embed_with`).
 
 ```swift
-let v = try await engine.embed("The cat sat on the mat.")     // [Float], unit-normalized
+let v = try await engine.embed("What is the capital of China?",
+                               instruction: "Given a web search query, retrieve relevant passages")
 ```
 
-Validated in `tests/capi` (unit norm, determinism, and that semantically-similar text
-scores higher than dissimilar text). A cross-tool golden fixture vs `sentence-transformers`
-is a future hardening step.
+**Harnesses.** The CLI embeds and prints a vector
+(`mlxforge-cli embed <model> <text> [--last|--mean] [--eos] [--instruct "..."] [--no-normalize]`),
+and the server exposes an OpenAI-compatible `POST /v1/embeddings` (string or array `input`,
+returning the `{object:"list", data:[{embedding,...}], usage}` shape).
+
+Gated by a golden fixture dumped from the real Qwen3-Embedding model
+(`reference/dump_ref.py --model qwen3_embedding`): `tests/runtime/embedding_test.cpp`
+asserts the pooled+normalized query/document vectors match the reference **and** that the
+engine's tokenization (no BOS + appended EOS) is byte-identical — the anti-"silent
+garbage" discipline applied to the embedding path, not just eyeballed. (`tests/capi` also
+covers unit norm, determinism, and semantic ordering.) A cross-tool fixture vs
+`sentence-transformers` fp32 remains a future hardening step.
 
 ## What is real today vs. design target
 
@@ -218,9 +247,10 @@ is a future hardening step.
   top-p sampling, JSON-constrained structured output, **embeddings**, tool/function-calling
   plumbing, the golden-reference gate, the C ABI (`src/capi/mlxforge.h` → `libmlxforge`),
   and the Node and Swift bindings. Every example above compiles and runs today.
-- **Future hardening:** cross-tool golden fixtures for embeddings (vs
-  `sentence-transformers`); full JSON-Schema beyond the current object/scalar subset;
-  prebuilt binary distribution (roadmap M4).
+- **Future hardening:** a *cross-tool* embedding fixture vs `sentence-transformers` fp32
+  (a self-consistent mlx-lm golden already gates the Qwen3-Embedding pooled vector +
+  tokenization); full JSON-Schema beyond the current object/scalar subset; prebuilt binary
+  distribution (roadmap M4).
 
 ## See also
 

@@ -206,8 +206,16 @@ GGUF `Q4_0`/`Q4_1`/`Q8_0` (group_size 32) all run; GGUF `Q4_K`/`Q5_K`/`Q6_K`
   Qwen) and SentencePiece-BPE (Gemma) are implemented; other families (e.g.
   Unigram/WordPiece) make `Tokenizer::from_file` throw. Chat formats are limited
   to the Llama-3.2 header format and Qwen ChatML.
-- **Tool / function-calling tokens**, vision/multimodal, embeddings endpoints,
-  LoRA/adapters, speculative decoding, multi-model hosting, prefix sharing.
+- **Tool / function-calling tokens**, vision/multimodal, LoRA/adapters,
+  speculative decoding, multi-model hosting, prefix sharing.
+
+**Embeddings** *are* implemented: any LLaMA/Qwen checkpoint embeds (mean or last-token
+pooling + L2-norm via `DecoderModel::forward_hidden`), and **Qwen3-Embedding** is
+first-class — the canonical backbone-root checkpoint loads, the engine self-selects
+last-token pooling + a trailing EOS, retrieval queries take an `Instruct:`/`Query:`
+prefix, and the pooled vector is golden-gated. Exposed through `engine.embed` /
+`mlxforge_embed[_ex]`, the bindings, the CLI `embed` command, and the server's
+`POST /v1/embeddings`. See [`embedding.md`](./embedding.md).
 
 ## Adding a new model family
 

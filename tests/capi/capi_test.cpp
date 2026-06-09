@@ -136,6 +136,28 @@ TEST_CASE("C ABI embeddings are unit-normalized, deterministic, and semantic") {
   // The two animal sentences should be closer than either is to the finance one.
   CHECK(dot(a, b) > dot(a, c));
 
+  // mlxforge_embed_ex with explicit options (last-token pooling + appended EOS +
+  // an instruction wrap) returns a distinct but still unit-normalized vector.
+  {
+    mlxforge_embed_opts opts = {};
+    opts.pooling = 1;     // last token
+    opts.add_eos = 1;     // append the model's EOS
+    opts.instruction = "Given a query, retrieve relevant passages";
+    float* v = nullptr;
+    size_t n = 0;
+    int rc = mlxforge_embed_ex(eng, "The cat sat on the warm mat.", &opts, &v, &n, &err);
+    REQUIRE_MESSAGE(rc == 0, (err ? err : "embed_ex failed"));
+    std::vector<float> last(v, v + n);
+    mlxforge_floats_free(v);
+    CHECK(last.size() == a.size());
+    CHECK(dot(last, last) == doctest::Approx(1.0).epsilon(0.02));  // unit-normalized
+
+    // NULL opts == model defaults (here, the plain Llama mean path), still valid.
+    rc = mlxforge_embed_ex(eng, "The cat sat on the warm mat.", nullptr, &v, &n, &err);
+    REQUIRE_MESSAGE(rc == 0, (err ? err : "embed_ex(null) failed"));
+    mlxforge_floats_free(v);
+  }
+
   mlxforge_engine_free(eng);
 }
 

@@ -1,7 +1,10 @@
 #include "runtime/engine.h"
 
+#include <fstream>
 #include <memory>
 #include <utility>
+
+#include <nlohmann/json.hpp>
 
 #include "core/gguf.h"
 #include "core/model_source.h"
@@ -10,6 +13,30 @@
 #include "scheduler/request.h"
 
 namespace mlxforge {
+
+namespace {
+
+// Best-effort: sniff a sentence-transformers pooling sidecar in the model dir to
+// pick embedding defaults. Qwen3-Embedding ships `1_Pooling/config.json` with
+// `pooling_mode_lasttoken: true`, which also implies a trailing EOS (its
+// last_token_pool reads the sentence-final position). Anything we can't read
+// keeps the plain-LLM default (mean pooling, no EOS).
+void detect_embedding_defaults(const std::string& dir, int& pooling, bool& add_eos) {
+  std::ifstream f(dir + "/1_Pooling/config.json");
+  if (!f) return;
+  try {
+    nlohmann::json j;
+    f >> j;
+    if (j.value("pooling_mode_lasttoken", false)) {
+      pooling = 1;  // Pooling::Last
+      add_eos = true;
+    }
+  } catch (...) {
+    // malformed sidecar -> keep defaults
+  }
+}
+
+}  // namespace
 
 // Loads the model directory, config, and tokenizer metadata, but not weights.
 // For GGUF, this loads only the config/tokenizer fields from the GGUF header (not tensors).
@@ -45,6 +72,10 @@ Engine::Loaded Engine::load_head(const std::string& spec) {
         chat_format_from_model_type(out.config.model_type)
     );
   }
+
+  // Sniff embedding defaults from the on-disk sentence-transformers sidecar (no
+  // such files inside a GGUF, so this is a no-op there).
+  detect_embedding_defaults(out.dir, out.embed_pooling_default, out.embed_add_eos_default);
   return out;
 }
 
@@ -77,6 +108,8 @@ Engine::Engine(EngineConfig cfg, Loaded loaded)
     : model_name_(std::move(cfg.model_spec)),
       cfg_(std::move(loaded.config)),
       tok_(std::move(loaded.tokenizer)),
+      embed_pooling_default_(loaded.embed_pooling_default),
+      embed_add_eos_default_(loaded.embed_add_eos_default),
       // Pass the tokenizer so the worker can build per-token byte strings for
       // constrained decoding. tok_ is initialized above and outlives worker_.
       worker_(make_factory(std::move(loaded.dir), loaded.is_gguf), &scheduler_, &tok_) {
@@ -87,11 +120,25 @@ Engine::Engine(EngineConfig cfg, Loaded loaded)
   worker_.start();
 }
 
-std::vector<float> Engine::embed(const std::string& text, int pooling) {
+std::vector<float> Engine::embed(const std::string& text, const EmbedOptions& opts) {
+  // Resolve tri-state options against the model's detected defaults.
+  const int pooling = opts.pooling >= 0 ? opts.pooling : embed_pooling_default_;
+  const bool add_eos = opts.add_eos >= 0 ? (opts.add_eos != 0) : embed_add_eos_default_;
+
+  // Qwen3-Embedding wraps retrieval queries; documents are embedded raw. The
+  // format matches Qwen's get_detailed_instruct exactly (note: no space after
+  // "Query:"), so the tokens match the reference.
+  const std::string input =
+      opts.instruction.empty() ? text : "Instruct: " + opts.instruction + "\nQuery:" + text;
+
   auto req = std::make_shared<Request>();
-  req->prompt_ids = tok_.encode(text);
+  req->prompt_ids = tok_.encode(input);
+  // Last-token pooling needs the sentence-final EOS so it reads the right state.
+  if (add_eos && !cfg_.eos_token_ids.empty())
+    req->prompt_ids.push_back(cfg_.eos_token_ids.front());
   req->embedding = true;
   req->pooling = pooling;
+  req->embedding_normalize = opts.normalize;
   if (!scheduler_.submit(req)) return {};  // queue full
 
   // Block until the worker runs the forward pass and closes the queue (an

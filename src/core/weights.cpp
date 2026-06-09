@@ -126,6 +126,26 @@ void absorb(std::unordered_map<std::string, mx::array>& out,
 }  // namespace
 
 namespace {
+// Some embedding checkpoints export the decoder backbone at the *root* — keys
+// like "layers.N.*", "embed_tokens.weight", "norm.weight" with no "model."
+// prefix and no "lm_head" (Qwen3-Embedding, saved via AutoModel rather than
+// AutoModelForCausalLM). Normalize to the canonical "model.*" layout the engine
+// expects; the tied-embedding head path supplies the (absent) lm_head. Detected
+// by an unprefixed "embed_tokens.weight" with no "model."-prefixed sibling, so
+// canonical checkpoints are left untouched.
+void normalize_backbone_root_keys(Weights& w) {
+  if (w.tensors.count("model.embed_tokens.weight") || !w.tensors.count("embed_tokens.weight"))
+    return;
+  std::unordered_map<std::string, mx::array> remapped;
+  remapped.reserve(w.tensors.size());
+  for (auto& [key, arr] : w.tensors) {
+    const bool canonical = key.rfind("model.", 0) == 0 || key.rfind("lm_head", 0) == 0;
+    remapped.emplace(canonical ? key : "model." + key, arr);
+  }
+  w.tensors = std::move(remapped);
+  log::info("weights: normalized backbone-root keys to model.* (embedding checkpoint)");
+}
+
 // Mixture-of-experts checkpoints store the per-layer experts one of two ways:
 //   - raw HF: per-expert tensors "model.layers.{l}.mlp.experts.{e}.{proj}.weight"
 //   - mlx (pre-stacked): "model.layers.{l}.mlp.switch_mlp.{proj}.weight" of shape
@@ -204,6 +224,7 @@ Weights load_weights(const std::string& model_dir, const ModelConfig& cfg) {
   if (non_fp16 > 0)
     log::warn("weights: {} tensors are not fp16 (expected for quantized models)", non_fp16);
 
+  normalize_backbone_root_keys(w);  // embedding checkpoints: backbone-root -> model.*
   stack_moe_experts(w, cfg);  // raw per-expert MoE tensors -> stacked switch_mlp
   index_quantized(w, cfg);
   if (!w.quant.empty())

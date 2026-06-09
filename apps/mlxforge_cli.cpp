@@ -13,13 +13,19 @@
 //   mlxforge-cli bench <model> [max_tokens] [runs]
 //     - Repeatable throughput benchmark over a fixed prompt: one discarded warmup run, then `runs`
 //       timed runs (defaults: max_tokens=128, runs=3) reporting time-to-first-token and decode tok/s.
+//   mlxforge-cli embed <model> <text> [--last|--mean] [--eos] [--instruct "..."] [--no-normalize]
+//     - Embeds text and prints the (by default unit-normalized) vector. With no flags the model
+//       self-selects its convention (a Qwen3-Embedding checkpoint uses last-token pooling + a
+//       trailing EOS). The embedding smoke/golden-reference harness for the library.
 //
 // <dir>/<model> is either a local model directory or a HuggingFace repo id (e.g. mlx-community/Llama-3.2-1B-Instruct-4bit),
 // which will be downloaded on first use.
 
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "mlx/mlx.h"
@@ -30,6 +36,7 @@
 #include "core/model_source.h"
 #include "core/weights.h"
 #include "model/model_factory.h"
+#include "runtime/engine.h"
 #include "runtime/single_stream.h"
 #include "tokenizer/tokenizer.h"
 
@@ -244,6 +251,34 @@ int run_bench(const std::string& spec, int max_tokens, int runs) {
   return 0;
 }
 
+// Embedding smoke harness: build a real Engine (so this exercises the exact
+// library path — detection of embedding defaults, instruction wrap, EOS append,
+// pooling, normalize) and print the resulting vector to stdout. This is the
+// golden-reference / weight-inspection instrument for the embedding interface.
+int run_embed(const std::string& spec, const std::string& text,
+              const mlxforge::EmbedOptions& opts) {
+  mlxforge::EngineConfig cfg;
+  cfg.model_spec = spec;
+  mlxforge::Engine engine(cfg);
+  // The worker loads weights on its own thread; block until it is ready.
+  while (!engine.ready()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+  std::vector<float> v = engine.embed(text, opts);
+  if (v.empty()) {
+    mlxforge::log::error("embedding failed (empty input or model error)");
+    return 1;
+  }
+
+  mlxforge::log::info("embedding dim {} (pooling {}, add_eos {}, normalize {})", v.size(),
+                      opts.pooling, opts.add_eos, opts.normalize);
+  // Vector goes to stdout (the command's primary output, like dump-weights).
+  std::printf("[");
+  for (size_t i = 0; i < v.size(); ++i)
+    std::printf("%.6f%s", static_cast<double>(v[i]), i + 1 < v.size() ? ", " : "");
+  std::printf("]\n");
+  return 0;
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -279,6 +314,30 @@ int main(int argc, char** argv) {
     const int max_tokens = argc >= 4 ? std::stoi(argv[3]) : 128;
     const int runs = argc >= 5 ? std::stoi(argv[4]) : 3;
     return run_bench(argv[2], max_tokens, runs);
+  }
+  if (cmd == "embed") {
+    // Embed text and print the vector. Flags override the model's detected
+    // defaults (a Qwen3-Embedding checkpoint self-selects last-token + EOS).
+    if (argc < 4) {
+      std::fprintf(stderr,
+                   "usage: mlxforge-cli embed <model_dir> <text> "
+                   "[--last|--mean] [--eos] [--instruct \"...\"] [--no-normalize]\n");
+      return 2;
+    }
+    mlxforge::EmbedOptions opts;  // pooling/add_eos = -1 (detected), normalize on
+    for (int i = 4; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--last") opts.pooling = 1;
+      else if (a == "--mean") opts.pooling = 0;
+      else if (a == "--eos") opts.add_eos = 1;
+      else if (a == "--no-normalize") opts.normalize = false;
+      else if (a == "--instruct" && i + 1 < argc) opts.instruction = argv[++i];
+      else {
+        std::fprintf(stderr, "embed: unknown argument '%s'\n", a.c_str());
+        return 2;
+      }
+    }
+    return run_embed(argv[2], argv[3], opts);
   }
 
   // No subcommand: run the smoke test by default

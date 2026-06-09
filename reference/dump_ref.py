@@ -73,6 +73,22 @@ MODELS = {
         "chat_messages": [{"role": "user", "content": "What is the capital of France?"}],
         "thinking": True,
     },
+    # Qwen3-Embedding is a Qwen3 dense decoder used as an embedding model: the
+    # sentence embedding is the LAST token's final hidden state (the appended
+    # <|endoftext|>=151643), L2-normalized. Retrieval queries are wrapped with an
+    # instruction ("Instruct: {task}\nQuery:{q}"); documents are embedded raw.
+    # We dump the pooled+normalized query and document vectors (and their exact
+    # token ids) so the C++ embed path is gated, not just eyeballed. The base Qwen
+    # repo is public and loads as the same fp16 weights the C++ engine uses.
+    "qwen3_embedding": {
+        "repo": "Qwen/Qwen3-Embedding-0.6B",
+        "fixtures": "fixtures_qwen3_embedding",
+        "compute_dtype": mx.float16,
+        "embedding": True,
+        "embed_task": "Given a web search query, retrieve relevant passages that answer the query",
+        "embed_query": "What is the capital of China?",
+        "embed_doc": "The capital of China is Beijing.",
+    },
     # Gemma-2 validates the from-scratch SentencePiece-BPE backend (Metaspace
     # space->U+2581 normalization + byte_fallback), a different family from the
     # byte-level Llama/Qwen BPE. The C++ engine has no Gemma model class, so this
@@ -187,6 +203,74 @@ def dump_hybrid_intermediates(model, save, primary_ids):
         save(f"block{idx}", layer(embeddings, mask, None))  # full decoder block
 
 
+def dump_embedding_model(spec):
+    """Pooled sentence-embedding golden dump for a Qwen3-Embedding-style model.
+
+    The canonical Qwen3-Embedding checkpoint stores the decoder backbone at the
+    root ("layers.N.*", "embed_tokens.weight", "norm.weight" — no "model." prefix,
+    no lm_head), so mlx-lm's load() rejects it. We build the mlx-lm Qwen3 model
+    directly and remap the keys to "model.*" — exactly the normalization the C++
+    loader (normalize_backbone_root_keys) does — keeping the reference and the
+    engine self-consistent on the SAME fp16 weights.
+
+    Then we mirror the canonical recipe: tokenize with the HF tokenizer (which
+    appends <|endoftext|>=151643 and prepends no BOS), run the backbone to its
+    final-norm hidden states, take the LAST token, cast to fp32, and L2-normalize
+    — exactly what C++ embed_pooled(Pooling::Last) computes. A retrieval query is
+    instruction-wrapped; the document is raw. We save both vectors and their token
+    ids so the C++ side gates the pooled vector AND its tokenization."""
+    import mlx.core as mx
+    from huggingface_hub import snapshot_download
+    from transformers import AutoTokenizer
+    from mlx_lm.models.qwen3 import Model, ModelArgs
+
+    fixtures_dir = os.path.join(os.path.dirname(__file__), spec["fixtures"])
+    os.makedirs(fixtures_dir, exist_ok=True)
+    print(f"loading {spec['repo']} (embedding; backbone-root layout) ...")
+    path = snapshot_download(spec["repo"])
+    with open(os.path.join(path, "config.json")) as f:
+        cfg = json.load(f)
+    model = Model(ModelArgs.from_dict(cfg))
+    w = mx.load(os.path.join(path, "model.safetensors"))
+    w = {(k if k.startswith(("model.", "lm_head")) else "model." + k): v for k, v in w.items()}
+    model.load_weights(list(w.items()), strict=False)  # lm_head is tied -> absent is OK
+    model.set_dtype(mx.float16)  # mirror the C++ engine's fp16 load
+    tok = AutoTokenizer.from_pretrained(path)
+
+    manifest = {"model_repo": spec["repo"], "compute_dtype": "float16", "arrays": {}}
+
+    def save(name, arr):
+        np_arr = np.array(arr) if isinstance(arr, mx.array) else np.asarray(arr)
+        np.save(os.path.join(fixtures_dir, name + ".npy"), np_arr)
+        manifest["arrays"][name] = {"shape": list(np_arr.shape), "dtype": str(np_arr.dtype)}
+        print(f"  wrote {name}.npy  shape={np_arr.shape} dtype={np_arr.dtype}")
+
+    task = spec["embed_task"]
+    # The wrap must match Engine::embed exactly — "Instruct: {t}\nQuery:{q}" (no
+    # space after "Query:"), per Qwen's get_detailed_instruct.
+    query_text = f"Instruct: {task}\nQuery:{spec['embed_query']}"
+
+    def pooled(text):
+        ids = list(tok(text)["input_ids"])  # HF tokenizer: no BOS, appends EOS 151643
+        tokens = mx.array(ids, dtype=mx.int32)[None]  # (1, T)
+        hidden = model.model(tokens)  # (1, T, hidden), post final-norm
+        last = hidden[:, -1, :].astype(mx.float32)  # (1, hidden) last-token pool
+        norm = mx.sqrt(mx.sum(last * last))
+        mx.eval(last)
+        return ids, mx.reshape(last / mx.maximum(norm, mx.array(1e-12)), (-1,))
+
+    q_ids, q_vec = pooled(query_text)
+    d_ids, d_vec = pooled(spec["embed_doc"])
+    save("embed_query", q_vec)
+    save("embed_query_ids", np.array(q_ids, dtype=np.int32))
+    save("embed_doc", d_vec)
+    save("embed_doc_ids", np.array(d_ids, dtype=np.int32))
+
+    with open(os.path.join(fixtures_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"\nwrote manifest.json ({len(manifest['arrays'])} arrays)")
+
+
 def dump_tokenizer_only(spec):
     """Tokenizer-only dump for a family the C++ engine tokenizes but does not run
     (e.g. Gemma). Downloads just the tokenizer files (no weights) from an ungated
@@ -222,9 +306,13 @@ def main():
         dump_tokenizer_only(spec)
         return
 
+    if spec.get("embedding"):
+        dump_embedding_model(spec)
+        return
+
     MODEL_REPO = spec["repo"]
     COMPUTE_DTYPE = spec["compute_dtype"]
-    CHAT_MESSAGES = spec["chat_messages"]
+    CHAT_MESSAGES = spec.get("chat_messages", [])  # unused by embedding-only dumps
     FIXTURES_DIR = os.path.join(os.path.dirname(__file__), spec["fixtures"])
 
     os.makedirs(FIXTURES_DIR, exist_ok=True)

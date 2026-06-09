@@ -14,6 +14,7 @@
 #include <nlohmann/json.hpp>
 
 #include "core/config.h"
+#include "runtime/engine.h"
 #include "runtime/metrics.h"
 #include "scheduler/request.h"
 #include "scheduler/scheduler.h"
@@ -24,12 +25,18 @@ namespace mlxforge {
 
 class HttpServer {
  public:
+  // Blocking embed seam (e.g. Engine::embed): text + options -> vector. The
+  // server reuses it for /v1/embeddings so detection/EOS/instruction live in one
+  // place. May be empty (then /v1/embeddings returns 501).
+  using EmbedFn = std::function<std::vector<float>(const std::string&, const EmbedOptions&)>;
+
   // `ready` reports whether the model has finished loading (else 503); `max_ctx`
   // bounds the prompt length (else 400); `metrics` provides the live decode
   // snapshot for /health (reads only atomics, so it is safe off the worker thread).
+  // `embed` is the optional embeddings seam (see EmbedFn).
   HttpServer(Scheduler* scheduler, const Tokenizer* tokenizer, ModelConfig config,
              std::string model_name, std::function<bool()> ready, int max_ctx,
-             std::function<WorkerMetrics()> metrics);
+             std::function<WorkerMetrics()> metrics, EmbedFn embed = nullptr);
 
   void listen(const std::string& host, int port);
   void stop();
@@ -71,6 +78,7 @@ class HttpServer {
   std::function<bool()> ready_;
   int max_ctx_;
   std::function<WorkerMetrics()> metrics_;
+  EmbedFn embed_;
   std::chrono::steady_clock::time_point start_time_{std::chrono::steady_clock::now()};
   httplib::Server svr_;
   std::atomic<long> counter_{0};

@@ -64,11 +64,19 @@ Llama-3.2, Qwen3 (dense / MoE), and Qwen3.5 hybrid models today, from safetensor
   step** over the whole batch; batch-size bucketing so the graph shape recurs.
 - **Sampling as graph ops** — greedy, temperature, top-k, top-p (no host
   readback of logits).
+- **Embeddings** — `engine.embed` runs the decoder to its final hidden states
+  (`forward_hidden`, no LM head), pools (mean or last-token) and L2-normalizes. A bare
+  `embed(text)` self-selects the checkpoint's convention, so **Qwen3-Embedding** is
+  first-class: last-token pooling + a trailing EOS, an optional `Instruct:`/`Query:`
+  prefix for retrieval queries, and a golden-gated pooled vector. Exposed through the C
+  ABI (`mlxforge_embed[_ex]`), the bindings, the CLI `embed` command, and the server's
+  `POST /v1/embeddings`.
 - **C++ tokenizer** — a from-scratch byte-level BPE over HF `tokenizer.json`
   (no Rust), the Llama-3.2 chat template (selected from `config.json`'s
   `model_type`), and UTF-8-safe incremental detokenization.
 - **OpenAI server harness** (cpp-httplib) — a concurrency/load harness that drives the
-  engine over HTTP: `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/health`;
+  engine over HTTP: `/v1/chat/completions`, `/v1/completions`, `/v1/embeddings`,
+  `/v1/models`, `/health`;
   non-streaming and SSE streaming; tool / function calling (`tools` / `tool_choice` →
   `tool_calls`); cancellation on client disconnect; per-request metrics; OpenAI-shaped
   errors (400/429/503). Built only when `MLXFORGE_BUILD_SERVER=ON`; the released library
@@ -231,6 +239,11 @@ for ev in c.chat.completions.create(model="mlxforge",
         messages=[{"role": "user", "content": "Tell me a joke."}],
         max_tokens=64, stream=True):
     print(ev.choices[0].delta.content or "", end="", flush=True)
+
+# embeddings (string or array input) — on a Qwen3-Embedding model the engine
+# self-selects last-token pooling + EOS, so the OpenAI client just works.
+e = c.embeddings.create(model="mlxforge", input=["a document", "another one"])
+print(len(e.data), len(e.data[0].embedding))
 ```
 
 Config knobs are also read from the environment (`MLXFORGE_HOST`, `MLXFORGE_PORT`,
@@ -248,6 +261,12 @@ trigger a graceful shutdown that drains in-flight requests.
 
 # inspect weights: key -> shape -> dtype, assert fp16, report peak memory
 ./build/mlxforge-cli dump-weights "$MODEL_DIR"
+
+# embed text -> print the (by default unit-normalized) vector. With no flags the
+# model self-selects its convention (Qwen3-Embedding: last-token pooling + EOS).
+./build/mlxforge-cli embed "$MODEL_DIR" "The capital of China is Beijing."
+./build/mlxforge-cli embed Qwen/Qwen3-Embedding-0.6B "What is the capital of China?" \
+  --instruct "Given a web search query, retrieve relevant passages that answer the query"
 ```
 
 ## Logging

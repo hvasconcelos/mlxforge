@@ -61,11 +61,25 @@ export class Engine {
   /** Run a chat to completion and return the full string. */
   complete(messages: ChatMessage[], sampling?: SamplingOptions): Promise<string>;
   /**
-   * Embed text into a unit-normalized vector. pooling: 0 = mean (default),
-   * 1 = last token.
+   * Embed text into a (by default unit-normalized) vector. With no second
+   * argument the model self-selects its convention (a Qwen3-Embedding checkpoint
+   * uses last-token pooling + a trailing EOS; a plain LLM uses mean pooling).
+   * Pass a legacy pooling number (0 = mean, 1 = last) or an options object.
    */
-  embed(text: string, pooling?: number): Promise<Float32Array>;
+  embed(text: string, opts?: EmbedOptions | number): Promise<Float32Array>;
   dispose(): void;
+}
+
+/** Options for {@link Engine.embed}. Omitted fields use the model's defaults. */
+export interface EmbedOptions {
+  /** 0 = mean, 1 = last token. Omit to use the model's detected default. */
+  pooling?: 0 | 1;
+  /** Append the model's EOS id before pooling (Qwen3-Embedding last-token). */
+  addEos?: boolean;
+  /** Wrap as "Instruct: {instruction}\nQuery: {text}" for retrieval queries. */
+  instruction?: string;
+  /** L2-normalize the pooled vector. Defaults to true. */
+  normalize?: boolean;
 }
 
 export const version: string;

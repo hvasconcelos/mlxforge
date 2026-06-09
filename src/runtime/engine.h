@@ -27,6 +27,16 @@ struct EngineConfig {
   int max_waiting = 256;   // Maximum length of the Scheduler's waiting queue; 0 disables the cap
 };
 
+// Per-call embedding options. The two int fields are tri-state: -1 means "use
+// the model's detected default" (e.g. a Qwen3-Embedding checkpoint defaults to
+// last-token pooling + a trailing EOS), so a bare embed(text) just works.
+struct EmbedOptions {
+  int pooling = -1;          // -1 = detected default; 0 = mean; 1 = last token
+  int add_eos = -1;          // -1 = detected default; 0 = off; 1 = append the model's EOS id
+  bool normalize = true;     // L2-normalize the pooled vector (cosine == dot product)
+  std::string instruction;   // optional; wraps text as "Instruct: {instruction}\nQuery: {text}"
+};
+
 class Engine {
  public:
   // Constructor: resolves the model spec, loads config/tokenizer on the caller's thread,
@@ -55,10 +65,12 @@ class Engine {
   // Fetch running metrics (queues, timing, active requests, etc.) from the Worker
   WorkerMetrics metrics() const { return worker_.metrics(); }
 
-  // Embed `text` into a unit-normalized vector (synchronous): encodes, submits a
+  // Embed `text` into a (by default unit-normalized) vector (synchronous):
+  // applies any instruction wrap, encodes, appends EOS when requested, submits a
   // one-shot embedding request through the scheduler, and blocks for the result.
-  // `pooling` is a mlxforge::Pooling value (0 = mean, 1 = last token).
-  std::vector<float> embed(const std::string& text, int pooling = 0);
+  // With default `opts` the model's detected defaults apply (a Qwen3-Embedding
+  // checkpoint uses last-token pooling + a trailing EOS). Returns {} on failure.
+  std::vector<float> embed(const std::string& text, const EmbedOptions& opts = {});
 
   // Explicitly drain all remaining requests/queues and join/stop the Worker thread.
   // Idempotent: also called by the destructor, so only use if early shutdown/drain is desired.
@@ -72,6 +84,11 @@ class Engine {
     bool is_gguf = false;      // Was the model GGUF format?
     ModelConfig config;        // Parsed model config
     Tokenizer tokenizer;       // Parsed tokenizer
+    // Embedding defaults sniffed from the model dir's sentence-transformers
+    // sidecar (1_Pooling/config.json), used when EmbedOptions leaves a field at
+    // -1. Plain LLMs keep mean pooling / no EOS; Qwen3-Embedding flips to last.
+    int embed_pooling_default = 0;     // mlxforge::Pooling (0 = mean, 1 = last)
+    bool embed_add_eos_default = false;
   };
 
   // Resolve model spec path, parse config/tokenizer, etc.
@@ -87,6 +104,11 @@ class Engine {
   std::string model_name_;    // Echoes user-supplied spec (for e.g. server listing endpoints)
   ModelConfig cfg_;           // Model config, immutable after load
   Tokenizer tok_;             // Tokenizer, immutable after load
+
+  // Detected embedding defaults (see Loaded), consulted by embed() when a caller
+  // leaves an EmbedOptions field at -1.
+  int embed_pooling_default_ = 0;
+  bool embed_add_eos_default_ = false;
 
   // Order of these two is critical:
   // Scheduler must outlive Worker, because Worker holds a pointer to scheduler_.

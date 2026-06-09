@@ -16,9 +16,12 @@ enum class Pooling : int {
   Last = 1,  // the last token's hidden state (causal last-token pooling)
 };
 
-// Embed one already-tokenized prompt: forward_hidden -> pool -> L2-normalize.
-// Returns a `hidden`-dimensional unit vector. Must run on the model's thread.
+// Embed one already-tokenized prompt: forward_hidden -> pool -> (optional)
+// L2-normalize. Returns a `hidden`-dimensional vector (unit-norm when
+// `normalize`). Must run on the model's thread. For last-token pooling the
+// caller is expected to have appended the model's EOS id (Qwen3-Embedding
+// convention) so the pooled position is the sentence-final hidden state.
 std::vector<float> embed_pooled(const DecoderModel& model, const std::vector<int>& ids,
-                                Pooling pooling = Pooling::Mean);
+                                Pooling pooling = Pooling::Mean, bool normalize = true);
 
 }  // namespace mlxforge

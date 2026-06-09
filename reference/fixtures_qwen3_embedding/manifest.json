@@ -1,0 +1,30 @@
+{
+  "model_repo": "Qwen/Qwen3-Embedding-0.6B",
+  "compute_dtype": "float16",
+  "arrays": {
+    "embed_query": {
+      "shape": [
+        1024
+      ],
+      "dtype": "float32"
+    },
+    "embed_query_ids": {
+      "shape": [
+        27
+      ],
+      "dtype": "int32"
+    },
+    "embed_doc": {
+      "shape": [
+        1024
+      ],
+      "dtype": "float32"
+    },
+    "embed_doc_ids": {
+      "shape": [
+        8
+      ],
+      "dtype": "int32"
+    }
+  }
+}

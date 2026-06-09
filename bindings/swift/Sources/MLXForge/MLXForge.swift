@@ -113,11 +113,20 @@ public final class Engine {
     return out
   }
 
-  /// Embed text into a unit-normalized vector. `pooling`: 0 = mean (default),
-  /// 1 = last token. Any LLaMA/Qwen model works; an embedding-tuned model
-  /// produces a better vector.
-  public func embed(_ text: String, pooling: Int32 = 0) async throws -> [Float] {
+  /// Embed text into a (by default unit-normalized) vector.
+  ///
+  /// With all defaults the model self-selects its convention: a Qwen3-Embedding
+  /// checkpoint uses last-token pooling + a trailing EOS, a plain LLM uses mean
+  /// pooling. Override explicitly when needed:
+  /// - `pooling`: -1 = model default, 0 = mean, 1 = last token.
+  /// - `addEos`: `nil` = model default; `true` appends the model's EOS id.
+  /// - `instruction`: wraps text as "Instruct: {instruction}\nQuery: {text}"
+  ///   (Qwen3-Embedding retrieval queries).
+  /// - `normalize`: L2-normalize the pooled vector (default `true`).
+  public func embed(_ text: String, pooling: Int32 = -1, addEos: Bool? = nil,
+                    instruction: String? = nil, normalize: Bool = true) async throws -> [Float] {
     let handle = self.handle
+    let addEosVal: Int32 = addEos.map { $0 ? 1 : 0 } ?? -1
     return try await withCheckedThrowingContinuation { cont in
       // The C call blocks until the worker runs the forward pass; run it off the
       // Swift-concurrency thread.
@@ -125,7 +134,17 @@ public final class Engine {
         var out: UnsafeMutablePointer<Float>?
         var len: Int = 0
         var err: UnsafeMutablePointer<CChar>?
-        let rc = mlxforge_embed(handle, text, pooling, &out, &len, &err)
+        // Build opts; `instruction` must outlive the call, so bind it with
+        // withCString (a NULL pointer when no instruction was given).
+        let run: (UnsafePointer<CChar>?) -> Int32 = { instrPtr in
+          var opts = mlxforge_embed_opts()
+          opts.pooling = pooling
+          opts.add_eos = addEosVal
+          opts.skip_normalize = normalize ? 0 : 1
+          opts.instruction = instrPtr
+          return mlxforge_embed_ex(handle, text, &opts, &out, &len, &err)
+        }
+        let rc = instruction.map { $0.withCString { run($0) } } ?? run(nil)
         if rc == 0, let out = out {
           let vec = Array(UnsafeBufferPointer(start: out, count: len))
           mlxforge_floats_free(out)

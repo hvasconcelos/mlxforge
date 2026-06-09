@@ -42,11 +42,21 @@ struct ToolCall {
   std::string arguments;  // JSON object string (OpenAI `function.arguments`)
 };
 
+// A parsed /v1/embeddings request. `input` is normalized to a list of strings
+// (OpenAI allows a single string or an array); each yields one embedding.
+struct EmbeddingsRequest {
+  std::string model;
+  std::vector<std::string> input;
+  std::string encoding_format = "float";  // only "float" is supported
+};
+
 // Parse a chat-completions body. Throws std::runtime_error on malformed JSON
 // shape or out-of-range params (the server maps that to a 400).
 ChatRequest parse_chat_request(const nlohmann::json& body);
 // Parse a legacy completions body (`prompt` instead of `messages`).
 ChatRequest parse_completion_request(const nlohmann::json& body);
+// Parse an /v1/embeddings body (`input` is a string or array of strings).
+EmbeddingsRequest parse_embeddings_request(const nlohmann::json& body);
 
 // The OpenAI `usage` block (prompt/completion/total token counts), shared by the
 // chat.completion and text_completion response shapes.
@@ -71,6 +81,13 @@ nlohmann::json make_chat_completion_tools(const std::string& id, long created,
                                           const std::string& model,
                                           const std::vector<ToolCall>& calls, int prompt_tokens,
                                           int completion_tokens);
+
+// Serialize embeddings into the OpenAI list shape: {object:"list", data:[{object:
+// "embedding", index, embedding:[...]}], model, usage}. `prompt_tokens` is the
+// summed input token count.
+nlohmann::json make_embeddings_response(const std::string& model,
+                                        const std::vector<std::vector<float>>& embeddings,
+                                        int prompt_tokens);
 
 // GET /v1/models payload.
 nlohmann::json make_models_list(const std::string& model);

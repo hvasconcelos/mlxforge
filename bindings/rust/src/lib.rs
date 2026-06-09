@@ -44,6 +44,15 @@ struct CSampling {
     json_schema: *const c_char,
 }
 
+// Mirrors mlxforge_embed_opts. pooling/add_eos are tri-state: -1 = model default.
+#[repr(C)]
+struct CEmbedOpts {
+    pooling: c_int,
+    add_eos: c_int,
+    skip_normalize: c_int,
+    instruction: *const c_char,
+}
+
 extern "C" {
     fn mlxforge_version() -> *const c_char;
     fn mlxforge_abi_version() -> c_int;
@@ -63,6 +72,14 @@ extern "C" {
         e: *mut mlxforge_engine,
         text: *const c_char,
         pooling: c_int,
+        out: *mut *mut c_float,
+        out_len: *mut usize,
+        err: *mut *mut c_char,
+    ) -> c_int;
+    fn mlxforge_embed_ex(
+        e: *mut mlxforge_engine,
+        text: *const c_char,
+        opts: *const CEmbedOpts,
         out: *mut *mut c_float,
         out_len: *mut usize,
         err: *mut *mut c_char,
@@ -243,6 +260,8 @@ impl Engine {
     }
 
     /// Embed text into a unit-normalized vector. `pooling`: 0 = mean, 1 = last.
+    /// Simple form (no EOS/instruction); for Qwen3-Embedding conventions or to
+    /// let the model pick its defaults, use [`Engine::embed_with`].
     pub fn embed(&self, text: &str, pooling: i32) -> Result<Vec<f32>, String> {
         let ctext = CString::new(text).map_err(|_| "text contains NUL".to_string())?;
         let mut out: *mut c_float = ptr::null_mut();
@@ -257,6 +276,61 @@ impl Engine {
         let v = unsafe { std::slice::from_raw_parts(out, len).to_vec() };
         unsafe { mlxforge_floats_free(out) };
         Ok(v)
+    }
+
+    /// Embed text with explicit options (Qwen3-Embedding conventions). With a
+    /// default [`EmbedOptions`] the model self-selects its convention (a
+    /// Qwen3-Embedding checkpoint uses last-token pooling + a trailing EOS).
+    pub fn embed_with(&self, text: &str, opts: &EmbedOptions) -> Result<Vec<f32>, String> {
+        let ctext = CString::new(text).map_err(|_| "text contains NUL".to_string())?;
+        let cinstr = match &opts.instruction {
+            Some(s) => Some(CString::new(s.as_str())
+                .map_err(|_| "instruction contains NUL".to_string())?),
+            None => None,
+        };
+        let copts = CEmbedOpts {
+            pooling: opts.pooling.unwrap_or(-1),
+            add_eos: match opts.add_eos {
+                None => -1,
+                Some(true) => 1,
+                Some(false) => 0,
+            },
+            skip_normalize: if opts.normalize { 0 } else { 1 },
+            instruction: cinstr.as_ref().map_or(ptr::null(), |c| c.as_ptr()),
+        };
+        let mut out: *mut c_float = ptr::null_mut();
+        let mut len: usize = 0;
+        let mut err: *mut c_char = ptr::null_mut();
+        let rc = unsafe {
+            mlxforge_embed_ex(self.handle, ctext.as_ptr(), &copts, &mut out, &mut len, &mut err)
+        };
+        if rc != 0 || out.is_null() {
+            return Err(unsafe { take_string(err) }.unwrap_or_else(|| "embed failed".into()));
+        }
+        let v = unsafe { std::slice::from_raw_parts(out, len).to_vec() };
+        unsafe { mlxforge_floats_free(out) };
+        Ok(v)
+    }
+}
+
+/// Options for [`Engine::embed_with`]. A default value defers to the model: a
+/// Qwen3-Embedding checkpoint self-selects last-token pooling + a trailing EOS,
+/// a plain LLM uses mean pooling.
+#[derive(Clone, Debug)]
+pub struct EmbedOptions {
+    /// `None` = model default; `Some(0)` = mean; `Some(1)` = last token.
+    pub pooling: Option<i32>,
+    /// `None` = model default; `Some(true)` appends the model's EOS id.
+    pub add_eos: Option<bool>,
+    /// L2-normalize the pooled vector (default `true`).
+    pub normalize: bool,
+    /// Optional retrieval instruction; wraps text as "Instruct: {it}\nQuery: {text}".
+    pub instruction: Option<String>,
+}
+
+impl Default for EmbedOptions {
+    fn default() -> Self {
+        Self { pooling: None, add_eos: None, normalize: true, instruction: None }
     }
 }
 

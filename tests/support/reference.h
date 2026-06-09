@@ -63,6 +63,18 @@ inline std::vector<int> load_qwen3_moe_token_ids(const std::string& name) {
   return load_token_ids_at(MLXFORGE_REF_FIXTURES_DIR_QWEN3_MOE, name);
 }
 
+// Same accessors against the Qwen3-Embedding fixture set
+// (reference/fixtures_qwen3_embedding): pooled sentence-embedding goldens.
+inline std::string qwen3_embedding_ref_path(const std::string& name) {
+  return std::string(MLXFORGE_REF_FIXTURES_DIR_QWEN3_EMBEDDING) + "/" + name;
+}
+inline mx::array load_qwen3_embedding_npy(const std::string& name) {
+  return mx::load(qwen3_embedding_ref_path(name));
+}
+inline std::vector<int> load_qwen3_embedding_token_ids(const std::string& name) {
+  return load_token_ids_at(MLXFORGE_REF_FIXTURES_DIR_QWEN3_EMBEDDING, name);
+}
+
 // Same accessors against the Qwen3.5 fixture set (reference/fixtures_qwen3_5).
 inline std::string qwen3_5_ref_path(const std::string& name) {
   return std::string(MLXFORGE_REF_FIXTURES_DIR_QWEN3_5) + "/" + name;

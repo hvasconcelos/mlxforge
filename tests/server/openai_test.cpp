@@ -168,3 +168,39 @@ TEST_CASE("make_chat_completion_tools emits tool_calls with null content") {
   CHECK(msg["tool_calls"][0]["function"]["arguments"] == R"({"city": "SF"})");
   CHECK(c["usage"]["total_tokens"] == 15);
 }
+
+TEST_CASE("parse_embeddings_request normalizes string and array inputs") {
+  // Single string -> one-element input list.
+  EmbeddingsRequest a = parse_embeddings_request(
+      json::parse(R"({"model": "m", "input": "hello"})"));
+  CHECK(a.model == "m");
+  REQUIRE(a.input.size() == 1);
+  CHECK(a.input[0] == "hello");
+
+  // Array of strings -> preserved order.
+  EmbeddingsRequest b = parse_embeddings_request(
+      json::parse(R"({"input": ["a", "b", "c"]})"));
+  REQUIRE(b.input.size() == 3);
+  CHECK(b.input[1] == "b");
+
+  // Rejected shapes: missing input, empty array, non-string element, bad format.
+  CHECK_THROWS(parse_embeddings_request(json::parse(R"({"model": "m"})")));
+  CHECK_THROWS(parse_embeddings_request(json::parse(R"({"input": []})")));
+  CHECK_THROWS(parse_embeddings_request(json::parse(R"({"input": [1, 2]})")));
+  CHECK_THROWS(parse_embeddings_request(
+      json::parse(R"({"input": "x", "encoding_format": "base64"})")));
+}
+
+TEST_CASE("make_embeddings_response emits the OpenAI list shape") {
+  std::vector<std::vector<float>> vecs = {{1.0f, 0.0f}, {0.0f, 1.0f}};
+  json r = make_embeddings_response("m", vecs, /*prompt_tokens=*/7);
+  CHECK(r["object"] == "list");
+  CHECK(r["model"] == "m");
+  REQUIRE(r["data"].size() == 2);
+  CHECK(r["data"][0]["object"] == "embedding");
+  CHECK(r["data"][0]["index"] == 0);
+  CHECK(r["data"][1]["index"] == 1);
+  CHECK(r["data"][1]["embedding"][1] == doctest::Approx(1.0f));
+  CHECK(r["usage"]["prompt_tokens"] == 7);
+  CHECK(r["usage"]["total_tokens"] == 7);
+}

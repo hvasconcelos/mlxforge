@@ -84,13 +84,19 @@ class Engine {
   }
 
   /**
-   * Embed text into a unit-normalized vector (Float32Array). pooling: 0 = mean
-   * (default), 1 = last token. Any LLaMA/Qwen model works; an embedding-tuned
-   * model produces a better vector.
+   * Embed text into a (by default unit-normalized) vector (Float32Array).
+   *
+   * Call `embed(text)` and the model self-selects its convention: a
+   * Qwen3-Embedding checkpoint uses last-token pooling + a trailing EOS, a plain
+   * LLM uses mean pooling. The second argument is either a legacy pooling number
+   * (0 = mean, 1 = last token) or an options object:
+   *   { pooling?: 0|1, addEos?: boolean, instruction?: string, normalize?: boolean }
+   * `instruction` wraps the text as "Instruct: {instruction}\nQuery: {text}"
+   * (Qwen3-Embedding retrieval queries).
    * @returns {Promise<Float32Array>}
    */
-  embed(text, pooling = 0) {
-    return this._h.embed(text, pooling);
+  embed(text, opts) {
+    return this._h.embed(text, opts);
   }
 
   dispose() {
