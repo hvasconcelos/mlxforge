@@ -1,6 +1,6 @@
-# mlxforge
+# libmlxforge
 
-**`libmlxforge` — an embeddable, batched MLX LLM engine you bind from any language.**
+**An embeddable, batched MLX LLM engine you bind from any language.**
 A from-scratch local inference engine in **C++ on Apple MLX** with **continuous
 batching**, exposed through a stable C ABI so Node (first), then Swift and Rust, can
 embed the *same batched engine* in-process — not just array ops, and not one stream at a

@@ -3,15 +3,15 @@
 # the embeddable libmlxforge.dylib + C ABI header are installed for embedders.
 #
 # Use via a tap:
-#   brew tap hvasconcelos/mlxforge https://github.com/hvasconcelos/mlxforge
+#   brew tap hvasconcelos/libmlxforge https://github.com/hvasconcelos/libmlxforge
 #   brew install mlxforge            # or: brew install --HEAD mlxforge
 class Mlxforge < Formula
   desc "Embeddable batched MLX LLM engine for Apple Silicon (C ABI + CLI)"
-  homepage "https://github.com/hvasconcelos/mlxforge"
-  url "https://github.com/hvasconcelos/mlxforge/archive/refs/tags/v0.1.0.tar.gz"
+  homepage "https://github.com/hvasconcelos/libmlxforge"
+  url "https://github.com/hvasconcelos/libmlxforge/archive/refs/tags/v0.1.0.tar.gz"
   sha256 "0000000000000000000000000000000000000000000000000000000000000000" # set per release
   license "MIT"
-  head "https://github.com/hvasconcelos/mlxforge.git", branch: "master"
+  head "https://github.com/hvasconcelos/libmlxforge.git", branch: "master"
 
   depends_on "cmake" => :build
   depends_on arch: :arm64

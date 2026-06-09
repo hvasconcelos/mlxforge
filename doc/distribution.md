@@ -24,7 +24,7 @@ can't ship a library that leaked the server dependency or dropped a C-ABI symbol
 `Formula/mlxforge.rb` builds from source (Apple Silicon only). Via a tap:
 
 ```sh
-brew tap hvasconcelos/mlxforge https://github.com/hvasconcelos/mlxforge
+brew tap hvasconcelos/libmlxforge https://github.com/hvasconcelos/libmlxforge
 brew install mlxforge            # mlxforge-cli + mlxforge-server + libmlxforge.dylib + mlxforge.h
 # or track the branch:
 brew install --HEAD mlxforge
@@ -45,7 +45,7 @@ XCFramework so adopters need no CMake/MLX build:
 // Package.swift (distribution variant)
 .binaryTarget(
   name: "CMLXForge",
-  url: "https://github.com/hvasconcelos/mlxforge/releases/download/v0.1.0/MLXForge-v0.1.0.xcframework.zip",
+  url: "https://github.com/hvasconcelos/libmlxforge/releases/download/v0.1.0/MLXForge-v0.1.0.xcframework.zip",
   checksum: "<swift package compute-checksum MLXForge-v0.1.0.xcframework.zip>"
 )
 ```
