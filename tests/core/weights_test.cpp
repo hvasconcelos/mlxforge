@@ -51,6 +51,36 @@ TEST_CASE("sanitize_key canonicalizes a table of raw keys") {
         "model.embed_tokens.weight");
 }
 
+TEST_CASE("sanitize_key handles the Qwen3-VL wrapper layout and vision keep") {
+  // Qwen3-VL nests the decoder under "model.language_model.*" (the opposite
+  // ordering from Qwen3.5); it must still canonicalize to "model.*".
+  CHECK(sanitize_key("model.language_model.embed_tokens.weight").value() ==
+        "model.embed_tokens.weight");
+  CHECK(sanitize_key("model.language_model.norm.weight").value() == "model.norm.weight");
+  CHECK(sanitize_key("model.language_model.layers.0.self_attn.q_norm.weight").value() ==
+        "model.layers.0.self_attn.q_norm.weight");
+
+  // The ViT under "model.visual.*" is still dropped by default (text-only load).
+  CHECK_FALSE(sanitize_key("model.visual.blocks.0.attn.qkv.weight").has_value());
+
+  // With keep_vision (a VLM load) the ViT is kept, canonicalized to a leading
+  // "visual.*" (the wrapper "model." stripped) so it cannot collide with "model.*".
+  CHECK(sanitize_key("model.visual.blocks.0.attn.qkv.weight", /*keep_vision=*/true).value() ==
+        "visual.blocks.0.attn.qkv.weight");
+  CHECK(sanitize_key("model.visual.patch_embed.proj.weight", true).value() ==
+        "visual.patch_embed.proj.weight");
+  CHECK(sanitize_key("model.visual.deepstack_merger_list.0.norm.weight", true).value() ==
+        "visual.deepstack_merger_list.0.norm.weight");
+  // A bare "visual."/"vision_tower." prefix (no "model.") is kept as-is.
+  CHECK(sanitize_key("visual.merger.linear_fc1.weight", true).value() ==
+        "visual.merger.linear_fc1.weight");
+
+  // keep_vision must not disturb the inv_freq drop or the language-tower rewrite.
+  CHECK_FALSE(sanitize_key("model.rotary_emb.inv_freq", true).has_value());
+  CHECK(sanitize_key("model.language_model.embed_tokens.weight", true).value() ==
+        "model.embed_tokens.weight");
+}
+
 TEST_CASE("parse_shard_index resolves the file each tensor key lives in") {
   auto index = load_fixture("shard_index.json");
   auto weight_map = parse_shard_index(index);

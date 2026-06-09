@@ -20,8 +20,12 @@
 namespace mlxforge {
 
 // Canonicalize a raw safetensors key. Returns the canonical key, or nullopt to
-// drop the tensor (buffers we never use). Pure string logic — unit tested.
-std::optional<std::string> sanitize_key(const std::string& raw);
+// drop the tensor (buffers we never use). The language tower is canonicalized to
+// "model.*" across both wrapper layouts (Qwen3.5 "language_model.model.*" and
+// Qwen3-VL "model.language_model.*"). The ViT tower is dropped unless
+// `keep_vision` (VLM loads), where it canonicalizes to a leading "visual.*".
+// Pure string logic — unit tested.
+std::optional<std::string> sanitize_key(const std::string& raw, bool keep_vision = false);
 
 // Parse a safetensors index JSON's "weight_map" (tensor key -> shard filename).
 std::unordered_map<std::string, std::string> parse_shard_index(const nlohmann::json& index_json);

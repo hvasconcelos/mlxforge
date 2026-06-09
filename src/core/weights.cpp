@@ -31,20 +31,32 @@ const char* dtype_name(mx::Dtype dt) {
 }
 }  // namespace
 
-std::optional<std::string> sanitize_key(const std::string& raw) {
+std::optional<std::string> sanitize_key(const std::string& raw, bool keep_vision) {
   // Rotary position buffers are recomputed, never loaded as weights.
   if (ends_with(raw, ".inv_freq") || raw.find("rotary_emb.inv_freq") != std::string::npos) {
     return std::nullopt;
   }
-  // Drop the vision tower of a multimodal checkpoint (the engine is text-only):
-  // Qwen-VL / Qwen3.5 ship a ViT under "vision_tower.*" (and some wrappers under
-  // "(model.)visual.*") that the language model never reads.
+  // Vision tower of a multimodal checkpoint. Qwen-VL ships the ViT under
+  // "(model.)visual.*" (older wrappers: "vision_tower.*"). A text-only load drops
+  // it (the language model never reads it); a VLM load keeps it, canonicalized to
+  // a leading "visual." / "vision_tower." (the wrapper's "model." prefix stripped)
+  // so vision keys never collide with the decoder's "model.*".
   for (const char* vp : {"vision_tower.", "model.visual.", "visual."}) {
-    if (raw.rfind(vp, 0) == 0) return std::nullopt;
+    if (raw.rfind(vp, 0) == 0) {
+      if (!keep_vision) return std::nullopt;
+      const std::string mp = "model.";
+      return raw.rfind(mp, 0) == 0 ? raw.substr(mp.size()) : raw;
+    }
   }
-  // Some wrapped/VLM checkpoints prefix the language tower; strip it so keys
-  // match the canonical "model.*" / "lm_head.*" forms (e.g. Qwen3.5's
-  // "language_model.model.embed_tokens.weight" -> "model.embed_tokens.weight").
+  // Strip the language-tower wrapper so keys match the canonical "model.*" /
+  // "lm_head.*" forms. Two wrapper layouts exist:
+  //   Qwen3.5:  "language_model.model.embed_tokens.weight"
+  //   Qwen3-VL: "model.language_model.embed_tokens.weight"
+  // both -> "model.embed_tokens.weight".
+  const std::string vl = "model.language_model.";
+  if (raw.rfind(vl, 0) == 0) {
+    return "model." + raw.substr(vl.size());
+  }
   const std::string prefix = kLanguageModelPrefix;
   if (raw.rfind(prefix, 0) == 0) {
     return raw.substr(prefix.size());
@@ -106,10 +118,11 @@ std::string Weights::summary() const {
 
 namespace {
 // Merge one shard's tensors into `out`, applying sanitize + fp16 cast.
+// `keep_vision` retains the ViT tower (VLMs) instead of dropping it.
 void absorb(std::unordered_map<std::string, mx::array>& out,
-            const std::unordered_map<std::string, mx::array>& shard) {
+            const std::unordered_map<std::string, mx::array>& shard, bool keep_vision) {
   for (const auto& [raw, arr] : shard) {
-    auto canon = sanitize_key(raw);
+    auto canon = sanitize_key(raw, keep_vision);
     if (!canon) continue;  // dropped buffer
     // Cast only floating tensors to fp16; packed 4-bit weights (uint32) and
     // other integer tensors are kept as-is. Exception: Gated-DeltaNet's `A_log`
@@ -196,6 +209,10 @@ Weights load_weights(const std::string& model_dir, const ModelConfig& cfg) {
   const std::string index_path = model_dir + "/model.safetensors.index.json";
   Weights w;
 
+  // Keep the ViT tower only for vision-language checkpoints; text-only models
+  // drop it so the load stays lean.
+  const bool keep_vision = cfg.has_vision_tower();
+
   std::ifstream index_file(index_path);
   if (index_file) {
     nlohmann::json index_json;
@@ -205,7 +222,7 @@ Weights load_weights(const std::string& model_dir, const ModelConfig& cfg) {
     log::debug("weights: sharded checkpoint, {} files", files.size());
     for (const auto& file : files) {
       log::debug("weights: loading shard {}", file);
-      absorb(w.tensors, mx::load_safetensors(model_dir + "/" + file).first);
+      absorb(w.tensors, mx::load_safetensors(model_dir + "/" + file).first, keep_vision);
     }
   } else {
     const std::string single = model_dir + "/model.safetensors";
@@ -213,7 +230,7 @@ Weights load_weights(const std::string& model_dir, const ModelConfig& cfg) {
       throw std::runtime_error("weights: no model.safetensors[.index.json] in '" + model_dir + "'");
     }
     log::debug("weights: single-file checkpoint");
-    absorb(w.tensors, mx::load_safetensors(single).first);
+    absorb(w.tensors, mx::load_safetensors(single).first, keep_vision);
   }
 
   std::size_t non_fp16 = 0;
