@@ -1,11 +1,11 @@
-# Homebrew formula for mlxforge. Builds from source (Apple Silicon only); the
+# Homebrew formula for libmlxforge. Builds from source (Apple Silicon only); the
 # CLI/server harnesses are self-contained (they link the engine statically) and
 # the embeddable libmlxforge.dylib + C ABI header are installed for embedders.
 #
 # Use via a tap:
 #   brew tap hvasconcelos/libmlxforge https://github.com/hvasconcelos/libmlxforge
-#   brew install mlxforge            # or: brew install --HEAD mlxforge
-class Mlxforge < Formula
+#   brew install libmlxforge         # or: brew install --HEAD libmlxforge
+class Libmlxforge < Formula
   desc "Embeddable batched MLX LLM engine for Apple Silicon (C ABI + CLI)"
   homepage "https://github.com/hvasconcelos/libmlxforge"
   url "https://github.com/hvasconcelos/libmlxforge/archive/refs/tags/v0.1.0.tar.gz"

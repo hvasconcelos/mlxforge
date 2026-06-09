@@ -21,13 +21,13 @@ can't ship a library that leaked the server dependency or dropped a C-ABI symbol
 
 ## Homebrew (CLI + library)
 
-`Formula/mlxforge.rb` builds from source (Apple Silicon only). Via a tap:
+`Formula/libmlxforge.rb` builds from source (Apple Silicon only). Via a tap:
 
 ```sh
 brew tap hvasconcelos/libmlxforge https://github.com/hvasconcelos/libmlxforge
-brew install mlxforge            # mlxforge-cli + mlxforge-server + libmlxforge.dylib + mlxforge.h
+brew install libmlxforge         # mlxforge-cli + mlxforge-server + libmlxforge.dylib + mlxforge.h
 # or track the branch:
-brew install --HEAD mlxforge
+brew install --HEAD libmlxforge
 ```
 
 The harness binaries are self-contained (they link the engine statically); the
