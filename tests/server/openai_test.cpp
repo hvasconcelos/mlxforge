@@ -204,3 +204,34 @@ TEST_CASE("make_embeddings_response emits the OpenAI list shape") {
   CHECK(r["usage"]["prompt_tokens"] == 7);
   CHECK(r["usage"]["total_tokens"] == 7);
 }
+
+TEST_CASE("parse_chat_request extracts an image_url data URI as bytes") {
+  // base64 "aGVsbG8=" decodes to "hello".
+  json body = json::parse(R"({
+    "messages": [{"role": "user", "content": [
+      {"type": "text", "text": "what is this?"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}}
+    ]}],
+    "max_tokens": 8
+  })");
+  ChatRequest r = parse_chat_request(body);
+  REQUIRE(r.messages.size() == 1);
+  CHECK(r.messages[0].content == "what is this?");
+  CHECK(r.image == "hello");  // routed to the multimodal path by make_request
+}
+
+TEST_CASE("parse_chat_request rejects a non-data: image URL") {
+  json body = json::parse(R"({
+    "messages": [{"role": "user", "content": [
+      {"type": "image_url", "image_url": {"url": "https://example.com/x.png"}}]}],
+    "max_tokens": 8
+  })");
+  CHECK_THROWS(parse_chat_request(body));
+}
+
+TEST_CASE("parse_chat_request leaves image empty for text-only content") {
+  json body = json::parse(R"({
+    "messages": [{"role": "user", "content": "just text"}], "max_tokens": 8
+  })");
+  CHECK(parse_chat_request(body).image.empty());
+}

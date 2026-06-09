@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include "server/base64.h"
+
 namespace mlxforge {
 
 namespace {
@@ -33,7 +35,7 @@ std::string render_tool_use(const json& block) {
 // content yields a single message; a block array is split so tool_use becomes an
 // assistant tool-call turn and tool_result becomes a "tool" turn (matching the
 // roles the chat template understands).
-void append_message(const json& m, std::vector<Tokenizer::Message>& out) {
+void append_message(const json& m, std::vector<Tokenizer::Message>& out, std::string& image_out) {
   if (!m.contains("role")) throw std::runtime_error("each message needs a 'role'");
   const std::string role = m.at("role").get<std::string>();
   auto it = m.find("content");
@@ -46,7 +48,8 @@ void append_message(const json& m, std::vector<Tokenizer::Message>& out) {
   if (!it->is_array()) throw std::runtime_error("'content' must be a string or array of blocks");
 
   // tool_result blocks (carried on a user turn) are fed back first, then any
-  // free text; tool_use blocks (on an assistant turn) become tool-call turns.
+  // free text; tool_use blocks (on an assistant turn) become tool-call turns;
+  // the first base64 image block is decoded into image_out.
   std::string text;
   std::vector<json> tool_uses;
   for (const auto& b : *it) {
@@ -58,6 +61,10 @@ void append_message(const json& m, std::vector<Tokenizer::Message>& out) {
       tool_uses.push_back(b);
     } else if (type == "tool_result") {
       out.push_back({"tool", text_of(b.value("content", json())), ""});
+    } else if (type == "image" && image_out.empty()) {
+      const auto src = b.find("source");
+      if (src != b.end() && src->is_object() && src->value("type", std::string()) == "base64")
+        image_out = base64_decode(src->value("data", std::string()));
     }
   }
   if (!text.empty()) out.push_back({role, text, ""});
@@ -115,7 +122,7 @@ ChatRequest parse_messages_request(const nlohmann::json& body) {
   auto it = body.find("messages");
   if (it == body.end() || !it->is_array() || it->empty())
     throw std::runtime_error("'messages' must be a non-empty array");
-  for (const auto& m : *it) append_message(m, r.messages);
+  for (const auto& m : *it) append_message(m, r.messages, r.image);
 
   r.params.temperature = body.value("temperature", 1.0f);
   if (r.params.temperature < 0.0f) throw std::runtime_error("'temperature' must be >= 0");

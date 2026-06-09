@@ -45,14 +45,30 @@ std::string HttpServer::next_id(const char* prefix) {
 
 std::shared_ptr<Request> HttpServer::make_request(const ChatRequest& cr) const {
   auto req = std::make_shared<Request>();
+  req->params = cr.params;
+  req->max_tokens = cr.max_tokens;
+  req->eos_ids = cfg_.eos_token_ids;
+
+  // Multimodal (Qwen3-VL): an attached image makes this a single-stream vision
+  // turn. The worker decodes the image, runs the ViT, and renders the prompt
+  // itself, so we hand it the raw bytes + the latest user text (not a tokenized
+  // prompt). Requires a vision model; otherwise the worker finishes it as an error.
+  if (!cr.image.empty()) {
+    req->mm_image.assign(cr.image.begin(), cr.image.end());
+    for (auto it = cr.messages.rbegin(); it != cr.messages.rend(); ++it) {
+      if (it->role == "user") {
+        req->mm_text = it->content;
+        break;
+      }
+    }
+    return req;
+  }
+
   // tool_choice "none" suppresses the schemas (and later, the output parsing).
   const std::vector<std::string> tools = cr.tools_enabled() ? cr.tools : std::vector<std::string>{};
   req->prompt_ids = cr.is_chat
                         ? tok_->apply_chat_template(cr.messages, true, "", tools, cr.enable_thinking)
                         : tok_->encode(cr.messages.front().content);
-  req->params = cr.params;
-  req->max_tokens = cr.max_tokens;
-  req->eos_ids = cfg_.eos_token_ids;
   return req;
 }
 

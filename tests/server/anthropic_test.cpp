@@ -171,3 +171,16 @@ TEST_CASE("streaming event payloads carry the documented shapes") {
   CHECK(md["usage"]["output_tokens"] == 7);
   CHECK(kMessageStop["type"] == "message_stop");
 }
+
+TEST_CASE("parse_messages_request extracts a base64 image block as bytes") {
+  // base64 "aGVsbG8=" decodes to "hello".
+  json body = json::parse(R"({
+    "messages": [{"role": "user", "content": [
+      {"type": "text", "text": "what animal?"},
+      {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "aGVsbG8="}}
+    ]}],
+    "max_tokens": 8
+  })");
+  ChatRequest r = parse_messages_request(body);
+  CHECK(r.image == "hello");
+}

@@ -3,6 +3,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "server/base64.h"
+
 namespace mlxforge {
 
 namespace {
@@ -65,9 +67,44 @@ std::string render_assistant_tool_call(const json& tool_calls) {
          ", \"parameters\": " + args.dump() + "}";
 }
 
+// Decode an OpenAI image_url to raw bytes. Only base64 `data:` URIs are
+// supported (an http(s) URL would require the server to fetch it).
+std::string decode_image_url(const std::string& url) {
+  const std::string marker = "base64,";
+  const auto pos = url.find(marker);
+  if (url.rfind("data:", 0) != 0 || pos == std::string::npos)
+    throw std::runtime_error("only base64 'data:' image URLs are supported");
+  return base64_decode(url.substr(pos + marker.size()));
+}
+
+// Parse an OpenAI `content` value (a string, or an array of {type:"text"} /
+// {type:"image_url"} parts) into its text. The first image found is decoded into
+// `image_out` (left untouched if there is none).
+std::string parse_content(const json& content, std::string& image_out) {
+  if (content.is_string()) return content.get<std::string>();
+  if (!content.is_array())
+    throw std::runtime_error("'content' must be a string or an array of parts");
+  std::string text;
+  for (const auto& part : content) {
+    if (!part.is_object()) continue;
+    const std::string type = part.value("type", std::string());
+    if (type == "text") {
+      text += part.value("text", std::string());
+    } else if (type == "image_url" && image_out.empty()) {
+      const auto iu = part.find("image_url");
+      std::string url;
+      if (iu != part.end() && iu->is_object()) url = iu->value("url", std::string());
+      else if (iu != part.end() && iu->is_string()) url = iu->get<std::string>();
+      if (!url.empty()) image_out = decode_image_url(url);
+    }
+  }
+  return text;
+}
+
 // Parse one chat message into our Message, handling assistant tool_calls (content
-// may be null/absent) and tool-result messages.
-Tokenizer::Message parse_message(const json& m) {
+// may be null/absent), array content with images, and tool-result messages. The
+// first image across the conversation is decoded into `image_out`.
+Tokenizer::Message parse_message(const json& m, std::string& image_out) {
   if (!m.contains("role")) throw std::runtime_error("each message needs a 'role'");
   Tokenizer::Message msg;
   msg.role = m.at("role").get<std::string>();
@@ -77,7 +114,7 @@ Tokenizer::Message parse_message(const json& m) {
   }
   auto c = m.find("content");
   if (c == m.end() || c->is_null()) throw std::runtime_error("each message needs 'content'");
-  msg.content = c->get<std::string>();
+  msg.content = parse_content(*c, image_out);
   return msg;
 }
 
@@ -130,7 +167,7 @@ ChatRequest parse_chat_request(const nlohmann::json& body) {
   auto it = body.find("messages");
   if (it == body.end() || !it->is_array() || it->empty())
     throw std::runtime_error("'messages' must be a non-empty array");
-  for (const auto& m : *it) r.messages.push_back(parse_message(m));
+  for (const auto& m : *it) r.messages.push_back(parse_message(m, r.image));
   parse_common(body, r);
   return r;
 }
