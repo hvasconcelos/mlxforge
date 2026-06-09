@@ -5,6 +5,7 @@
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
+#include "vision/image_decode.h"
 #include "vision/preprocess.h"
 #include "support/reference.h"
 
@@ -24,4 +25,13 @@ TEST_CASE("Qwen3-VL preprocessing: normalize + patchify matches the reference") 
   CHECK(out.grid_thw[1] == 4);
   CHECK(out.grid_thw[2] == 4);
   assert_close(out.pixel_values, load_qwen3_vl_npy("pixel_values.npy"));
+}
+
+TEST_CASE("Qwen3-VL image decode: PNG file decodes to the reference RGB") {
+  // image.png and image_rgb.npy are the same picture (PNG is lossless), so the
+  // decoded pixels must match the committed RGB array exactly.
+  mx::array decoded = decode_image_file(qwen3_vl_ref_path("image.png"));
+  mx::eval(decoded);
+  CHECK(decoded.shape() == mx::Shape{64, 64, 3});
+  assert_close(decoded, load_qwen3_vl_npy("image_rgb.npy"), /*rtol=*/0.0f, /*atol=*/0.0f);
 }

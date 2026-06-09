@@ -5,6 +5,7 @@
 #   cpp-httplib    v0.46.1  44215e23e92c473a3553d24ae634aed6eefc7dd0
 #   doctest        v2.5.2   6804767ee637789db8a5cb281381cae98dc36906
 #   spdlog         v1.15.3  3335c380a08c5e0f5117a66622df6afdb3d74959
+#   stb_image      v2.30    31c1ad37456438565541f4919958214b6e762fb4
 #   nlohmann/json           (vendored transitively by MLX; reused, not re-fetched)
 
 include(FetchContent)
@@ -59,7 +60,19 @@ FetchContent_Declare(
   GIT_SHALLOW TRUE
 )
 
+# --- stb_image (single-header, public-domain image loader) ------------------
+# Decodes JPEG/PNG/etc. to RGB for the ViT. No CMakeLists upstream, so it is only
+# populated here (header-only); mlxforge_core adds ${stb_SOURCE_DIR} to its
+# private include path and one TU defines STB_IMAGE_IMPLEMENTATION.
+FetchContent_Declare(
+  stb
+  GIT_REPOSITORY https://github.com/nothings/stb.git
+  GIT_TAG 31c1ad37456438565541f4919958214b6e762fb4  # stb_image v2.30
+  GIT_SHALLOW TRUE
+)
+
 FetchContent_MakeAvailable(mlx httplib doctest spdlog)
+FetchContent_MakeAvailable(stb)
 
 # Provide doctest's CMake helpers (doctest_discover_tests) on the module path.
 list(APPEND CMAKE_MODULE_PATH ${doctest_SOURCE_DIR}/scripts/cmake)
