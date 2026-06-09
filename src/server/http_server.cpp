@@ -1,11 +1,15 @@
 #include "server/http_server.h"
 
+#include <array>
+#include <cstdint>
 #include <ctime>
 #include <stdexcept>
 #include <vector>
 
 #include "core/logging.h"
 #include "server/anthropic.h"
+#include "vision/image_decode.h"
+#include "vision/preprocess.h"
 
 namespace mlxforge {
 
@@ -50,17 +54,26 @@ std::shared_ptr<Request> HttpServer::make_request(const ChatRequest& cr) const {
   req->eos_ids = cfg_.eos_token_ids;
 
   // Multimodal (Qwen3-VL): an attached image makes this a single-stream vision
-  // turn. The worker decodes the image, runs the ViT, and renders the prompt
-  // itself, so we hand it the raw bytes + the latest user text (not a tokenized
-  // prompt). Requires a vision model; otherwise the worker finishes it as an error.
+  // turn. We render the FULL chat history (system + prior turns) here, sizing the
+  // <|image_pad|> run from the image's dimensions (a CPU probe — no decode), and
+  // attach it to the last user turn. The worker decodes + ViT-encodes the bytes
+  // and generates from these prompt_ids.
   if (!cr.image.empty()) {
-    req->mm_image.assign(cr.image.begin(), cr.image.end());
-    for (auto it = cr.messages.rbegin(); it != cr.messages.rend(); ++it) {
+    if (!cfg_.has_vision_tower())
+      throw std::runtime_error("this model does not support image input");
+    const std::array<int, 2> hw =
+        image_info(reinterpret_cast<const uint8_t*>(cr.image.data()), cr.image.size());
+    const int n = image_token_count(hw[0], hw[1], PreprocessConfig::from(*cfg_.vision));
+
+    std::vector<Tokenizer::Message> msgs = cr.messages;  // copy: set the placeholder count
+    for (auto it = msgs.rbegin(); it != msgs.rend(); ++it) {
       if (it->role == "user") {
-        req->mm_text = it->content;
+        it->image_token_counts = {n};
         break;
       }
     }
+    req->prompt_ids = tok_->apply_chat_template(msgs, true, "", {}, cr.enable_thinking);
+    req->mm_image.assign(cr.image.begin(), cr.image.end());
     return req;
   }
 

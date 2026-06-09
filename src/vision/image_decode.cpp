@@ -1,5 +1,6 @@
 #include "vision/image_decode.h"
 
+#include <array>
 #include <fstream>
 #include <stdexcept>
 #include <vector>
@@ -22,6 +23,16 @@ mx::array decode_image(const uint8_t* data, std::size_t len) {
   std::vector<uint8_t> buf(px, px + static_cast<std::size_t>(h) * w * 3);
   stbi_image_free(px);
   return mx::array(buf.data(), {h, w, 3}, mx::uint8);
+}
+
+std::array<int, 2> image_info(const uint8_t* data, std::size_t len) {
+  int w = 0, h = 0, comp = 0;
+  if (!stbi_info_from_memory(data, static_cast<int>(len), &w, &h, &comp)) {
+    const char* reason = stbi_failure_reason();
+    throw std::runtime_error(std::string("image_info: ") +
+                             (reason ? reason : "not a decodable image"));
+  }
+  return {h, w};
 }
 
 mx::array decode_image_file(const std::string& path) {

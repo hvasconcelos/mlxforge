@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
 
 #include "cache/kv_cache.h"
 #include "sample/sampler.h"
@@ -67,10 +68,9 @@ GenerateResult greedy_generate_multimodal(const Qwen3VLModel& model,
   return result;
 }
 
-GenerateResult generate_from_image(const Qwen3VLModel& model, const VitEncoder& vit,
-                                   const Tokenizer& tokenizer, const std::string& user_text,
-                                   const mx::array& image_rgb, int max_tokens,
-                                   const std::vector<int>& eos_ids,
+GenerateResult generate_multimodal(const Qwen3VLModel& model, const VitEncoder& vit,
+                                   const std::vector<int>& prompt_ids, const mx::array& image_rgb,
+                                   int max_tokens, const std::vector<int>& eos_ids,
                                    const std::function<void(int)>& on_token,
                                    const PreprocessConfig* pcfg) {
   const ModelConfig& cfg = model.config();
@@ -81,19 +81,38 @@ GenerateResult generate_from_image(const Qwen3VLModel& model, const VitEncoder& 
   mx::array grid(pre.grid_thw.data(), {1, 3}, mx::int32);
   VitEncoder::Output v = vit.forward(pre.pixel_values, grid);
 
-  // Prompt: one image whose placeholder count is the collapsed patch count.
-  const int merge = cfg.vision->merge_unit();
-  const int image_tokens = pre.grid_thw[0] * pre.grid_thw[1] * pre.grid_thw[2] / merge;
+  // The prompt's placeholder run must match the merged-patch count, or the
+  // feature scatter (merge_image_features) misaligns.
+  const int merged = pre.grid_thw[0] * pre.grid_thw[1] * pre.grid_thw[2] / cfg.vision->merge_unit();
+  const int pads =
+      static_cast<int>(std::count(prompt_ids.begin(), prompt_ids.end(), cfg.image_token_id));
+  if (pads != merged) {
+    throw std::runtime_error("multimodal prompt has " + std::to_string(pads) +
+                             " image placeholder(s) but the image yields " + std::to_string(merged));
+  }
+
+  mx::array pos = mrope_position_ids(prompt_ids, {pre.grid_thw}, cfg);
+  return greedy_generate_multimodal(model, prompt_ids, v.hidden, v.deepstack, pos, max_tokens,
+                                    eos_ids, on_token);
+}
+
+GenerateResult generate_from_image(const Qwen3VLModel& model, const VitEncoder& vit,
+                                   const Tokenizer& tokenizer, const std::string& user_text,
+                                   const mx::array& image_rgb, int max_tokens,
+                                   const std::vector<int>& eos_ids,
+                                   const std::function<void(int)>& on_token,
+                                   const PreprocessConfig* pcfg) {
+  // Single-turn convenience: size the placeholder run from the image dimensions
+  // (CPU math), render a one-user-message prompt, then generate. The full chat
+  // history is handled by the caller building prompt_ids for generate_multimodal.
+  PreprocessConfig pc = pcfg ? *pcfg : PreprocessConfig::from(*model.config().vision);
+  const int n = image_token_count(image_rgb.shape()[0], image_rgb.shape()[1], pc);
   Tokenizer::Message msg;
   msg.role = "user";
   msg.content = user_text;
-  msg.image_token_counts = {image_tokens};
+  msg.image_token_counts = {n};
   std::vector<int> ids = tokenizer.apply_chat_template({msg}, /*add_generation_prompt=*/true);
-
-  // M-RoPE positions, then generate.
-  mx::array pos = mrope_position_ids(ids, {pre.grid_thw}, cfg);
-  return greedy_generate_multimodal(model, ids, v.hidden, v.deepstack, pos, max_tokens, eos_ids,
-                                    on_token);
+  return generate_multimodal(model, vit, ids, image_rgb, max_tokens, eos_ids, on_token, &pc);
 }
 
 }  // namespace mlxforge

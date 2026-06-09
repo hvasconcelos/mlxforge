@@ -69,7 +69,7 @@ void Worker::handle_embedding(Request& req) {
 void Worker::handle_multimodal(Request& req) {
   try {
     auto* vl = dynamic_cast<Qwen3VLModel*>(model_.get());
-    if (vl == nullptr || !model_->config().has_vision_tower() || tok_ == nullptr) {
+    if (vl == nullptr || !model_->config().has_vision_tower()) {
       throw std::runtime_error("loaded model is not a vision-language model");
     }
     // The ViT borrows the model's weights; build it once and reuse it.
@@ -79,13 +79,23 @@ void Worker::handle_multimodal(Request& req) {
     mx::array image = decode_image(req.mm_image.data(), req.mm_image.size());
 
     int produced = 0;
-    GenerateResult r = generate_from_image(
-        *vl, *vit_, *tok_, req.mm_text, image, req.max_tokens, req.eos_ids,
-        [&](int id) {
-          if (produced == 0) req.first_token_time = Request::Clock::now();
-          req.tokens.push(id);
-          ++produced;
-        });
+    auto on_token = [&](int id) {
+      if (produced == 0) req.first_token_time = Request::Clock::now();
+      req.tokens.push(id);
+      ++produced;
+    };
+    // A caller that pre-rendered the full chat history (the server) supplies
+    // prompt_ids with the image placeholders already expanded; the simple path
+    // (C ABI / CLI) supplies just mm_text and we render one user turn.
+    GenerateResult r;
+    if (!req.prompt_ids.empty()) {
+      r = generate_multimodal(*vl, *vit_, req.prompt_ids, image, req.max_tokens, req.eos_ids,
+                              on_token);
+    } else {
+      if (tok_ == nullptr) throw std::runtime_error("multimodal text prompt needs a tokenizer");
+      r = generate_from_image(*vl, *vit_, *tok_, req.mm_text, image, req.max_tokens, req.eos_ids,
+                              on_token);
+    }
     req.finish_reason = r.hit_eos ? "stop" : "length";
   } catch (const std::exception& e) {
     log::error("worker: multimodal error: {}", e.what());

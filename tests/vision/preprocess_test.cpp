@@ -2,6 +2,11 @@
 // Pure logic: the committed image_rgb -> pixel_values, no model needed.
 #include <doctest/doctest.h>
 
+#include <cstdint>
+#include <fstream>
+#include <iterator>
+#include <vector>
+
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
@@ -41,6 +46,26 @@ TEST_CASE("Qwen3-VL smart_resize rounds and rescales like the HF reference") {
   CHECK(smart_resize(5000, 5000, F, MIN, MAX) == std::array<int, 2>{4096, 4096});
   // The fixture's small bounds leave a 64x64 image untouched.
   CHECK(smart_resize(64, 64, F, 256, 4096) == std::array<int, 2>{64, 64});
+}
+
+TEST_CASE("Qwen3-VL image_info reads dimensions without decoding") {
+  std::ifstream f(qwen3_vl_ref_path("image.png"), std::ios::binary);
+  std::vector<std::uint8_t> bytes((std::istreambuf_iterator<char>(f)),
+                                  std::istreambuf_iterator<char>());
+  std::array<int, 2> hw = image_info(bytes.data(), bytes.size());
+  CHECK(hw[0] == 64);  // height
+  CHECK(hw[1] == 64);  // width
+}
+
+TEST_CASE("Qwen3-VL image_token_count from dimensions matches the grid") {
+  PreprocessConfig prod;  // production defaults (min 65536, max 16777216)
+  // 64x64 is below min_pixels -> upscaled to 256x256 -> 16x16 patches -> /merge².
+  CHECK(image_token_count(64, 64, prod) == 64);
+  PreprocessConfig tiny = prod;
+  tiny.min_pixels = 256;
+  tiny.max_pixels = 4096;
+  // The fixtures' bounds leave 64x64 untouched -> 4x4 patches -> /merge².
+  CHECK(image_token_count(64, 64, tiny) == 4);
 }
 
 TEST_CASE("Qwen3-VL image decode: PNG file decodes to the reference RGB") {

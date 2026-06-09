@@ -78,6 +78,13 @@ Preprocessed patchify_image(const mx::array& image_rgb, const PreprocessConfig& 
   return {pixel_values, {1, gh, gw}};
 }
 
+int image_token_count(int height, int width, const PreprocessConfig& cfg) {
+  const int factor = cfg.patch_size * cfg.merge_size;
+  const std::array<int, 2> hw = smart_resize(height, width, factor, cfg.min_pixels, cfg.max_pixels);
+  const int gh = hw[0] / cfg.patch_size, gw = hw[1] / cfg.patch_size;  // patch grid
+  return (gh * gw) / (cfg.merge_size * cfg.merge_size);                // grid_t == 1
+}
+
 Preprocessed preprocess_image(const mx::array& image_rgb, const PreprocessConfig& cfg) {
   const int H = image_rgb.shape()[0], W = image_rgb.shape()[1];
   const int factor = cfg.patch_size * cfg.merge_size;

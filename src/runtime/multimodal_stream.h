@@ -35,6 +35,18 @@ GenerateResult greedy_generate_multimodal(const Qwen3VLModel& model,
                                           const std::vector<int>& eos_ids,
                                           const std::function<void(int)>& on_token = {});
 
+// Generate from an already-templated multimodal prompt: `prompt_ids` must already
+// contain the image placeholder run (image_token_id × N) at the right position —
+// the caller renders the full chat history (system + turns) and sizes N from the
+// image dimensions. Preprocesses + ViT-encodes `image_rgb`, checks N matches the
+// merged-patch count, builds M-RoPE positions, and greedily generates. `pcfg`
+// overrides the preprocessing config; NULL uses the model's defaults.
+GenerateResult generate_multimodal(const Qwen3VLModel& model, const VitEncoder& vit,
+                                   const std::vector<int>& prompt_ids, const mx::array& image_rgb,
+                                   int max_tokens, const std::vector<int>& eos_ids,
+                                   const std::function<void(int)>& on_token = {},
+                                   const PreprocessConfig* pcfg = nullptr);
+
 // High-level single-image orchestration: smart-resize + preprocess `image_rgb`
 // (decoded H×W×3 uint8), encode the ViT, render the ChatML prompt with the right
 // number of image placeholders, build M-RoPE positions, and greedily generate.
