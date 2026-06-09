@@ -12,5 +12,6 @@ mlxforge_request_free
 mlxforge_request_next
 mlxforge_string_free
 mlxforge_submit_chat
+mlxforge_submit_image
 mlxforge_submit_text
 mlxforge_version

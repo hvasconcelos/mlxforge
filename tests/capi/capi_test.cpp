@@ -5,6 +5,7 @@
 #include <doctest/doctest.h>
 
 #include <chrono>
+#include <fstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -13,6 +14,7 @@
 
 #include "capi/mlxforge.h"
 #include "support/model_fixture.h"
+#include "support/reference.h"
 
 using namespace mlxforge::test;
 
@@ -46,6 +48,34 @@ TEST_CASE("C ABI surfaces a bad spec as an error message, not a crash") {
   REQUIRE(err != nullptr);
   CHECK(std::string(err).size() > 0);
   mlxforge_string_free(err);
+}
+
+TEST_CASE("C ABI submits a multimodal request and streams a response") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not present; skipping multimodal C ABI test");
+    return;
+  }
+  char* err = nullptr;
+  mlxforge_engine* eng = mlxforge_engine_create(qwen3_vl_model_dir().c_str(), nullptr, &err);
+  REQUIRE_MESSAGE(eng != nullptr, (err ? err : "engine_create failed"));
+  while (!mlxforge_engine_ready(eng)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+  std::ifstream f(qwen3_vl_ref_path("image.png"), std::ios::binary);
+  std::vector<unsigned char> img((std::istreambuf_iterator<char>(f)),
+                                 std::istreambuf_iterator<char>());
+
+  mlxforge_sampling s{};  // greedy
+  s.max_tokens = 8;
+  mlxforge_request* r =
+      mlxforge_submit_image(eng, "What is in this image?", img.data(), img.size(), &s, &err);
+  REQUIRE_MESSAGE(r != nullptr, (err ? err : "submit_image failed"));
+
+  std::string text = drain(r);
+  CHECK(text.size() > 0);
+  CHECK(std::string(mlxforge_request_finish_reason(r)) == "length");
+
+  mlxforge_request_free(r);
+  mlxforge_engine_free(eng);
 }
 
 TEST_CASE("C ABI generates text and batches concurrent requests deterministically") {

@@ -34,8 +34,10 @@ extern "C" {
 /* Bumped on any additive ABI change; never on a breaking one (those get a new
  * symbol). Query at runtime with mlxforge_abi_version().
  *   v2: mlxforge_embed_ex + mlxforge_embed_opts (Qwen3-Embedding conventions:
- *       last-token pooling, trailing EOS, instruction prefix). */
-#define MLXFORGE_ABI_VERSION 2
+ *       last-token pooling, trailing EOS, instruction prefix).
+ *   v3: mlxforge_submit_image (Qwen3-VL vision-language: a prompt + one image,
+ *       served single-stream). */
+#define MLXFORGE_ABI_VERSION 3
 
 typedef struct mlxforge_engine mlxforge_engine;
 typedef struct mlxforge_request mlxforge_request;
@@ -163,6 +165,19 @@ mlxforge_request* mlxforge_submit_chat(mlxforge_engine* engine,
  * Otherwise identical to mlxforge_submit_chat. */
 mlxforge_request* mlxforge_submit_text(mlxforge_engine* engine, const char* prompt,
                                        const mlxforge_sampling* sampling, char** err);
+
+/* Submit a multimodal (vision-language) request: a text `prompt` plus one image
+ * as raw encoded bytes (`image_data` of length `image_len`; JPEG/PNG/…). The
+ * engine decodes the image, runs the ViT, renders the chat prompt with the image,
+ * and streams tokens. The loaded model must be a vision-language checkpoint
+ * (e.g. Qwen3-VL); otherwise the request finishes with an error. Served
+ * single-stream (not merged into the continuous-decode batch). Drive and free it
+ * exactly like a mlxforge_submit_chat handle (mlxforge_request_next, _free).
+ *
+ * Returns a request handle, or NULL on failure (sets *err). */
+mlxforge_request* mlxforge_submit_image(mlxforge_engine* engine, const char* prompt,
+                                        const unsigned char* image_data, size_t image_len,
+                                        const mlxforge_sampling* sampling, char** err);
 
 /* Pull the next chunk of generated text. Blocks until decoded text is available
  * or the request finishes. The detokenizer is UTF-8-safe: a chunk is always a

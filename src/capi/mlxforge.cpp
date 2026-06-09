@@ -261,6 +261,42 @@ mlxforge_request* mlxforge_submit_chat(mlxforge_engine* engine,
   return nullptr;
 }
 
+mlxforge_request* mlxforge_submit_image(mlxforge_engine* engine, const char* prompt,
+                                        const unsigned char* image_data, size_t image_len,
+                                        const mlxforge_sampling* sampling, char** err) {
+  if (err) *err = nullptr;
+  if (!engine || !engine->engine) {
+    set_err(err, "engine is null");
+    return nullptr;
+  }
+  if (!image_data || image_len == 0) {
+    set_err(err, "image_data is empty");
+    return nullptr;
+  }
+  try {
+    auto req = std::make_shared<mlxforge::Request>();
+    req->mm_text = prompt ? prompt : "";
+    req->mm_image.assign(image_data, image_data + image_len);
+    req->params = to_params(sampling);
+    req->max_tokens = sampling_max_tokens(sampling);
+    req->eos_ids = engine->engine->config().eos_token_ids;
+    if (!engine->engine->scheduler().submit(req)) {
+      set_err(err, "request rejected: waiting queue is full");
+      return nullptr;
+    }
+    auto handle = std::make_unique<mlxforge_request>();
+    handle->req = req;
+    handle->detok =
+        std::make_unique<mlxforge::StreamingDetokenizer>(engine->engine->tokenizer());
+    return handle.release();
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error submitting image");
+  }
+  return nullptr;
+}
+
 mlxforge_request* mlxforge_submit_text(mlxforge_engine* engine, const char* prompt,
                                        const mlxforge_sampling* sampling, char** err) {
   if (err) *err = nullptr;
