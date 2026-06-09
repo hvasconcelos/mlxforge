@@ -130,6 +130,32 @@
       ],
       "dtype": "int32"
     },
+    "llm_q_rope0": {
+      "shape": [
+        1,
+        32,
+        20,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "llm_k_rope0": {
+      "shape": [
+        1,
+        8,
+        20,
+        128
+      ],
+      "dtype": "float16"
+    },
+    "llm_block0": {
+      "shape": [
+        1,
+        20,
+        2560
+      ],
+      "dtype": "float16"
+    },
     "logits_last": {
       "shape": [
         1,

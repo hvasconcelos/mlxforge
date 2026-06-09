@@ -411,6 +411,29 @@ def dump_vlm(spec):
     save("embeds_merged", feats.inputs_embeds)
     save("visual_pos_masks", np.array(feats.visual_pos_masks, dtype=np.int32))
 
+    # LLM front-half intermediates for layer 0 — localize the two fusion deltas
+    # (interleaved M-RoPE and DeepStack) before the full 36-layer forward. Mirrors
+    # Qwen3VLTextModel.__call__ for one layer.
+    from mlx_vlm.models.base import create_attention_mask
+    from mlx_vlm.models.qwen3_vl.language import apply_multimodal_rotary_pos_emb
+
+    backbone = model.language_model.model
+    layer0 = backbone.layers[0]
+    attn = layer0.self_attn
+    hmerged = feats.inputs_embeds  # (1, seq, hidden)
+    cos, sin = attn.rotary_emb(hmerged, pos_ids)  # interleaved M-RoPE cos/sin
+    x = layer0.input_layernorm(hmerged)
+    B, L, _ = x.shape
+    q = attn.q_norm(attn.q_proj(x).reshape(B, L, attn.n_heads, attn.head_dim)).transpose(0, 2, 1, 3)
+    k = attn.k_norm(attn.k_proj(x).reshape(B, L, attn.n_kv_heads, attn.head_dim)).transpose(0, 2, 1, 3)
+    q, k = apply_multimodal_rotary_pos_emb(q, k, cos, sin)
+    save("llm_q_rope0", q)  # (1, n_heads, seq, head_dim) post-M-RoPE
+    save("llm_k_rope0", k)
+    mask = create_attention_mask(hmerged, cache=None)
+    h0 = layer0(hmerged, mask, None, pos_ids, (cos, sin))
+    h0 = backbone._deepstack_process(h0, feats.visual_pos_masks, feats.deepstack_visual_embeds[0])
+    save("llm_block0", h0)  # layer-0 output, with DeepStack[0] injected at image rows
+
     # Full forward to logits; dump the last position + its argmax.
     logits = model(ids, pixel_values=pv16, image_grid_thw=thw, mask=am).logits
     logits_last = logits[:, -1, :]
