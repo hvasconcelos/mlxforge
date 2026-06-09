@@ -1,0 +1,13 @@
+[package]
+name = "mlxforge"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Embeddable batched MLX LLM engine for Rust — bindings over libmlxforge"
+repository = "https://github.com/hvasconcelos/mlxforge"
+
+[lib]
+name = "mlxforge"
+
+[[example]]
+name = "chat"
