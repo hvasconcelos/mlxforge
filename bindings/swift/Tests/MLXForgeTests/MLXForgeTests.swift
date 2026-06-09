@@ -60,4 +60,34 @@ final class MLXForgeTests: XCTestCase {
     XCTAssertEqual(dot(a, a), 1.0, accuracy: 0.02)   // unit-normalized
     XCTAssertGreaterThan(dot(a, b), dot(a, c))        // semantic ordering
   }
+
+  // Vision-language: one image via image(), and several via images(). Gated on a
+  // dedicated env var pointing at a Qwen3-VL checkpoint; reads the committed test
+  // image from the repo's fixtures.
+  func testImagesIfVLModelPresent() async throws {
+    guard let dir = ProcessInfo.processInfo.environment["MLXFORGE_VL_MODEL"], !dir.isEmpty else {
+      throw XCTSkip("MLXFORGE_VL_MODEL not set; skipping vision test")
+    }
+    let engine = try await Engine.load(dir)
+
+    var repo = URL(fileURLWithPath: #filePath)  // …/bindings/swift/Tests/MLXForgeTests/<file>
+    for _ in 0..<5 { repo.deleteLastPathComponent() }
+    let imgURL = repo.appendingPathComponent("reference/fixtures_qwen3_vl/image.png")
+    let bytes = [UInt8](try Data(contentsOf: imgURL))
+
+    var s = Sampling.greedy
+    s.maxTokens = 8
+
+    var single = ""
+    for try await chunk in try engine.image("What is in this image?", bytes, sampling: s) {
+      single += chunk
+    }
+    XCTAssertFalse(single.isEmpty)
+
+    var multi = ""
+    for try await chunk in try engine.images("Compare these images.", [bytes, bytes], sampling: s) {
+      multi += chunk
+    }
+    XCTAssertFalse(multi.isEmpty)
+  }
 }
