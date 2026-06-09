@@ -80,6 +80,29 @@ MODELS = {
     # We dump the pooled+normalized query and document vectors (and their exact
     # token ids) so the C++ embed path is gated, not just eyeballed. The base Qwen
     # repo is public and loads as the same fp16 weights the C++ engine uses.
+    # Qwen3-VL is a vision-language model: a Qwen3 dense text decoder (QK-norm)
+    # plus a ViT vision tower whose features are (a) merged into the text
+    # embeddings at <|image_pad|> positions and (b) injected into the first
+    # decoder layers via DeepStack, with interleaved 3D M-RoPE positions. We dump
+    # via mlx-vlm on the SAME 4bit repo the C++ engine loads, with a deterministic
+    # tiny image and small min/max-pixel limits so the grid (and fixtures) stay
+    # tiny. Each stage the C++ engine will build is gated: preprocessing
+    # (pixel_values), the ViT (merger + DeepStack features), M-RoPE (3D pos_ids),
+    # the image-embedding merge, and the full forward (logits/argmax).
+    "qwen3_vl": {
+        "repo": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+        "fixtures": "fixtures_qwen3_vl",
+        "vlm": True,
+        "prompt": "What is in this image?",
+        # Small pixel limits -> a 4x4 patch grid (2x2 merged = 4 image tokens).
+        # 64x64 is already a multiple of patch_size*merge_size (32) and sits at
+        # max_pixels, so smart-resize is the identity here: this fixture gates
+        # normalize+patchify+ViT+merge+logits; a resize-specific fixture is added
+        # with the C++ preprocessing stage.
+        "image_size": 64,
+        "min_pixels": 256,
+        "max_pixels": 4096,
+    },
     "qwen3_embedding": {
         "repo": "Qwen/Qwen3-Embedding-0.6B",
         "fixtures": "fixtures_qwen3_embedding",
@@ -271,6 +294,111 @@ def dump_embedding_model(spec):
     print(f"\nwrote manifest.json ({len(manifest['arrays'])} arrays)")
 
 
+def dump_vlm(spec):
+    """Vision-language golden dump for Qwen3-VL via mlx-vlm.
+
+    Drives the SAME 4bit checkpoint the C++ engine loads (set_dtype fp16 mirrors
+    the engine's load: scales/norms -> fp16, packed 4-bit weights stay uint32) on
+    a deterministic tiny image, dumping one fixture per numerically-sensitive
+    stage the C++ engine reimplements:
+
+      image_rgb        decoded HxWx3 uint8 input (decouples Phase-2 normalize/
+                       patchify from PNG decoding, which lands later)
+      pixel_values     processor output (normalize + patchify) -> (patches, 1536)
+      image_grid_thw   (1, 3) temporal/height/width patch grid
+      input_ids        chat-templated ids with <|image_pad|> expanded per token
+      vit_out          merged ViT patch features -> (merged_tokens, out_hidden)
+      deepstack_{i}    DeepStack merger features from ViT layers [5,11,17]
+      pos_ids          interleaved M-RoPE 3D positions (3, 1, T)
+      embeds_text      token embeddings before the image merge (1, T, hidden)
+      embeds_merged    embeddings after image features scatter into image slots
+      visual_pos_masks (1, T) bool-as-int mask of image-token positions
+      logits_last      final logits at the last position (+ argmax)
+    """
+    import mlx.core as mx
+    import numpy as np
+    from PIL import Image
+    from mlx_vlm import load, prepare_inputs
+    from mlx_vlm.prompt_utils import apply_chat_template
+
+    fixtures_dir = os.path.join(os.path.dirname(__file__), spec["fixtures"])
+    os.makedirs(fixtures_dir, exist_ok=True)
+    print(f"loading {spec['repo']} (vlm) ...")
+    model, processor = load(spec["repo"])
+    model.set_dtype(mx.float16)  # mirror the C++ engine's fp16 load
+    cfg = model.config
+
+    # Force a tiny, deterministic grid so the committed fixtures stay small.
+    ip = processor.image_processor
+    ip.min_pixels = spec["min_pixels"]
+    ip.max_pixels = spec["max_pixels"]
+    ip.size = {"shortest_edge": spec["min_pixels"], "longest_edge": spec["max_pixels"]}
+
+    manifest = {
+        "model_repo": spec["repo"],
+        "compute_dtype": "float16",
+        "prompt": spec["prompt"],
+        "image_size": spec["image_size"],
+        "min_pixels": spec["min_pixels"],
+        "max_pixels": spec["max_pixels"],
+        "image_token_id": int(getattr(cfg, "image_token_index", 151655)),
+        "arrays": {},
+    }
+
+    def save(name, arr):
+        np_arr = np.array(arr) if isinstance(arr, mx.array) else np.asarray(arr)
+        np.save(os.path.join(fixtures_dir, name + ".npy"), np_arr)
+        manifest["arrays"][name] = {"shape": list(np_arr.shape), "dtype": str(np_arr.dtype)}
+        print(f"  wrote {name}.npy  shape={np_arr.shape} dtype={np_arr.dtype}")
+
+    # Deterministic RGB image (committed both as .npy — the canonical decoded
+    # input — and .png for eyeballing).
+    n = spec["image_size"]
+    rgb = (np.random.RandomState(1234).rand(n, n, 3) * 255).astype(np.uint8)
+    Image.fromarray(rgb, "RGB").save(os.path.join(fixtures_dir, "image.png"))
+    save("image_rgb", rgb)
+
+    formatted = apply_chat_template(processor, cfg, spec["prompt"], num_images=1)
+    img = Image.fromarray(rgb, "RGB")
+    inp = prepare_inputs(processor, images=[img], prompts=[formatted],
+                         image_token_index=manifest["image_token_id"])
+    ids, pv, thw, am = (inp["input_ids"], inp["pixel_values"],
+                        inp["image_grid_thw"], inp["attention_mask"])
+    save("input_ids", np.array(ids, dtype=np.int32))
+    save("attention_mask", np.array(am, dtype=np.int32))
+    save("pixel_values", np.array(pv, dtype=np.float32))  # preprocessing output
+    save("image_grid_thw", np.array(thw, dtype=np.int32))
+
+    # Vision tower: merged patch features + the DeepStack per-layer features.
+    pv16 = pv.astype(mx.float16)
+    vit_out, deepstack = model.vision_tower(pv16, thw)
+    mx.eval(vit_out, *deepstack)
+    save("vit_out", vit_out)
+    for i, d in enumerate(deepstack):
+        save(f"deepstack_{i}", d)
+
+    # Interleaved M-RoPE 3D position ids (the hard front-half of the LLM fusion).
+    pos_ids, _ = model.language_model.get_rope_index(ids, thw, None, am)
+    save("pos_ids", np.array(pos_ids, dtype=np.int32))
+
+    # Image-embedding merge: token embeddings, then features scattered into the
+    # <|image_pad|> slots.
+    save("embeds_text", model.language_model.model.embed_tokens(ids))
+    feats = model.get_input_embeddings(ids, pv16, image_grid_thw=thw, mask=am)
+    save("embeds_merged", feats.inputs_embeds)
+    save("visual_pos_masks", np.array(feats.visual_pos_masks, dtype=np.int32))
+
+    # Full forward to logits; dump the last position + its argmax.
+    logits = model(ids, pixel_values=pv16, image_grid_thw=thw, mask=am).logits
+    logits_last = logits[:, -1, :]
+    save("logits_last", logits_last)
+    save("argmax", np.array(mx.argmax(logits_last, axis=-1), dtype=np.int32))
+
+    with open(os.path.join(fixtures_dir, "manifest.json"), "w") as f:
+        json.dump(manifest, f, indent=2)
+    print(f"\nwrote manifest.json ({len(manifest['arrays'])} arrays)")
+
+
 def dump_tokenizer_only(spec):
     """Tokenizer-only dump for a family the C++ engine tokenizes but does not run
     (e.g. Gemma). Downloads just the tokenizer files (no weights) from an ungated
@@ -301,6 +429,10 @@ def main():
     ap.add_argument("--model", choices=sorted(MODELS), default="llama")
     args = ap.parse_args()
     spec = MODELS[args.model]
+
+    if spec.get("vlm"):
+        dump_vlm(spec)
+        return
 
     if spec.get("tokenizer_only"):
         dump_tokenizer_only(spec)
