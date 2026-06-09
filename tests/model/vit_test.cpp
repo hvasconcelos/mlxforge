@@ -47,3 +47,17 @@ TEST_CASE("Qwen3-VL ViT: interpolated position embeddings match the reference") 
   mx::eval(pos);
   assert_close(pos, load_qwen3_vl_npy("vit_pos_embed.npy"));
 }
+
+TEST_CASE("Qwen3-VL ViT: block 0 (attention + MLP) matches the reference") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping ViT block-0 test");
+    return;
+  }
+  const VitEncoder& vit = shared_qwen3_vl_vit();
+  mx::array grid = load_qwen3_vl_npy("image_grid_thw.npy");
+  // Block input is patch_embed + interpolated pos_embed, in the patch dtype (fp16).
+  mx::array hs = mx::add(vit.patch_embed(load_qwen3_vl_npy("pixel_values.npy")), vit.pos_embed(grid));
+  mx::array out = vit.block(hs, 0, vit.rope_2d_freqs(grid));
+  mx::eval(out);
+  assert_close(out, load_qwen3_vl_npy("vit_block0.npy"));
+}

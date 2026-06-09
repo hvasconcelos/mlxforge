@@ -50,9 +50,22 @@ class VitEncoder {
   // then permuted into the merger's block order.
   mx::array pos_embed(const mx::array& grid_thw) const;
 
+  // One ViT transformer block (layer index `i`): norm1 -> 2D-RoPE attention ->
+  // residual -> norm2 -> gelu-tanh MLP -> residual. `freqs` is rope_2d_freqs().
+  // x is (num_tokens, vit_hidden). Gated (block 0) against vit_block0.
+  mx::array block(const mx::array& x, int i, const mx::array& freqs) const;
+
  private:
   // y = x @ W^T + b for a ViT Linear stored under "<key>.weight" / "<key>.bias".
   mx::array linear(const mx::array& x, const std::string& key) const;
+  // LayerNorm (weight + bias) under "<prefix>.weight" / "<prefix>.bias".
+  mx::array layer_norm(const mx::array& x, const std::string& prefix) const;
+  // Full self-attention over all patches (single image), 2D RoPE on Q/K.
+  mx::array attention(const mx::array& x, int i, const mx::array& freqs) const;
+  // gelu-tanh MLP: linear_fc2(gelu_tanh(linear_fc1(x))).
+  mx::array vision_mlp(const mx::array& x, int i) const;
+  // Weight-key prefix for block `i`, e.g. "visual.blocks.3".
+  std::string block_key(int i) const;
 
   VisionConfig cfg_;
   const Weights& w_;

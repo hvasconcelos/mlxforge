@@ -4,6 +4,7 @@
 #include <tuple>
 #include <vector>
 
+#include "mlx/fast.h"
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
@@ -141,6 +142,80 @@ mx::array VitEncoder::pos_embed(const mx::array& grid_thw) const {
 
   mx::array out = num_images == 1 ? per_image[0] : mx::concatenate(per_image, 0);
   return mx::astype(out, table.dtype());  // back to the table's fp16
+}
+
+std::string VitEncoder::block_key(int i) const {
+  return "visual.blocks." + std::to_string(i);
+}
+
+mx::array VitEncoder::layer_norm(const mx::array& x, const std::string& prefix) const {
+  return mx::fast::layer_norm(x, w_.at(prefix + ".weight"), w_.at(prefix + ".bias"), 1e-6f);
+}
+
+namespace {
+// Tanh-approximation GELU (nn.GELU(approx="tanh")), the ViT MLP activation:
+// 0.5 * x * (1 + tanh(sqrt(2/pi) * (x + 0.044715 x^3))).
+mx::array gelu_tanh(const mx::array& x) {
+  const float c = 0.7978845608028654f;  // sqrt(2/pi)
+  mx::array x3 = mx::multiply(mx::multiply(x, x), x);
+  mx::array inner = mx::multiply(mx::array(c), mx::add(x, mx::multiply(mx::array(0.044715f), x3)));
+  return mx::multiply(mx::multiply(mx::array(0.5f), x), mx::add(mx::array(1.0f), mx::tanh(inner)));
+}
+
+// NeoX-style half rotation: concat(-x[..., d/2:], x[..., :d/2]).
+mx::array rotate_half(const mx::array& x) {
+  const int d = x.shape().back();
+  mx::array x1 = mx::slice(x, {0, 0, 0}, {x.shape()[0], x.shape()[1], d / 2});
+  mx::array x2 = mx::slice(x, {0, 0, d / 2}, {x.shape()[0], x.shape()[1], d});
+  return mx::concatenate({mx::negative(x2), x1}, -1);
+}
+}  // namespace
+
+mx::array VitEncoder::attention(const mx::array& x, int i, const mx::array& freqs) const {
+  const int seq = x.shape()[0];
+  const int heads = cfg_.num_heads;
+  const int hd = cfg_.head_dim();
+  const float scale = 1.0f / std::sqrt(static_cast<float>(hd));
+
+  // Fused QKV (with bias): (seq, 3*hidden) -> (seq, 3, heads, hd) -> q/k/v.
+  mx::array qkv = mx::reshape(linear(x, block_key(i) + ".attn.qkv"), {seq, 3, heads, hd});
+  auto part = [&](int idx) {
+    return mx::reshape(mx::slice(qkv, {0, idx, 0, 0}, {seq, idx + 1, heads, hd}), {seq, heads, hd});
+  };
+  mx::array q = part(0), k = part(1), v = part(2);  // (seq, heads, hd)
+
+  // 2D RoPE on Q/K: cos/sin from the precomputed (seq, hd/2) angle table, tiled
+  // to hd, broadcast over heads. Computed in fp32, cast back to the input dtype.
+  mx::array cos = mx::cos(freqs), sin = mx::sin(freqs);  // (seq, hd/2)
+  cos = mx::reshape(mx::concatenate({cos, cos}, -1), {seq, 1, hd});
+  sin = mx::reshape(mx::concatenate({sin, sin}, -1), {seq, 1, hd});
+  auto rope = [&](const mx::array& t) {
+    mx::array tf = mx::astype(t, mx::float32);
+    mx::array r = mx::add(mx::multiply(tf, cos), mx::multiply(rotate_half(tf), sin));
+    return mx::astype(r, t.dtype());
+  };
+  q = rope(q);
+  k = rope(k);
+
+  // Full attention over all patches of the (single) image: (seq,heads,hd) ->
+  // (1,heads,seq,hd) -> SDPA (no mask) -> (seq, hidden).
+  auto to_bhsd = [&](const mx::array& t) {
+    return mx::transpose(mx::reshape(t, {1, seq, heads, hd}), {0, 2, 1, 3});
+  };
+  mx::array out = mx::fast::scaled_dot_product_attention(to_bhsd(q), to_bhsd(k), to_bhsd(v),
+                                                         scale, /*mask_mode=*/"");
+  out = mx::reshape(mx::transpose(out, {0, 2, 1, 3}), {seq, heads * hd});
+  return linear(out, block_key(i) + ".attn.proj");
+}
+
+mx::array VitEncoder::vision_mlp(const mx::array& x, int i) const {
+  mx::array h = linear(x, block_key(i) + ".mlp.linear_fc1");
+  return linear(gelu_tanh(h), block_key(i) + ".mlp.linear_fc2");
+}
+
+mx::array VitEncoder::block(const mx::array& x, int i, const mx::array& freqs) const {
+  mx::array h = mx::add(x, attention(layer_norm(x, block_key(i) + ".norm1"), i, freqs));
+  return mx::add(h, vision_mlp(layer_norm(h, block_key(i) + ".norm2"), i));
 }
 
 }  // namespace mlxforge
