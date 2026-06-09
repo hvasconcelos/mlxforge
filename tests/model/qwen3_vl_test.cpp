@@ -15,6 +15,7 @@
 #include "core/weights.h"
 #include "model/model_factory.h"
 #include "model/qwen3_vl.h"
+#include "runtime/multimodal_stream.h"
 #include "tokenizer/tokenizer.h"
 #include "vision/preprocess.h"
 #include "support/model_fixture.h"
@@ -204,6 +205,26 @@ TEST_CASE("Qwen3-VL: greedy multimodal generation matches the reference") {
     ids.push_back(nxt);
   }
   assert_tokens_equal(greedy, load_qwen3_vl_token_ids("greedy_tokens.npy"));
+}
+
+TEST_CASE("Qwen3-VL: greedy_generate_multimodal runtime path reproduces the greedy tokens") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping multimodal runtime test");
+    return;
+  }
+  // The runtime entrypoint (the CLI's multimodal core), end to end.
+  const Qwen3VLModel& m = shared_qwen3_vl_model();
+  mx::array feats = load_qwen3_vl_npy("vit_out.npy");
+  std::vector<mx::array> deepstack = {load_qwen3_vl_npy("deepstack_0.npy"),
+                                      load_qwen3_vl_npy("deepstack_1.npy"),
+                                      load_qwen3_vl_npy("deepstack_2.npy")};
+  std::vector<int> ids = load_qwen3_vl_token_ids("input_ids.npy");
+  mx::array pos = mrope_position_ids(ids, grid_fixture(), qwen3_vl_config());
+
+  // No EOS stop so the run matches the fixed-length reference greedy stream.
+  GenerateResult r = greedy_generate_multimodal(m, ids, feats, deepstack, pos,
+                                                /*max_tokens=*/10, /*eos_ids=*/{});
+  assert_tokens_equal(r.tokens, load_qwen3_vl_token_ids("greedy_tokens.npy"));
 }
 
 TEST_CASE("Qwen3-VL: cached KV decode reproduces the greedy tokens") {
