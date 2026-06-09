@@ -11,6 +11,8 @@
 #include "mlx/transforms.h"
 
 #include "core/config.h"
+#include "core/weights.h"
+#include "model/model_factory.h"
 #include "model/qwen3_vl.h"
 #include "support/model_fixture.h"
 #include "support/reference.h"
@@ -112,4 +114,15 @@ TEST_CASE("Qwen3-VL: full multimodal forward matches the reference logits") {
   std::vector<int> got = {static_cast<int>(mx::argmax(last, /*axis=*/-1).item<int>())};
   assert_tokens_equal(got, expect_argmax);
   assert_close(last, load_qwen3_vl_npy("logits_last.npy"), /*rtol=*/5e-2f, /*atol=*/5e-2f);
+}
+
+TEST_CASE("Qwen3-VL: model factory dispatches a vision config to Qwen3VLModel") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping factory-dispatch test");
+    return;
+  }
+  ModelConfig cfg = ModelConfig::from_file(qwen3_vl_model_dir() + "/config.json");
+  REQUIRE(cfg.has_vision_tower());
+  std::unique_ptr<DecoderModel> model = create_model(cfg, load_weights(qwen3_vl_model_dir(), cfg));
+  CHECK(dynamic_cast<Qwen3VLModel*>(model.get()) != nullptr);
 }
