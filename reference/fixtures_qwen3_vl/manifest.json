@@ -71,6 +71,34 @@
       ],
       "dtype": "float16"
     },
+    "vit_patch_embed": {
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float16"
+    },
+    "vit_pos_embed": {
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float16"
+    },
+    "vit_rotary": {
+      "shape": [
+        16,
+        32
+      ],
+      "dtype": "float32"
+    },
+    "vit_block0": {
+      "shape": [
+        16,
+        1024
+      ],
+      "dtype": "float16"
+    },
     "pos_ids": {
       "shape": [
         3,

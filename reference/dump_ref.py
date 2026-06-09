@@ -377,6 +377,29 @@ def dump_vlm(spec):
     for i, d in enumerate(deepstack):
         save(f"deepstack_{i}", d)
 
+    # ViT internals — replicate VisionModel.__call__ to gate each C++ stage in
+    # isolation (patch-embed, learned pos-embed, 2D RoPE, block 0). The final
+    # replicated hidden state is asserted equal to the module's own vit_out so
+    # this hand-rolled walk can't silently drift from the reference.
+    vt = model.vision_tower
+    pe = vt.patch_embed(pv16)                     # (patches, vit_hidden)
+    pos = vt.fast_pos_embed_interpolate(thw)      # learned, interpolated pos-embed
+    rotary = vt.rot_pos_emb(thw).reshape(pe.shape[0], -1)  # 2D RoPE freqs (patches, hd/2)
+    save("vit_patch_embed", pe)
+    save("vit_pos_embed", pos)
+    save("vit_rotary", rotary)
+    hs = pe + pos
+    # cu_seqlens for a single image (grid t,h,w): one segment of h*w patches.
+    import mlx.core as _mx
+    t, h, w = [int(x) for x in np.array(thw)[0]]
+    cu = _mx.array([0, h * w], dtype=_mx.int32)
+    hs = vt.blocks[0](hs, cu_seqlens=cu, rotary_pos_emb=rotary)
+    save("vit_block0", hs)
+    for blk in vt.blocks[1:]:
+        hs = blk(hs, cu_seqlens=cu, rotary_pos_emb=rotary)
+    repl = vt.merger(hs)
+    assert mx.allclose(repl, vit_out, atol=1e-3), "replicated ViT walk diverged from module vit_out"
+
     # Interleaved M-RoPE 3D position ids (the hard front-half of the LLM fusion).
     pos_ids, _ = model.language_model.get_rope_index(ids, thw, None, am)
     save("pos_ids", np.array(pos_ids, dtype=np.int32))
