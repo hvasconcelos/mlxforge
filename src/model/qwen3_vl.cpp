@@ -6,6 +6,29 @@
 
 namespace mlxforge {
 
+mx::array merge_image_features(const mx::array& token_embeds, const mx::array& image_features,
+                               const std::vector<int>& input_ids, int image_token_id) {
+  // Splice the sequence into runs of text / image rows, taking text rows from the
+  // token embeddings and image rows from the ViT features (consumed in order).
+  const int seq = static_cast<int>(input_ids.size());
+  const int hidden = token_embeds.shape()[1];
+  std::vector<mx::array> parts;
+  int i = 0, feat_off = 0;
+  while (i < seq) {
+    const bool is_image = input_ids[i] == image_token_id;
+    int j = i;
+    while (j < seq && (input_ids[j] == image_token_id) == is_image) ++j;
+    if (is_image) {
+      parts.push_back(mx::slice(image_features, {feat_off, 0}, {feat_off + (j - i), hidden}));
+      feat_off += j - i;
+    } else {
+      parts.push_back(mx::slice(token_embeds, {i, 0}, {j, hidden}));
+    }
+    i = j;
+  }
+  return mx::concatenate(parts, 0);
+}
+
 mx::array mrope_position_ids(const std::vector<int>& input_ids,
                              const std::vector<std::array<int, 3>>& image_grids,
                              const ModelConfig& cfg) {

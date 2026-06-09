@@ -30,4 +30,11 @@ mx::array mrope_position_ids(const std::vector<int>& input_ids,
                              const std::vector<std::array<int, 3>>& image_grids,
                              const ModelConfig& cfg);
 
+// Scatter ViT features into the image-placeholder rows of the token embeddings.
+// token_embeds (seq, hidden) fp16; image_features (num_image_tokens, hidden) in
+// sequence order; input_ids identify the image_token_id positions. Returns the
+// merged (seq, hidden). Non-image rows are the original embeddings.
+mx::array merge_image_features(const mx::array& token_embeds, const mx::array& image_features,
+                               const std::vector<int>& input_ids, int image_token_id);
+
 }  // namespace mlxforge

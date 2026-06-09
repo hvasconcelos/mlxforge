@@ -46,3 +46,18 @@ TEST_CASE("Qwen3-VL: interleaved M-RoPE position ids match the reference") {
   mx::array expected = mx::reshape(load_qwen3_vl_npy("pos_ids.npy"), {3, static_cast<int>(ids.size())});
   assert_close(mx::astype(pos, mx::float32), mx::astype(expected, mx::float32));
 }
+
+TEST_CASE("Qwen3-VL: image-feature merge matches the reference") {
+  // Pure fixture logic: embeds_text (token embeddings) + vit_out (image features)
+  // scattered into the image_pad rows must equal embeds_merged.
+  std::vector<int> ids = load_qwen3_vl_token_ids("input_ids.npy");
+  const int seq = static_cast<int>(ids.size());
+  mx::array text = mx::reshape(load_qwen3_vl_npy("embeds_text.npy"), {seq, -1});
+  mx::array feats = load_qwen3_vl_npy("vit_out.npy");
+
+  mx::array merged = merge_image_features(text, feats, ids, /*image_token_id=*/151655);
+  mx::eval(merged);
+
+  mx::array expected = mx::reshape(load_qwen3_vl_npy("embeds_merged.npy"), {seq, -1});
+  assert_close(merged, expected);
+}
