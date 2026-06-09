@@ -174,3 +174,33 @@ TEST_CASE("Qwen3-VL: chat template with an image matches the reference input_ids
   std::vector<int> ids = tok.apply_chat_template({m}, /*add_generation_prompt=*/true);
   assert_tokens_equal(ids, load_qwen3_vl_token_ids("input_ids.npy"));
 }
+
+TEST_CASE("Qwen3-VL: greedy multimodal generation matches the reference") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping greedy generation test");
+    return;
+  }
+  // Full-recompute greedy loop (the cached decode path is a later optimization):
+  // each step re-runs the multimodal forward over the growing sequence with the
+  // fixed image features, recomputing M-RoPE positions. Must match the reference
+  // token-for-token.
+  const Qwen3VLModel& m = shared_qwen3_vl_model();
+  mx::array feats = load_qwen3_vl_npy("vit_out.npy");
+  std::vector<mx::array> deepstack = {load_qwen3_vl_npy("deepstack_0.npy"),
+                                      load_qwen3_vl_npy("deepstack_1.npy"),
+                                      load_qwen3_vl_npy("deepstack_2.npy")};
+  std::vector<std::array<int, 3>> grids = grid_fixture();
+
+  std::vector<int> ids = load_qwen3_vl_token_ids("input_ids.npy");
+  std::vector<int> greedy;
+  for (int step = 0; step < 10; ++step) {
+    mx::array pos = mrope_position_ids(ids, grids, qwen3_vl_config());
+    mx::array logits = m.forward_multimodal(ids, feats, deepstack, pos);
+    const int seq = static_cast<int>(ids.size()), vocab = logits.shape()[2];
+    mx::array last = mx::reshape(mx::slice(logits, {0, seq - 1, 0}, {1, seq, vocab}), {1, vocab});
+    const int nxt = static_cast<int>(mx::argmax(last, -1).item<int>());
+    greedy.push_back(nxt);
+    ids.push_back(nxt);
+  }
+  assert_tokens_equal(greedy, load_qwen3_vl_token_ids("greedy_tokens.npy"));
+}

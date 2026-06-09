@@ -440,6 +440,20 @@ def dump_vlm(spec):
     save("logits_last", logits_last)
     save("argmax", np.array(mx.argmax(logits_last, axis=-1), dtype=np.int32))
 
+    # Greedy continuation as a full-recompute (no cache) argmax loop — the
+    # independent oracle the C++ multimodal generation must reproduce
+    # token-for-token. pixel_values are re-fed each step (image tokens stay in the
+    # growing prompt), so position ids and the image merge recompute correctly.
+    seq_ids = [int(x) for x in np.array(ids)[0]]
+    greedy = []
+    for _ in range(10):
+        cur = mx.array(seq_ids, dtype=mx.int32)[None]
+        step = model(cur, pixel_values=pv16, image_grid_thw=thw, mask=None).logits[:, -1, :]
+        nxt = int(mx.argmax(step, axis=-1).item())
+        greedy.append(nxt)
+        seq_ids.append(nxt)
+    save("greedy_tokens", np.array(greedy, dtype=np.int32))
+
     with open(os.path.join(fixtures_dir, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
     print(f"\nwrote manifest.json ({len(manifest['arrays'])} arrays)")

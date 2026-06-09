@@ -168,6 +168,12 @@
         1
       ],
       "dtype": "int32"
+    },
+    "greedy_tokens": {
+      "shape": [
+        10
+      ],
+      "dtype": "int32"
     }
   }
 }
