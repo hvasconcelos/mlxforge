@@ -253,6 +253,34 @@ TEST_CASE("Qwen3-VL: generate_from_image composes the full pipeline") {
   assert_tokens_equal(r.tokens, load_qwen3_vl_token_ids("greedy_tokens.npy"));
 }
 
+TEST_CASE("Qwen3-VL: generate_multimodal handles multiple images") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping multi-image test");
+    return;
+  }
+  // Two images in one user turn: the prompt carries two image_pad runs and the
+  // ViT features / DeepStack are concatenated in order. We can't gate exact
+  // tokens (no two-image fixture), so this checks the plumbing runs end to end.
+  const Qwen3VLModel& m = shared_qwen3_vl_model();
+  const VitEncoder& vit = shared_qwen3_vl_vit();
+  Tokenizer tok = Tokenizer::from_file(qwen3_vl_model_dir() + "/tokenizer.json", -1, ChatFormat::Qwen3);
+  mx::array rgb = load_qwen3_vl_npy("image_rgb.npy");  // 64x64
+
+  PreprocessConfig pc = PreprocessConfig::from(*qwen3_vl_config().vision);
+  pc.min_pixels = 256;
+  pc.max_pixels = 4096;  // identity resize -> grid (1,4,4) -> 4 tokens/image
+  const int n = image_token_count(64, 64, pc);
+  Tokenizer::Message msg;
+  msg.role = "user";
+  msg.content = "Compare these two images.";
+  msg.image_token_counts = {n, n};  // two image runs
+  std::vector<int> ids = tok.apply_chat_template({msg}, /*add_generation_prompt=*/true);
+
+  GenerateResult r =
+      generate_multimodal(m, vit, ids, {rgb, rgb}, /*max_tokens=*/8, /*eos=*/{}, /*on_token=*/{}, &pc);
+  CHECK(r.tokens.size() == 8);  // concatenation + scatter + M-RoPE over two images ran
+}
+
 TEST_CASE("Qwen3-VL: worker serves a multimodal request from another thread") {
   if (!qwen3_vl_model_available()) {
     MESSAGE("Qwen3-VL model not found in HF cache; skipping multimodal worker test");
@@ -280,7 +308,7 @@ TEST_CASE("Qwen3-VL: worker serves a multimodal request from another thread") {
 
   auto req = std::make_shared<mlxforge::Request>();
   req->mm_text = "What is in this image?";
-  req->mm_image = img_bytes;
+  req->mm_images.push_back(img_bytes);
   req->max_tokens = 10;
   // Empty eos_ids so the run matches the fixed-length reference greedy stream.
   sched.submit(req);

@@ -1,8 +1,10 @@
 #include "runtime/multimodal_stream.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <string>
+#include <vector>
 
 #include "cache/kv_cache.h"
 #include "sample/sampler.h"
@@ -69,31 +71,56 @@ GenerateResult greedy_generate_multimodal(const Qwen3VLModel& model,
 }
 
 GenerateResult generate_multimodal(const Qwen3VLModel& model, const VitEncoder& vit,
-                                   const std::vector<int>& prompt_ids, const mx::array& image_rgb,
-                                   int max_tokens, const std::vector<int>& eos_ids,
+                                   const std::vector<int>& prompt_ids,
+                                   const std::vector<mx::array>& images_rgb, int max_tokens,
+                                   const std::vector<int>& eos_ids,
                                    const std::function<void(int)>& on_token,
                                    const PreprocessConfig* pcfg) {
   const ModelConfig& cfg = model.config();
+  if (images_rgb.empty()) throw std::runtime_error("generate_multimodal: no images");
+  const PreprocessConfig pc = pcfg ? *pcfg : PreprocessConfig::from(*cfg.vision);
 
-  // Smart-resize + preprocess -> ViT encode.
-  PreprocessConfig pc = pcfg ? *pcfg : PreprocessConfig::from(*cfg.vision);
-  Preprocessed pre = preprocess_image(image_rgb, pc);
-  mx::array grid(pre.grid_thw.data(), {1, 3}, mx::int32);
-  VitEncoder::Output v = vit.forward(pre.pixel_values, grid);
-
-  // The prompt's placeholder run must match the merged-patch count, or the
-  // feature scatter (merge_image_features) misaligns.
-  const int merged = pre.grid_thw[0] * pre.grid_thw[1] * pre.grid_thw[2] / cfg.vision->merge_unit();
-  const int pads =
-      static_cast<int>(std::count(prompt_ids.begin(), prompt_ids.end(), cfg.image_token_id));
-  if (pads != merged) {
-    throw std::runtime_error("multimodal prompt has " + std::to_string(pads) +
-                             " image placeholder(s) but the image yields " + std::to_string(merged));
+  // Smart-resize + preprocess + ViT-encode each image; collect per-image merged
+  // features, per-layer DeepStack features, and the patch grids (in order).
+  std::vector<std::array<int, 3>> grids;
+  std::vector<mx::array> hidden_parts;
+  std::vector<std::vector<mx::array>> deepstack_parts;  // [image][layer]
+  int merged_total = 0;
+  for (const auto& rgb : images_rgb) {
+    Preprocessed pre = preprocess_image(rgb, pc);
+    mx::array grid(pre.grid_thw.data(), {1, 3}, mx::int32);
+    VitEncoder::Output v = vit.forward(pre.pixel_values, grid);
+    grids.push_back(pre.grid_thw);
+    hidden_parts.push_back(v.hidden);
+    deepstack_parts.push_back(v.deepstack);
+    merged_total += pre.grid_thw[0] * pre.grid_thw[1] * pre.grid_thw[2] / cfg.vision->merge_unit();
   }
 
-  mx::array pos = mrope_position_ids(prompt_ids, {pre.grid_thw}, cfg);
-  return greedy_generate_multimodal(model, prompt_ids, v.hidden, v.deepstack, pos, max_tokens,
-                                    eos_ids, on_token);
+  // The prompt's placeholder runs must total the merged-patch count, or the
+  // feature scatter (merge_image_features) misaligns.
+  const int pads =
+      static_cast<int>(std::count(prompt_ids.begin(), prompt_ids.end(), cfg.image_token_id));
+  if (pads != merged_total) {
+    throw std::runtime_error("multimodal prompt has " + std::to_string(pads) +
+                             " image placeholder(s) but the image(s) yield " +
+                             std::to_string(merged_total));
+  }
+
+  // Concatenate features (and each DeepStack layer) across images, in order.
+  auto cat = [](const std::vector<mx::array>& parts) {
+    return parts.size() == 1 ? parts[0] : mx::concatenate(parts, /*axis=*/0);
+  };
+  mx::array features = cat(hidden_parts);
+  std::vector<mx::array> deepstack;
+  for (size_t layer = 0; layer < deepstack_parts[0].size(); ++layer) {
+    std::vector<mx::array> layer_parts;
+    for (const auto& per_image : deepstack_parts) layer_parts.push_back(per_image[layer]);
+    deepstack.push_back(cat(layer_parts));
+  }
+
+  mx::array pos = mrope_position_ids(prompt_ids, grids, cfg);
+  return greedy_generate_multimodal(model, prompt_ids, features, deepstack, pos, max_tokens, eos_ids,
+                                    on_token);
 }
 
 GenerateResult generate_from_image(const Qwen3VLModel& model, const VitEncoder& vit,
@@ -112,7 +139,7 @@ GenerateResult generate_from_image(const Qwen3VLModel& model, const VitEncoder& 
   msg.content = user_text;
   msg.image_token_counts = {n};
   std::vector<int> ids = tokenizer.apply_chat_template({msg}, /*add_generation_prompt=*/true);
-  return generate_multimodal(model, vit, ids, image_rgb, max_tokens, eos_ids, on_token, &pc);
+  return generate_multimodal(model, vit, ids, {image_rgb}, max_tokens, eos_ids, on_token, &pc);
 }
 
 }  // namespace mlxforge

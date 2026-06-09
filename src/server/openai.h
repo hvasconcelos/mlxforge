@@ -18,10 +18,11 @@ struct ChatRequest {
   std::string model;
   std::vector<Tokenizer::Message> messages;  // chat; for /v1/completions a single user msg
   bool is_chat = true;                        // chat vs raw completion
-  // Decoded bytes of the first image attached to the conversation (empty = none).
-  // When set, the request is served as a single-stream Qwen3-VL multimodal turn:
-  // the worker decodes the image, runs the ViT, and generates from the user text.
-  std::string image;
+  // Decoded bytes of each image attached to the conversation, in order (empty =
+  // none). When non-empty the request is served as a single-stream Qwen3-VL
+  // multimodal turn: each image is decoded, ViT-encoded, and its placeholder run
+  // expanded into the prompt.
+  std::vector<std::string> images;
   SamplingParams params;
   int max_tokens = 128;
   bool stream = false;

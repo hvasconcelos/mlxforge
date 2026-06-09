@@ -217,7 +217,8 @@ TEST_CASE("parse_chat_request extracts an image_url data URI as bytes") {
   ChatRequest r = parse_chat_request(body);
   REQUIRE(r.messages.size() == 1);
   CHECK(r.messages[0].content == "what is this?");
-  CHECK(r.image == "hello");  // routed to the multimodal path by make_request
+  REQUIRE(r.images.size() == 1);
+  CHECK(r.images[0] == "hello");  // routed to the multimodal path by make_request
 }
 
 TEST_CASE("parse_chat_request rejects a non-data: image URL") {
@@ -233,5 +234,21 @@ TEST_CASE("parse_chat_request leaves image empty for text-only content") {
   json body = json::parse(R"({
     "messages": [{"role": "user", "content": "just text"}], "max_tokens": 8
   })");
-  CHECK(parse_chat_request(body).image.empty());
+  CHECK(parse_chat_request(body).images.empty());
+}
+
+TEST_CASE("parse_chat_request collects multiple images in order") {
+  // base64 "aGVsbG8=" -> "hello", "d29ybGQ=" -> "world".
+  json body = json::parse(R"({
+    "messages": [{"role": "user", "content": [
+      {"type": "text", "text": "compare these"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+      {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,d29ybGQ="}}
+    ]}],
+    "max_tokens": 8
+  })");
+  ChatRequest r = parse_chat_request(body);
+  REQUIRE(r.images.size() == 2);
+  CHECK(r.images[0] == "hello");
+  CHECK(r.images[1] == "world");
 }

@@ -87,14 +87,17 @@ struct Request {
   bool embedding_normalize = true;
   std::vector<float> embedding_result;
 
-  // Multimodal (Qwen3-VL) one-shot generation: when `mm_image` is non-empty the
-  // worker decodes the image, runs the ViT, renders the chat prompt from
-  // `mm_text` with the image placeholders, and streams generated tokens
-  // single-stream (not merged into the continuous-decode batch). `prompt_ids` is
-  // unused on this path — the worker builds the prompt itself.
-  std::string mm_text;                 // the user's text prompt
-  std::vector<std::uint8_t> mm_image;  // raw encoded image bytes (JPEG/PNG/…)
-  bool is_multimodal() const { return !mm_image.empty(); }
+  // Multimodal (Qwen3-VL) one-shot generation: when `mm_images` is non-empty the
+  // worker decodes each image, runs the ViT, and streams generated tokens
+  // single-stream (not merged into the continuous-decode batch). Two prompt forms:
+  //   - `prompt_ids` set (the server): already chat-templated with the image
+  //     placeholder runs expanded in order — the worker uses it as-is.
+  //   - `prompt_ids` empty (C ABI / CLI): `mm_text` is a single user turn the
+  //     worker renders itself (one image).
+  // Images are consumed in `mm_images` order, matching the <|image_pad|> runs.
+  std::string mm_text;                              // single-turn user text (mm_text path)
+  std::vector<std::vector<std::uint8_t>> mm_images;  // raw encoded image bytes, in order
+  bool is_multimodal() const { return !mm_images.empty(); }
 
   // Set by the submitting thread (e.g. client disconnect); read by the worker.
   std::atomic<bool> cancelled{false};

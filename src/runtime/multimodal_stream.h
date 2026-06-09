@@ -36,14 +36,16 @@ GenerateResult greedy_generate_multimodal(const Qwen3VLModel& model,
                                           const std::function<void(int)>& on_token = {});
 
 // Generate from an already-templated multimodal prompt: `prompt_ids` must already
-// contain the image placeholder run (image_token_id × N) at the right position —
-// the caller renders the full chat history (system + turns) and sizes N from the
-// image dimensions. Preprocesses + ViT-encodes `image_rgb`, checks N matches the
-// merged-patch count, builds M-RoPE positions, and greedily generates. `pcfg`
-// overrides the preprocessing config; NULL uses the model's defaults.
+// contain the image placeholder runs (image_token_id × Nᵢ) in order — the caller
+// renders the full chat history and sizes each Nᵢ from that image's dimensions.
+// Preprocesses + ViT-encodes each of `images_rgb`, concatenates their features /
+// DeepStack outputs in order, checks the total placeholder count matches, builds
+// M-RoPE positions over all images, and greedily generates. `pcfg` overrides the
+// preprocessing config; NULL uses the model's defaults.
 GenerateResult generate_multimodal(const Qwen3VLModel& model, const VitEncoder& vit,
-                                   const std::vector<int>& prompt_ids, const mx::array& image_rgb,
-                                   int max_tokens, const std::vector<int>& eos_ids,
+                                   const std::vector<int>& prompt_ids,
+                                   const std::vector<mx::array>& images_rgb, int max_tokens,
+                                   const std::vector<int>& eos_ids,
                                    const std::function<void(int)>& on_token = {},
                                    const PreprocessConfig* pcfg = nullptr);
 

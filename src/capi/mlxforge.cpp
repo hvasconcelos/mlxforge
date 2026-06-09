@@ -276,7 +276,7 @@ mlxforge_request* mlxforge_submit_image(mlxforge_engine* engine, const char* pro
   try {
     auto req = std::make_shared<mlxforge::Request>();
     req->mm_text = prompt ? prompt : "";
-    req->mm_image.assign(image_data, image_data + image_len);
+    req->mm_images.emplace_back(image_data, image_data + image_len);
     req->params = to_params(sampling);
     req->max_tokens = sampling_max_tokens(sampling);
     req->eos_ids = engine->engine->config().eos_token_ids;

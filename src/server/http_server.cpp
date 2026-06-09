@@ -53,27 +53,30 @@ std::shared_ptr<Request> HttpServer::make_request(const ChatRequest& cr) const {
   req->max_tokens = cr.max_tokens;
   req->eos_ids = cfg_.eos_token_ids;
 
-  // Multimodal (Qwen3-VL): an attached image makes this a single-stream vision
-  // turn. We render the FULL chat history (system + prior turns) here, sizing the
-  // <|image_pad|> run from the image's dimensions (a CPU probe — no decode), and
-  // attach it to the last user turn. The worker decodes + ViT-encodes the bytes
-  // and generates from these prompt_ids.
-  if (!cr.image.empty()) {
+  // Multimodal (Qwen3-VL): attached image(s) make this a single-stream vision
+  // turn. We render the FULL chat history (system + prior turns) here, sizing each
+  // <|image_pad|> run from that image's dimensions (a CPU probe — no decode), and
+  // attach the runs (in order) to the last user turn. The worker decodes +
+  // ViT-encodes the bytes and generates from these prompt_ids.
+  if (!cr.images.empty()) {
     if (!cfg_.has_vision_tower())
       throw std::runtime_error("this model does not support image input");
-    const std::array<int, 2> hw =
-        image_info(reinterpret_cast<const uint8_t*>(cr.image.data()), cr.image.size());
-    const int n = image_token_count(hw[0], hw[1], PreprocessConfig::from(*cfg_.vision));
-
-    std::vector<Tokenizer::Message> msgs = cr.messages;  // copy: set the placeholder count
+    const PreprocessConfig pc = PreprocessConfig::from(*cfg_.vision);
+    std::vector<int> counts;
+    for (const auto& img : cr.images) {
+      const std::array<int, 2> hw =
+          image_info(reinterpret_cast<const uint8_t*>(img.data()), img.size());
+      counts.push_back(image_token_count(hw[0], hw[1], pc));
+      req->mm_images.emplace_back(img.begin(), img.end());
+    }
+    std::vector<Tokenizer::Message> msgs = cr.messages;  // copy: set placeholder counts
     for (auto it = msgs.rbegin(); it != msgs.rend(); ++it) {
       if (it->role == "user") {
-        it->image_token_counts = {n};
+        it->image_token_counts = counts;
         break;
       }
     }
     req->prompt_ids = tok_->apply_chat_template(msgs, true, "", {}, cr.enable_thinking);
-    req->mm_image.assign(cr.image.begin(), cr.image.end());
     return req;
   }
 

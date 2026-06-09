@@ -76,7 +76,9 @@ void Worker::handle_multimodal(Request& req) {
     if (!vit_) {
       vit_ = std::make_unique<VitEncoder>(*model_->config().vision, model_->weights());
     }
-    mx::array image = decode_image(req.mm_image.data(), req.mm_image.size());
+    std::vector<mx::array> images;
+    images.reserve(req.mm_images.size());
+    for (const auto& bytes : req.mm_images) images.push_back(decode_image(bytes.data(), bytes.size()));
 
     int produced = 0;
     auto on_token = [&](int id) {
@@ -85,16 +87,16 @@ void Worker::handle_multimodal(Request& req) {
       ++produced;
     };
     // A caller that pre-rendered the full chat history (the server) supplies
-    // prompt_ids with the image placeholders already expanded; the simple path
-    // (C ABI / CLI) supplies just mm_text and we render one user turn.
+    // prompt_ids with the image placeholders already expanded (any number of
+    // images); the simple path (C ABI / CLI) supplies just mm_text + one image.
     GenerateResult r;
     if (!req.prompt_ids.empty()) {
-      r = generate_multimodal(*vl, *vit_, req.prompt_ids, image, req.max_tokens, req.eos_ids,
+      r = generate_multimodal(*vl, *vit_, req.prompt_ids, images, req.max_tokens, req.eos_ids,
                               on_token);
     } else {
       if (tok_ == nullptr) throw std::runtime_error("multimodal text prompt needs a tokenizer");
-      r = generate_from_image(*vl, *vit_, *tok_, req.mm_text, image, req.max_tokens, req.eos_ids,
-                              on_token);
+      r = generate_from_image(*vl, *vit_, *tok_, req.mm_text, images.front(), req.max_tokens,
+                              req.eos_ids, on_token);
     }
     req.finish_reason = r.hit_eos ? "stop" : "length";
   } catch (const std::exception& e) {

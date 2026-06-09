@@ -182,5 +182,6 @@ TEST_CASE("parse_messages_request extracts a base64 image block as bytes") {
     "max_tokens": 8
   })");
   ChatRequest r = parse_messages_request(body);
-  CHECK(r.image == "hello");
+  REQUIRE(r.images.size() == 1);
+  CHECK(r.images[0] == "hello");
 }
