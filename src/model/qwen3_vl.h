@@ -10,11 +10,14 @@
 #pragma once
 
 #include <array>
+#include <utility>
 #include <vector>
 
 #include "mlx/array.h"
 
 #include "core/config.h"
+#include "core/weights.h"
+#include "model/qwen3.h"
 
 namespace mlxforge {
 
@@ -36,5 +39,43 @@ mx::array mrope_position_ids(const std::vector<int>& input_ids,
 // merged (seq, hidden). Non-image rows are the original embeddings.
 mx::array merge_image_features(const mx::array& token_embeds, const mx::array& image_features,
                                const std::vector<int>& input_ids, int image_token_id);
+
+// Qwen3-VL model: a Qwen3 dense decoder (QK-Norm, inherited) with interleaved
+// M-RoPE in place of 1D RoPE and DeepStack injection into the first decoder
+// layers. The text path (attention/MLP/QK-norm) is reused from Qwen3Model; only
+// the position embedding and the per-layer vision injection differ.
+class Qwen3VLModel : public Qwen3Model {
+ public:
+  Qwen3VLModel(ModelConfig config, Weights weights);
+
+  struct RopedQK {
+    mx::array q, k;  // (1, n_heads/n_kv_heads, seq, head_dim) after M-RoPE
+  };
+  // Layer `i` Q/K after QK-Norm and interleaved M-RoPE. hidden (1, seq, hidden),
+  // position_ids (3, seq). Exposed for golden gating (llm_q_rope0 / llm_k_rope0).
+  RopedQK roped_qk(int i, const mx::array& hidden, const mx::array& position_ids) const;
+
+  // Full multimodal prefill for a single sequence: token ids + merged ViT
+  // features (scattered into the image_pad rows) + DeepStack features + 3D M-RoPE
+  // position ids -> logits (1, seq, vocab). DeepStack feature j is added at the
+  // image rows after decoder layer j.
+  mx::array forward_multimodal(const std::vector<int>& input_ids,
+                               const mx::array& image_features,
+                               const std::vector<mx::array>& deepstack,
+                               const mx::array& position_ids) const;
+
+ private:
+  // cos/sin for interleaved M-RoPE: position_ids (3, seq) -> each (seq, head_dim/2)
+  // float32. Frequency d uses the axis selected by mrope_selector_.
+  std::pair<mx::array, mx::array> mrope_cos_sin(const mx::array& position_ids) const;
+  // Apply half-split rotation with the M-RoPE cos/sin to x (B, heads, seq, hd).
+  mx::array apply_mrope(const mx::array& x, const mx::array& cos, const mx::array& sin) const;
+  // Self-attention for layer `i` with M-RoPE on Q/K (causal SDPA, GQA-native).
+  mx::array mm_attention(int i, const mx::array& x, const mx::array& cos,
+                         const mx::array& sin) const;
+
+  mx::array inv_freq_;        // (head_dim/2,) float32 inverse frequencies
+  mx::array mrope_selector_;  // (head_dim/2,) int32: t/h/w axis per frequency
+};
 
 }  // namespace mlxforge
