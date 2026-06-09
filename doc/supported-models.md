@@ -1,14 +1,15 @@
 # Supported models
 
 mlxforge runs LLaMA-family decoder-only transformers, including Qwen3 dense, Qwen3
-MoE, and Qwen3.5 hybrid (Gated-DeltaNet) models. The forward pass (the
-`DecoderModel` base in `model/`) is shared across families; what differs per family
-is a small set of deltas — the chat template and special-token handling, plus any
-per-family forward-pass tweak (Qwen3's QK-Norm, Qwen3 MoE's sparse MLP, Qwen3.5's
-gated attention + linear-attention layers) expressed as a subclass hook override —
-all selected automatically by `create_model` from `config.json` (`model_type`,
-`num_experts`, `full_attention_interval`) and the presence of the distinguishing
-weights.
+MoE, and Qwen3.5 hybrid (Gated-DeltaNet) models, plus **Qwen3-VL** vision-language
+(image-to-text) models. The forward pass (the `DecoderModel` base in `model/`) is
+shared across families; what differs per family is a small set of deltas — the chat
+template and special-token handling, plus any per-family forward-pass tweak (Qwen3's
+QK-Norm, Qwen3 MoE's sparse MLP, Qwen3.5's gated attention + linear-attention layers,
+Qwen3-VL's ViT + interleaved M-RoPE + DeepStack) expressed as a subclass hook
+override — all selected automatically by `create_model` from `config.json`
+(`model_type`, `num_experts`, `full_attention_interval`, the presence of a
+`vision_config`) and the presence of the distinguishing weights.
 
 ## Families that run today
 
@@ -23,6 +24,7 @@ weights.
 | Qwen3 (MoE) | `mlx-community/Qwen3-30B-A3B-4bit` | 4-bit / fp16 (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes |
 | Qwen3 (MoE, GGUF) | `Qwen/Qwen3-30B-A3B-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K | ChatML (`<\|im_start\|>…`) | yes |
 | Qwen3.5 (hybrid) | `mlx-community/Qwen3.5-0.8B-4bit` | 4-bit (mixed bits ok) | ChatML (`<\|im_start\|>…`) | yes (text only) |
+| Qwen3-VL (dense) | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 4-bit (ViT in fp16) | ChatML + vision tokens | yes (image → text) |
 
 **Qwen3 dense** models (0.6B/1.7B/4B/8B/14B/32B) run end-to-end. They add three
 deltas over Llama-3.2, all handled automatically: per-head **QK-Norm** (an
@@ -62,6 +64,40 @@ For continuous batching the cache is **hybrid**: the full layers grow a KV cache
 linear layers carry a fixed-size conv buffer + recurrent state per sequence (so KV memory
 scales with only the full-attention layers). The chat template is ChatML; with thinking
 enabled (the default) it opens the reasoning block (`<think>`) in the generation prompt.
+
+**Qwen3-VL (vision-language)** models (e.g. 4B/8B Instruct) run **image → text**
+end-to-end. The text tower is a dense Qwen3 decoder (QK-Norm), reused unchanged;
+the vision pipeline adds, all golden-gated against `mlx-vlm`:
+
+- a **ViT encoder** (`model/vision/vit`) — a Conv3d-as-matmul patch embed,
+  interpolated learned position embeddings, 2D RoPE, full attention, and the
+  patch + **DeepStack** mergers — that turns preprocessed image patches
+  (`pixel_values` + a `grid_thw` patch grid) into one embedding per merged patch;
+- the **image merge**: those ViT features are scattered into the `<\|image_pad\|>`
+  rows of the token embeddings (the ChatML template expands one
+  `<\|vision_start\|> <\|image_pad\|>×N <\|vision_end\|>` block per image, where
+  `N = prod(grid_thw) / merge_size²`);
+- **interleaved M-RoPE**: image tokens carry distinct 3D (temporal, height, width)
+  rotary positions; text tokens have `t==h==w`, so M-RoPE reduces to ordinary 1D
+  RoPE there. Implemented as a hand-rolled half-split rotation with a per-frequency
+  t/h/w selector (`fast::rope` only takes a 1D offset);
+- **DeepStack**: features captured at a few ViT layers are added into the first
+  decoder layers at the image positions.
+
+Image bytes are decoded (`stb_image`) and **smart-resized** (HF qwen2_vl algorithm:
+round each side to a multiple of `patch_size·merge_size`, area within
+`[min_pixels, max_pixels]`) before patchify. Selected by `create_model` on the
+presence of a `vision_config`. Drive it from the CLI (`mlxforge-cli image <model>
+<image_file> <prompt>`), the C ABI (`mlxforge_submit_image`), or the bindings
+(`engine.image(...)`).
+
+Caveats: multimodal requests are served **single-stream** (decoded image → ViT →
+generate on the worker thread), not merged into the continuous-decode batch with
+text — full batch-sharing needs per-row 3D M-RoPE in `BatchKVCache` (future work).
+The aligned patchify path is golden-exact, but the resize uses a cubic filter that
+is **not** bit-identical to HF's PIL bicubic, so results on non-aligned images may
+differ slightly from the reference. The **MoE-VL** variant (30B-A3B) is not yet a
+distinct model class.
 
 Other LLaMA-family models will be re-onboarded as needed; because the forward
 pass is shared, that work is mostly tokenizer/chat-format plus any small
@@ -202,8 +238,11 @@ constants:
 - **`config.json` → `ModelConfig`** (`core/config`): layer/head/dim counts,
   `rope_theta`, `rms_eps`, `rope_scaling`, `tie_word_embeddings`, the quantization
   block (`quantized`, `quant_group_size`, `quant_bits`), and the EOS/BOS token ids.
-- **`model_type`** selects the chat format (currently always the Llama-3.2 header
-  format) via `chat_format_from_model_type`.
+- **`model_type`** selects the chat format via `chat_format_from_model_type`: the
+  Llama-3.2 header format, or Qwen ChatML (`qwen3` / `qwen3_moe` / `qwen2`,
+  `qwen3_5`, and `qwen3_vl` — the last rendering vision blocks for attached images).
+  For a VLM, the nested `vision_config` and the M-RoPE / vision-token fields are read
+  too.
 - **`tokenizer.json`** drives encode/decode and supplies the special-token ids
   (`added_tokens[*].special`) that are skipped on decode — there are no hard-coded
   token ids. Two backends sit behind one `EncoderBackend` interface, picked by
@@ -217,8 +256,10 @@ constants:
 
 **Supported:** GQA, RMSNorm, llama3-scaled and plain RoPE, SwiGLU, **sparse
 mixture-of-experts** (Qwen3 MoE: routed top-k experts via gather matmul, dense and
-quantized), tied and untied LM heads, greedy / temperature / top-k / top-p sampling,
-single-stream and continuous-batched decode, and both safetensors and GGUF checkpoints.
+quantized), **vision-language** (Qwen3-VL: ViT encoder + image merge + interleaved
+M-RoPE + DeepStack, image → text, served single-stream), tied and untied LM heads,
+greedy / temperature / top-k / top-p sampling, single-stream and continuous-batched
+decode, and both safetensors and GGUF checkpoints.
 Quantization is detected **per-weight** (a `<base>.scales` sibling), so a
 checkpoint may mix quantized and dense tensors or vary the bit-width per layer:
 fp16, MLX affine quants (any bits/group_size, incl. mixed-precision repos), and
@@ -233,8 +274,14 @@ GGUF `Q4_0`/`Q4_1`/`Q8_0` (group_size 32) all run; GGUF `Q4_K`/`Q5_K`/`Q6_K`
   Qwen) and SentencePiece-BPE (Gemma) are implemented; other families (e.g.
   Unigram/WordPiece) make `Tokenizer::from_file` throw. Chat formats are limited
   to the Llama-3.2 header format and Qwen ChatML.
-- **Tool / function-calling tokens**, vision/multimodal, LoRA/adapters,
-  speculative decoding, multi-model hosting, prefix sharing.
+- **Batched multimodal serving.** Qwen3-VL runs image → text, but multimodal
+  requests are served **single-stream**; sharing a continuous-decode batch with
+  text (per-row 3D M-RoPE in `BatchKVCache`) is not yet implemented. The **MoE-VL**
+  variant (Qwen3-VL-30B-A3B) is not yet a distinct model class, and the image
+  smart-resize is not bit-identical to HF's PIL bicubic (see the Qwen3-VL notes
+  above). Video input is not supported.
+- **Tool / function-calling tokens**, LoRA/adapters, speculative decoding,
+  multi-model hosting, prefix sharing.
 
 **Embeddings** *are* implemented: any LLaMA/Qwen checkpoint embeds (mean or last-token
 pooling + L2-norm via `DecoderModel::forward_hidden`), and **Qwen3-Embedding** is
@@ -278,11 +325,17 @@ are not.
 python3.12 -m venv reference/.venv
 reference/.venv/bin/pip install mlx-lm numpy
 reference/.venv/bin/python reference/dump_ref.py --model llama     # -> reference/fixtures/
+# Qwen3-VL fixtures are dumped via mlx-vlm (a deterministic tiny image):
+reference/.venv/bin/pip install mlx-vlm pillow
+reference/.venv/bin/python reference/dump_ref.py --model qwen3_vl  # -> reference/fixtures_qwen3_vl/
 ```
 
 The fixtures gate the embedding output, a single decoder block, the final logits,
 the first-token argmax (exact), the greedy token stream (exact), and chat-template
-parity. The C++ side compares with `tests/support/reference.h` (`assert_close`,
+parity. The Qwen3-VL set additionally gates every vision stage (patch-embed, 2D
+RoPE, position embeds, a ViT block, the merged ViT output, the DeepStack features),
+the image merge, the 3D M-RoPE positions, post-M-RoPE Q/K, and the full multimodal
+forward. The C++ side compares with `tests/support/reference.h` (`assert_close`,
 fp16 rel ~1e-2; and exact token equality). Integration tests **self-skip** if the
 model isn't present locally, so a green `ctest` without weights has only exercised
 the pure-logic unit tests. See `reference/README.md` for the fixture catalogue and

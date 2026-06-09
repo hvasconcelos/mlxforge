@@ -225,7 +225,7 @@ print(final.choices[0].message.content)
 
 ## The CLI: `mlxforge-cli`
 
-Three subcommands.
+Subcommands (the main ones below; `embed` and `bench` also exist).
 
 ### `generate` — single-stream greedy generation
 
@@ -241,6 +241,20 @@ Prefills the prompt, then greedily samples and streams the detokenized text to
 stdout until an EOS token or `max_tokens` (default 64). A `.npy` argument is
 treated as pre-tokenized ids; anything else is raw text run through the chat
 template. This is the path the golden reference compares against token-for-token.
+
+### `image` — vision-language (Qwen3-VL) image → text
+
+```sh
+./build/mlxforge-cli image "$MODEL_DIR" photo.jpg "What is in this image?" 128
+# convenience wrapper that builds the CLI and resolves the cached VL model:
+scripts/test-image.sh photo.jpg "What animals are here?" 200
+```
+
+Decodes the image (`stb_image`), smart-resizes + patchifies it, runs the ViT, and
+streams a response — the whole vision pipeline behind one command. The model must
+be a vision-language checkpoint (e.g. Qwen3-VL); otherwise it errors. Served
+single-stream. The same path is reachable in-process via `mlxforge_submit_image`
+(C ABI) and `engine.image(...)` in the Node/Swift/Rust bindings.
 
 ### `dump-weights` — inspect a checkpoint
 

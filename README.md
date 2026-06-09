@@ -69,8 +69,9 @@ the C-ABI / Node quickstart.
 
 The forward pass (the `DecoderModel` base in `model/`) is family-shared and runs
 Llama-3.2, Qwen3 (dense / MoE), and Qwen3.5 hybrid models from safetensors (fp16 /
-4-bit) or a single-file GGUF. The chat template and special-token handling are selected
-from `config.json` — loading is org-agnostic.
+4-bit) or a single-file GGUF, plus **Qwen3-VL** vision-language (image → text). The
+chat template and special-token handling are selected from `config.json` — loading
+is org-agnostic.
 
 | Family | Example repo | Precision |
 | --- | --- | --- |
@@ -80,6 +81,7 @@ from `config.json` — loading is org-agnostic.
 | Qwen3 (GGUF) | `Qwen/Qwen3-0.6B-GGUF` | Q4_0/Q4_1/Q8_0, Q4_K/Q5_K/Q6_K |
 | Qwen3 (MoE) | `mlx-community/Qwen3-30B-A3B-4bit` | 4-bit / fp16 |
 | Qwen3.5 (hybrid) | `mlx-community/Qwen3.5-0.8B-4bit` | 4-bit (text tower) |
+| Qwen3-VL (vision) | `mlx-community/Qwen3-VL-4B-Instruct-4bit` | 4-bit (image → text) |
 
 See [`doc/supported-models.md`](./doc/supported-models.md) for the full compatibility
 matrix, the per-family deltas, and how to add a new family.
