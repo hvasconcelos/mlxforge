@@ -36,8 +36,9 @@ extern "C" {
  *   v2: mlxforge_embed_ex + mlxforge_embed_opts (Qwen3-Embedding conventions:
  *       last-token pooling, trailing EOS, instruction prefix).
  *   v3: mlxforge_submit_image (Qwen3-VL vision-language: a prompt + one image,
- *       served single-stream). */
-#define MLXFORGE_ABI_VERSION 3
+ *       served single-stream).
+ *   v4: mlxforge_image + mlxforge_submit_images (a prompt + N images). */
+#define MLXFORGE_ABI_VERSION 4
 
 typedef struct mlxforge_engine mlxforge_engine;
 typedef struct mlxforge_request mlxforge_request;
@@ -178,6 +179,22 @@ mlxforge_request* mlxforge_submit_text(mlxforge_engine* engine, const char* prom
 mlxforge_request* mlxforge_submit_image(mlxforge_engine* engine, const char* prompt,
                                         const unsigned char* image_data, size_t image_len,
                                         const mlxforge_sampling* sampling, char** err);
+
+/* One image as raw encoded bytes, for mlxforge_submit_images. */
+typedef struct {
+  const unsigned char* data;
+  size_t len;
+} mlxforge_image;
+
+/* Submit a multimodal request with N images: a text `prompt` plus `images[0..n-1]`
+ * (each raw encoded bytes). The images are expanded into the prompt — and attended
+ * over — in array order. Otherwise identical to mlxforge_submit_image (single-turn,
+ * served single-stream; requires a vision-language model). `n_images` must be >= 1.
+ *
+ * Returns a request handle, or NULL on failure (sets *err). */
+mlxforge_request* mlxforge_submit_images(mlxforge_engine* engine, const char* prompt,
+                                         const mlxforge_image* images, size_t n_images,
+                                         const mlxforge_sampling* sampling, char** err);
 
 /* Pull the next chunk of generated text. Blocks until decoded text is available
  * or the request finishes. The detokenizer is UTF-8-safe: a chunk is always a

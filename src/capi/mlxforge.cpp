@@ -12,6 +12,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <vector>
 
 #include "core/config.h"
@@ -261,6 +262,30 @@ mlxforge_request* mlxforge_submit_chat(mlxforge_engine* engine,
   return nullptr;
 }
 
+namespace {
+// Shared multimodal submit: build a single-turn Request from `prompt` + raw image
+// byte-spans, attach sampling/limits, enqueue, and return the handle. The worker
+// renders the prompt (one user turn with one block per image) and generates.
+mlxforge_request* submit_mm(mlxforge_engine* engine, const char* prompt,
+                            std::vector<std::vector<std::uint8_t>> images,
+                            const mlxforge_sampling* sampling, char** err) {
+  auto req = std::make_shared<mlxforge::Request>();
+  req->mm_text = prompt ? prompt : "";
+  req->mm_images = std::move(images);
+  req->params = to_params(sampling);
+  req->max_tokens = sampling_max_tokens(sampling);
+  req->eos_ids = engine->engine->config().eos_token_ids;
+  if (!engine->engine->scheduler().submit(req)) {
+    set_err(err, "request rejected: waiting queue is full");
+    return nullptr;
+  }
+  auto handle = std::make_unique<mlxforge_request>();
+  handle->req = req;
+  handle->detok = std::make_unique<mlxforge::StreamingDetokenizer>(engine->engine->tokenizer());
+  return handle.release();
+}
+}  // namespace
+
 mlxforge_request* mlxforge_submit_image(mlxforge_engine* engine, const char* prompt,
                                         const unsigned char* image_data, size_t image_len,
                                         const mlxforge_sampling* sampling, char** err) {
@@ -274,25 +299,44 @@ mlxforge_request* mlxforge_submit_image(mlxforge_engine* engine, const char* pro
     return nullptr;
   }
   try {
-    auto req = std::make_shared<mlxforge::Request>();
-    req->mm_text = prompt ? prompt : "";
-    req->mm_image.assign(image_data, image_data + image_len);
-    req->params = to_params(sampling);
-    req->max_tokens = sampling_max_tokens(sampling);
-    req->eos_ids = engine->engine->config().eos_token_ids;
-    if (!engine->engine->scheduler().submit(req)) {
-      set_err(err, "request rejected: waiting queue is full");
-      return nullptr;
-    }
-    auto handle = std::make_unique<mlxforge_request>();
-    handle->req = req;
-    handle->detok =
-        std::make_unique<mlxforge::StreamingDetokenizer>(engine->engine->tokenizer());
-    return handle.release();
+    std::vector<std::vector<std::uint8_t>> images;
+    images.emplace_back(image_data, image_data + image_len);
+    return submit_mm(engine, prompt, std::move(images), sampling, err);
   } catch (const std::exception& e) {
     set_err(err, e.what());
   } catch (...) {
     set_err(err, "unknown error submitting image");
+  }
+  return nullptr;
+}
+
+mlxforge_request* mlxforge_submit_images(mlxforge_engine* engine, const char* prompt,
+                                         const mlxforge_image* images, size_t n_images,
+                                         const mlxforge_sampling* sampling, char** err) {
+  if (err) *err = nullptr;
+  if (!engine || !engine->engine) {
+    set_err(err, "engine is null");
+    return nullptr;
+  }
+  if (!images || n_images == 0) {
+    set_err(err, "images is empty");
+    return nullptr;
+  }
+  try {
+    std::vector<std::vector<std::uint8_t>> imgs;
+    imgs.reserve(n_images);
+    for (size_t i = 0; i < n_images; ++i) {
+      if (!images[i].data || images[i].len == 0) {
+        set_err(err, "an image is empty");
+        return nullptr;
+      }
+      imgs.emplace_back(images[i].data, images[i].data + images[i].len);
+    }
+    return submit_mm(engine, prompt, std::move(imgs), sampling, err);
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error submitting images");
   }
   return nullptr;
 }

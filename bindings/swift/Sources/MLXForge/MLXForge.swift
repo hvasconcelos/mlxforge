@@ -126,6 +126,39 @@ public final class Engine {
     return Engine.stream(req)
   }
 
+  /// Stream a vision-language completion over several images (each raw encoded
+  /// bytes), expanded into the prompt in order. The loaded model must be a
+  /// vision-language checkpoint (e.g. Qwen3-VL).
+  public func images(_ prompt: String, _ imagesBytes: [[UInt8]], sampling: Sampling = .greedy)
+    throws -> AsyncThrowingStream<String, Error>
+  {
+    var s = sampling.c
+    let schemaC = sampling.jsonSchema.map { strdup($0) } ?? nil
+    if let p = schemaC { s.json_schema = UnsafePointer(p) }
+    defer { if let p = schemaC { free(p) } }
+    var err: UnsafeMutablePointer<CChar>?
+    // Flatten into one contiguous buffer so each mlxforge_image points into stable
+    // storage for the call (the engine copies the bytes synchronously).
+    let flat = imagesBytes.flatMap { $0 }
+    let reqOpt = flat.withUnsafeBufferPointer { (fb) -> OpaquePointer? in
+      var cImages: [mlxforge_image] = []
+      var offset = 0
+      for img in imagesBytes {
+        cImages.append(mlxforge_image(data: fb.baseAddress.map { $0 + offset }, len: img.count))
+        offset += img.count
+      }
+      return cImages.withUnsafeBufferPointer { cb in
+        mlxforge_submit_images(handle, prompt, cb.baseAddress, cb.count, &s, &err)
+      }
+    }
+    guard let req = reqOpt else {
+      let message = err.map { String(cString: $0) } ?? "submit failed"
+      mlxforge_string_free(err)
+      throw MLXForgeError(message: message)
+    }
+    return Engine.stream(req)
+  }
+
   /// Run a chat to completion and return the full string.
   public func complete(_ messages: [ChatMessage], sampling: Sampling = .greedy) async throws
     -> String

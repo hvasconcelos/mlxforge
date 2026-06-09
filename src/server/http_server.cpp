@@ -1,11 +1,15 @@
 #include "server/http_server.h"
 
+#include <array>
+#include <cstdint>
 #include <ctime>
 #include <stdexcept>
 #include <vector>
 
 #include "core/logging.h"
 #include "server/anthropic.h"
+#include "vision/image_decode.h"
+#include "vision/preprocess.h"
 
 namespace mlxforge {
 
@@ -49,18 +53,32 @@ std::shared_ptr<Request> HttpServer::make_request(const ChatRequest& cr) const {
   req->max_tokens = cr.max_tokens;
   req->eos_ids = cfg_.eos_token_ids;
 
-  // Multimodal (Qwen3-VL): an attached image makes this a single-stream vision
-  // turn. The worker decodes the image, runs the ViT, and renders the prompt
-  // itself, so we hand it the raw bytes + the latest user text (not a tokenized
-  // prompt). Requires a vision model; otherwise the worker finishes it as an error.
-  if (!cr.image.empty()) {
-    req->mm_image.assign(cr.image.begin(), cr.image.end());
-    for (auto it = cr.messages.rbegin(); it != cr.messages.rend(); ++it) {
-      if (it->role == "user") {
-        req->mm_text = it->content;
-        break;
+  // Multimodal (Qwen3-VL): attached image(s) make this a single-stream vision
+  // turn. We render the FULL chat history (system + prior turns) here, sizing each
+  // <|image_pad|> run from its image's dimensions (a CPU probe — no decode) and
+  // attaching it to the turn the image belongs to, so images placed across
+  // different turns land at the right positions. The worker decodes + ViT-encodes
+  // the bytes (in order) and generates from these prompt_ids.
+  if (cr.has_images()) {
+    if (!cfg_.has_vision_tower())
+      throw std::runtime_error("this model does not support image input");
+    const PreprocessConfig pc = PreprocessConfig::from(*cfg_.vision);
+    std::vector<Tokenizer::Message> msgs = cr.messages;  // copy: set placeholder counts
+
+    // Mirror render_qwen3's vision-block emission order: a leading system turn and
+    // any tool/assistant turns render no vision block, so we skip their images
+    // (and never let them desync the placeholder count).
+    const bool have_system = !msgs.empty() && msgs.front().role == "system";
+    for (size_t i = (have_system ? 1 : 0); i < msgs.size(); ++i) {
+      if (msgs[i].role == "tool" || msgs[i].role == "assistant") continue;
+      for (const auto& img : cr.message_images[i]) {
+        const std::array<int, 2> hw =
+            image_info(reinterpret_cast<const uint8_t*>(img.data()), img.size());
+        msgs[i].image_token_counts.push_back(image_token_count(hw[0], hw[1], pc));
+        req->mm_images.emplace_back(img.begin(), img.end());
       }
     }
+    req->prompt_ids = tok_->apply_chat_template(msgs, true, "", {}, cr.enable_thinking);
     return req;
   }
 

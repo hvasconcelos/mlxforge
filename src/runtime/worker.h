@@ -62,6 +62,11 @@ class Worker {
   // Prefill `incoming` and merge it into the decode batch (emitting each row's
   // first token).
   void admit(const std::vector<std::shared_ptr<Request>>& incoming);
+  // Register freshly-admitted rows into the decode-batch state (already merged
+  // into the cache) and sample each row's first token from `last_logits` (rows
+  // aligned to the new tail). Shared by the text and multimodal admit paths.
+  void register_rows(const std::vector<std::shared_ptr<Request>>& incoming,
+                     const mx::array& last_logits);
   // One decode step over the whole batch: forward -> sample -> async_eval ->
   // push each row's token, marking finished rows.
   void decode_step();
@@ -78,11 +83,13 @@ class Worker {
   // req.embedding_result, then close its token queue. Runs on the worker thread.
   void handle_embedding(Request& req);
 
-  // Handle a one-shot multimodal (Qwen3-VL) request: decode the image, run the
-  // ViT, render the chat prompt, and stream generated tokens into req.tokens
-  // single-stream. Runs on the worker thread (it owns all MLX state). Errors if
-  // the loaded model is not a vision-language model.
-  void handle_multimodal(Request& req);
+  // Admit a multimodal (Qwen3-VL) request into the decode batch: decode the
+  // image(s), run the ViT, render/validate the prompt, prefill single-stream, then
+  // merge the prompt's K/V into the shared BatchKVCache so its (pure-text)
+  // generated tokens decode batched alongside text rows (prefill-single,
+  // decode-batched). Runs on the worker thread (it owns all MLX state). On error
+  // (e.g. the loaded model is not a VL model) the request is failed, not batched.
+  void admit_multimodal(const std::shared_ptr<Request>& req);
 
   // Constrained decoding helpers. ensure_token_bytes builds the id->output-bytes
   // table once (from the tokenizer); grammar_mask returns an additive (1, vocab)

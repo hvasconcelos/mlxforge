@@ -220,6 +220,7 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
                                        InstanceMethod("submitChat", &EngineWrap::SubmitChat),
                                        InstanceMethod("submitText", &EngineWrap::SubmitText),
                                        InstanceMethod("submitImage", &EngineWrap::SubmitImage),
+                                       InstanceMethod("submitImages", &EngineWrap::SubmitImages),
                                        InstanceMethod("embed", &EngineWrap::Embed),
                                        InstanceMethod("dispose", &EngineWrap::Dispose),
                                    });
@@ -341,6 +342,34 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
     char* err = nullptr;
     mlxforge_request* req =
         mlxforge_submit_image(eng_, prompt.c_str(), buf.Data(), buf.Length(), &s, &err);
+    return finish_submit(env, req, err);
+  }
+
+  Napi::Value SubmitImages(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (!eng_) throw Napi::Error::New(env, "engine is disposed");
+    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsArray())
+      throw Napi::TypeError::New(env, "submitImages(prompt, imageBuffers[], sampling?)");
+    std::string prompt = info[0].As<Napi::String>().Utf8Value();
+    Napi::Array arr = info[1].As<Napi::Array>();
+    // Pointers into the JS Buffers; valid for the synchronous submit call (the
+    // engine copies the bytes before returning). The Buffers stay alive via `arr`.
+    std::vector<mlxforge_image> images;
+    images.reserve(arr.Length());
+    for (uint32_t i = 0; i < arr.Length(); ++i) {
+      Napi::Value v = arr.Get(i);
+      if (!v.IsBuffer()) throw Napi::TypeError::New(env, "each image must be a Buffer");
+      Napi::Buffer<uint8_t> buf = v.As<Napi::Buffer<uint8_t>>();
+      images.push_back(mlxforge_image{buf.Data(), buf.Length()});
+    }
+    std::string schema;  // kept alive across the submit call
+    mlxforge_sampling s = (info.Length() >= 3 && info[2].IsObject())
+                              ? parse_sampling(info[2].As<Napi::Object>(), schema)
+                              : mlxforge_sampling{};
+    if (!schema.empty()) s.json_schema = schema.c_str();
+    char* err = nullptr;
+    mlxforge_request* req =
+        mlxforge_submit_images(eng_, prompt.c_str(), images.data(), images.size(), &s, &err);
     return finish_submit(env, req, err);
   }
 

@@ -74,6 +74,15 @@ TEST_CASE("C ABI submits a multimodal request and streams a response") {
   CHECK(text.size() > 0);
   CHECK(std::string(mlxforge_request_finish_reason(r)) == "length");
 
+  // The same conversation with two images via mlxforge_submit_images.
+  mlxforge_image two[2] = {{img.data(), img.size()}, {img.data(), img.size()}};
+  mlxforge_request* r2 =
+      mlxforge_submit_images(eng, "Compare these images.", two, 2, &s, &err);
+  REQUIRE_MESSAGE(r2 != nullptr, (err ? err : "submit_images failed"));
+  CHECK(drain(r2).size() > 0);
+  CHECK(std::string(mlxforge_request_finish_reason(r2)) == "length");
+  mlxforge_request_free(r2);
+
   mlxforge_request_free(r);
   mlxforge_engine_free(eng);
 }

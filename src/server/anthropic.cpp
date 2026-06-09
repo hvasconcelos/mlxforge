@@ -35,23 +35,27 @@ std::string render_tool_use(const json& block) {
 // content yields a single message; a block array is split so tool_use becomes an
 // assistant tool-call turn and tool_result becomes a "tool" turn (matching the
 // roles the chat template understands).
-void append_message(const json& m, std::vector<Tokenizer::Message>& out, std::string& image_out) {
+void append_message(const json& m, std::vector<Tokenizer::Message>& out,
+                    std::vector<std::vector<std::string>>& message_images) {
   if (!m.contains("role")) throw std::runtime_error("each message needs a 'role'");
   const std::string role = m.at("role").get<std::string>();
   auto it = m.find("content");
   if (it == m.end() || it->is_null()) throw std::runtime_error("each message needs 'content'");
 
+  // Every push to `out` gets a matching `message_images` entry (1:1).
   if (it->is_string()) {
     out.push_back({role, it->get<std::string>(), ""});
+    message_images.push_back({});
     return;
   }
   if (!it->is_array()) throw std::runtime_error("'content' must be a string or array of blocks");
 
   // tool_result blocks (carried on a user turn) are fed back first, then any
   // free text; tool_use blocks (on an assistant turn) become tool-call turns;
-  // the first base64 image block is decoded into image_out.
+  // base64 image blocks decode onto this turn (in order).
   std::string text;
   std::vector<json> tool_uses;
+  std::vector<std::string> images;
   for (const auto& b : *it) {
     if (!b.is_object()) continue;
     const std::string type = b.value("type", std::string());
@@ -61,14 +65,23 @@ void append_message(const json& m, std::vector<Tokenizer::Message>& out, std::st
       tool_uses.push_back(b);
     } else if (type == "tool_result") {
       out.push_back({"tool", text_of(b.value("content", json())), ""});
-    } else if (type == "image" && image_out.empty()) {
+      message_images.push_back({});
+    } else if (type == "image") {
       const auto src = b.find("source");
       if (src != b.end() && src->is_object() && src->value("type", std::string()) == "base64")
-        image_out = base64_decode(src->value("data", std::string()));
+        images.push_back(base64_decode(src->value("data", std::string())));
     }
   }
-  if (!text.empty()) out.push_back({role, text, ""});
-  for (const auto& tu : tool_uses) out.push_back({"assistant", "", render_tool_use(tu)});
+  // The role turn carries this turn's text + images (emit it even for an
+  // image-only turn so the image renders).
+  if (!text.empty() || !images.empty()) {
+    out.push_back({role, text, ""});
+    message_images.push_back(std::move(images));
+  }
+  for (const auto& tu : tool_uses) {
+    out.push_back({"assistant", "", render_tool_use(tu)});
+    message_images.push_back({});
+  }
 }
 
 // Convert an Anthropic tool definition {name, description, input_schema} into the
@@ -116,13 +129,16 @@ ChatRequest parse_messages_request(const nlohmann::json& body) {
   // template expects it first, especially for Qwen3).
   if (auto s = body.find("system"); s != body.end() && !s->is_null()) {
     const std::string sys = text_of(*s);
-    if (!sys.empty()) r.messages.push_back({"system", sys, ""});
+    if (!sys.empty()) {
+      r.messages.push_back({"system", sys, ""});
+      r.message_images.push_back({});  // keep aligned with messages
+    }
   }
 
   auto it = body.find("messages");
   if (it == body.end() || !it->is_array() || it->empty())
     throw std::runtime_error("'messages' must be a non-empty array");
-  for (const auto& m : *it) append_message(m, r.messages, r.image);
+  for (const auto& m : *it) append_message(m, r.messages, r.message_images);
 
   r.params.temperature = body.value("temperature", 1.0f);
   if (r.params.temperature < 0.0f) throw std::runtime_error("'temperature' must be >= 0");

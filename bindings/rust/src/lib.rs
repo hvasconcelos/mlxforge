@@ -31,6 +31,12 @@ struct Msg {
 }
 
 #[repr(C)]
+struct CImage {
+    data: *const u8,
+    len: usize,
+}
+
+#[repr(C)]
 struct CSampling {
     temperature: c_float,
     top_k: c_int,
@@ -103,6 +109,14 @@ extern "C" {
         prompt: *const c_char,
         image_data: *const u8,
         image_len: usize,
+        sampling: *const CSampling,
+        err: *mut *mut c_char,
+    ) -> *mut mlxforge_request;
+    fn mlxforge_submit_images(
+        e: *mut mlxforge_engine,
+        prompt: *const c_char,
+        images: *const CImage,
+        n_images: usize,
         sampling: *const CSampling,
         err: *mut *mut c_char,
     ) -> *mut mlxforge_request;
@@ -281,6 +295,38 @@ impl Engine {
                 cprompt.as_ptr(),
                 image.as_ptr(),
                 image.len(),
+                &cs,
+                &mut err,
+            )
+        };
+        if req.is_null() {
+            return Err(unsafe { take_string(err) }.unwrap_or_else(|| "submit failed".into()));
+        }
+        Ok(drain(req))
+    }
+
+    /// Run a vision-language completion over several images: a text `prompt`
+    /// about `images` (each raw encoded bytes), expanded into the prompt in
+    /// order. The loaded model must be a vision-language checkpoint (Qwen3-VL).
+    pub fn images(&self, prompt: &str, images: &[&[u8]], sampling: &Sampling)
+        -> Result<String, String>
+    {
+        let cprompt = CString::new(prompt).map_err(|_| "prompt contains NUL".to_string())?;
+        // Raw pointers into the borrowed slices; valid for the duration of the
+        // submit call (the engine copies the bytes synchronously).
+        let cimgs: Vec<CImage> = images
+            .iter()
+            .map(|b| CImage { data: b.as_ptr(), len: b.len() })
+            .collect();
+        let mut schema_keep: Option<CString> = None;
+        let cs = Self::c_sampling(sampling, &mut schema_keep);
+        let mut err: *mut c_char = ptr::null_mut();
+        let req = unsafe {
+            mlxforge_submit_images(
+                self.handle,
+                cprompt.as_ptr(),
+                cimgs.as_ptr(),
+                cimgs.len(),
                 &cs,
                 &mut err,
             )

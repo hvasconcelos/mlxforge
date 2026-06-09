@@ -64,6 +64,12 @@ export class Engine {
    * be a vision-language checkpoint (e.g. Qwen3-VL).
    */
   image(prompt: string, image: Uint8Array, sampling?: SamplingOptions): Stream;
+  /**
+   * Stream a vision-language completion over several images (raw encoded bytes
+   * each), expanded into the prompt in order. The model must be a vision-language
+   * checkpoint (e.g. Qwen3-VL).
+   */
+  images(prompt: string, images: Uint8Array[], sampling?: SamplingOptions): Stream;
   /** Run a chat to completion and return the full string. */
   complete(messages: ChatMessage[], sampling?: SamplingOptions): Promise<string>;
   /**

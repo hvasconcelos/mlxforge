@@ -217,7 +217,9 @@ TEST_CASE("parse_chat_request extracts an image_url data URI as bytes") {
   ChatRequest r = parse_chat_request(body);
   REQUIRE(r.messages.size() == 1);
   CHECK(r.messages[0].content == "what is this?");
-  CHECK(r.image == "hello");  // routed to the multimodal path by make_request
+  REQUIRE(r.message_images.size() == 1);
+  REQUIRE(r.message_images[0].size() == 1);
+  CHECK(r.message_images[0][0] == "hello");  // on the user turn; routed to the multimodal path
 }
 
 TEST_CASE("parse_chat_request rejects a non-data: image URL") {
@@ -233,5 +235,42 @@ TEST_CASE("parse_chat_request leaves image empty for text-only content") {
   json body = json::parse(R"({
     "messages": [{"role": "user", "content": "just text"}], "max_tokens": 8
   })");
-  CHECK(parse_chat_request(body).image.empty());
+  CHECK_FALSE(parse_chat_request(body).has_images());
+}
+
+TEST_CASE("parse_chat_request collects multiple images in order") {
+  // base64 "aGVsbG8=" -> "hello", "d29ybGQ=" -> "world".
+  json body = json::parse(R"({
+    "messages": [{"role": "user", "content": [
+      {"type": "text", "text": "compare these"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+      {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,d29ybGQ="}}
+    ]}],
+    "max_tokens": 8
+  })");
+  ChatRequest r = parse_chat_request(body);
+  REQUIRE(r.message_images.size() == 1);
+  REQUIRE(r.message_images[0].size() == 2);
+  CHECK(r.message_images[0][0] == "hello");
+  CHECK(r.message_images[0][1] == "world");
+}
+
+TEST_CASE("parse_chat_request keeps each image on its own turn") {
+  // Image on the FIRST user turn; a later user turn only references it.
+  json body = json::parse(R"({
+    "messages": [
+      {"role": "user", "content": [
+        {"type": "text", "text": "here is a picture"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}}]},
+      {"role": "assistant", "content": "ok"},
+      {"role": "user", "content": "what was in it?"}
+    ],
+    "max_tokens": 8
+  })");
+  ChatRequest r = parse_chat_request(body);
+  REQUIRE(r.message_images.size() == 3);
+  REQUIRE(r.message_images[0].size() == 1);  // image stays on the first user turn
+  CHECK(r.message_images[0][0] == "hello");
+  CHECK(r.message_images[1].empty());        // assistant turn
+  CHECK(r.message_images[2].empty());        // later user turn
 }

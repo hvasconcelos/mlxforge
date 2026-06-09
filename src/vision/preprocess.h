@@ -70,4 +70,10 @@ Preprocessed preprocess_image(const mx::array& image_rgb, const PreprocessConfig
 std::array<int, 2> smart_resize(int height, int width, int factor, int min_pixels,
                                 int max_pixels);
 
+// Number of <|image_pad|> placeholder tokens an image of (height, width) pixels
+// expands to under `cfg`: the smart-resized patch grid collapsed by merge_size²
+// (grid_t == 1 for a still image). Computed from dimensions alone, so a non-worker
+// thread can size the chat-template expansion without decoding the image.
+int image_token_count(int height, int width, const PreprocessConfig& cfg);
+
 }  // namespace mlxforge
