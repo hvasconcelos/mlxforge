@@ -31,6 +31,32 @@ struct RopeScaling {
   int original_max_position_embeddings = 0; ///< Original context length before scaling.
 };
 
+/// @brief Vision-tower (ViT) hyperparameters for a multimodal checkpoint.
+/// Present only for VLMs (e.g. Qwen3-VL), which nest these under "vision_config".
+/// Text-only models leave ModelConfig::vision empty and never touch this. Field
+/// names mirror config.json's vision_config so the parse stays a direct read.
+struct VisionConfig {
+  int depth = 0;                ///< Number of ViT transformer blocks.
+  int hidden = 0;               ///< ViT hidden size.
+  int intermediate_size = 0;    ///< ViT MLP width.
+  int num_heads = 0;            ///< ViT attention heads (head_dim = hidden / num_heads).
+  int in_channels = 3;          ///< Image input channels (RGB).
+  int patch_size = 0;           ///< Spatial patch edge, in pixels.
+  int temporal_patch_size = 1;  ///< Frames grouped into one temporal patch.
+  int spatial_merge_size = 1;   ///< Patch-merger edge: spatial_merge_size^2 patches -> 1 token.
+  int out_hidden_size = 0;      ///< Merger output dim (equals the LLM hidden size).
+  int num_position_embeddings = 0; ///< Learned position-embedding table size (a square grid).
+  /// ViT block indices whose hidden states are fed through the DeepStack mergers
+  /// and added into the first decoder layers of the language model.
+  std::vector<int> deepstack_visual_indexes;
+
+  /// Patches merged into one LLM token. The placeholder-token count for an image
+  /// is prod(grid_thw) / merge_unit().
+  int merge_unit() const { return spatial_merge_size * spatial_merge_size; }
+  /// Per-head ViT attention dimension.
+  int head_dim() const { return num_heads > 0 ? hidden / num_heads : 0; }
+};
+
 /// @brief Represents the required architecture and config parameters
 ///        for a model, as loaded from config.json. Only fields needed
 ///        by the engine are exposed. If a required field is missing,
@@ -134,6 +160,26 @@ struct ModelConfig {
   /// frequencies are `base**(2i/d) * rope_freq_factors[i]` and the param-based
   /// llama3 path is skipped. Absent for safetensors models.
   std::optional<std::vector<float>> rope_freq_factors;
+
+  // ----- Multimodal vision (VLMs, e.g. Qwen3-VL) -----
+  /// ViT config, present iff the checkpoint is a vision-language model. When set,
+  /// the engine keeps + runs the vision tower; when empty the model is text-only
+  /// and every field below is unused, leaving the text path unchanged.
+  std::optional<VisionConfig> vision;
+  bool has_vision_tower() const { return vision.has_value(); }
+  int image_token_id = -1;         ///< Placeholder expanded per merged image patch (<|image_pad|>).
+  int video_token_id = -1;         ///< Placeholder expanded per merged video patch (<|video_pad|>).
+  int vision_start_token_id = -1;  ///< Marks the start of a vision span (<|vision_start|>).
+  int vision_end_token_id = -1;    ///< Marks the end of a vision span (<|vision_end|>).
+
+  // ----- Interleaved multimodal RoPE (M-RoPE) -----
+  /// Qwen3-VL gives image tokens 3D (temporal, height, width) rotary positions
+  /// with an *interleaved* frequency layout. `mrope_section` (entries summing to
+  /// head_dim/2) allocates frequency bands to the t/h/w axes. Empty => plain 1D
+  /// RoPE (text-only models). For text tokens t==h==w, so interleaved M-RoPE
+  /// reduces exactly to standard 1D RoPE at that position.
+  std::vector<int> mrope_section;
+  bool mrope_interleaved = false;
 
   // ----- Tokenization -----
   std::vector<int> eos_token_ids; ///< IDs for end-of-sequence tokens.

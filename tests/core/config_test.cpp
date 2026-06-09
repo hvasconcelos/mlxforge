@@ -140,6 +140,14 @@ TEST_CASE("ModelConfig parses the Qwen3.5 hybrid text_config") {
   CHECK(c.quant_group_size == 64);
   CHECK(c.quant_bits == 4);
 
+  // Interleaved M-RoPE parsed from the rope_parameters sub-object.
+  CHECK(c.mrope_interleaved == true);
+  CHECK(c.mrope_section == std::vector<int>{11, 11, 10});
+  // The (minimal) vision_config is captured even when most fields are absent.
+  REQUIRE(c.has_vision_tower());
+  CHECK(c.vision->depth == 12);
+  CHECK(c.vision->hidden == 768);
+
   // Layer dispatch: every 4th layer (indices 3, 7, ...) is full attention; the
   // rest are Gated-DeltaNet linear-attention. Mirrors the mlx_lm reference.
   CHECK(c.is_linear_layer(0));
@@ -151,6 +159,106 @@ TEST_CASE("ModelConfig parses the Qwen3.5 hybrid text_config") {
   CHECK_FALSE(c.is_linear_layer(23));
   // Not a MoE model: no sparse layers.
   CHECK_FALSE(c.is_moe_layer(0));
+}
+
+TEST_CASE("ModelConfig parses the Qwen3-VL vision_config + interleaved M-RoPE") {
+  // A representative subset of mlx-community/Qwen3-VL-4B-Instruct's config.json:
+  // the text decoder nests under "text_config" (a plain Qwen3 backbone with
+  // QK-norm), the ViT under "vision_config", interleaved M-RoPE lives in the text
+  // rope_scaling, and the vision special-token ids sit at the top level.
+  auto j = nlohmann::json::parse(R"({
+    "architectures": ["Qwen3VLForConditionalGeneration"],
+    "model_type": "qwen3_vl",
+    "image_token_id": 151655,
+    "video_token_id": 151656,
+    "vision_start_token_id": 151652,
+    "vision_end_token_id": 151653,
+    "tie_word_embeddings": true,
+    "text_config": {
+      "model_type": "qwen3_vl_text",
+      "vocab_size": 151936,
+      "hidden_size": 2560,
+      "intermediate_size": 9728,
+      "num_hidden_layers": 36,
+      "num_attention_heads": 32,
+      "num_key_value_heads": 8,
+      "head_dim": 128,
+      "rms_norm_eps": 1e-06,
+      "max_position_embeddings": 262144,
+      "rope_theta": 5000000,
+      "eos_token_id": 151645,
+      "bos_token_id": 151643,
+      "rope_scaling": {
+        "mrope_interleaved": true,
+        "mrope_section": [24, 20, 20],
+        "rope_type": "default"
+      }
+    },
+    "vision_config": {
+      "depth": 24,
+      "hidden_size": 1024,
+      "intermediate_size": 4096,
+      "num_heads": 16,
+      "in_channels": 3,
+      "patch_size": 16,
+      "spatial_merge_size": 2,
+      "temporal_patch_size": 2,
+      "out_hidden_size": 2560,
+      "num_position_embeddings": 2304,
+      "deepstack_visual_indexes": [5, 11, 17]
+    }
+  })");
+  ModelConfig c = ModelConfig::from_json(j);
+
+  // Text backbone reads from text_config (a Qwen3 dense decoder, GQA 32:8).
+  CHECK(c.model_type == "qwen3_vl");
+  CHECK(c.n_layers == 36);
+  CHECK(c.hidden == 2560);
+  CHECK(c.n_heads == 32);
+  CHECK(c.n_kv_heads == 8);
+  CHECK(c.head_dim == 128);
+  CHECK(c.rope_theta == doctest::Approx(5000000.0f));
+
+  // Vision special tokens (top level).
+  CHECK(c.image_token_id == 151655);
+  CHECK(c.video_token_id == 151656);
+  CHECK(c.vision_start_token_id == 151652);
+  CHECK(c.vision_end_token_id == 151653);
+
+  // Interleaved M-RoPE from the text rope_scaling; entries sum to head_dim/2 = 64.
+  CHECK(c.mrope_interleaved == true);
+  CHECK(c.mrope_section == std::vector<int>{24, 20, 20});
+
+  // Vision tower.
+  REQUIRE(c.has_vision_tower());
+  const auto& v = *c.vision;
+  CHECK(v.depth == 24);
+  CHECK(v.hidden == 1024);
+  CHECK(v.intermediate_size == 4096);
+  CHECK(v.num_heads == 16);
+  CHECK(v.head_dim() == 64);
+  CHECK(v.in_channels == 3);
+  CHECK(v.patch_size == 16);
+  CHECK(v.spatial_merge_size == 2);
+  CHECK(v.temporal_patch_size == 2);
+  CHECK(v.out_hidden_size == 2560);
+  CHECK(v.num_position_embeddings == 2304);
+  CHECK(v.merge_unit() == 4);  // 4 patches -> 1 LLM token
+  CHECK(v.deepstack_visual_indexes == std::vector<int>{5, 11, 17});
+}
+
+TEST_CASE("ModelConfig: text-only model has no vision tower, no M-RoPE") {
+  auto j = nlohmann::json::parse(R"({
+    "num_hidden_layers": 2, "hidden_size": 8, "num_attention_heads": 4,
+    "num_key_value_heads": 2, "vocab_size": 100, "intermediate_size": 16,
+    "rope_theta": 10000.0, "rms_norm_eps": 1e-6
+  })");
+  ModelConfig c = ModelConfig::from_json(j);
+  CHECK_FALSE(c.has_vision_tower());
+  CHECK(c.mrope_section.empty());
+  CHECK_FALSE(c.mrope_interleaved);
+  CHECK(c.image_token_id == -1);
+  CHECK(c.vision_start_token_id == -1);
 }
 
 TEST_CASE("ModelConfig defaults: non-hybrid model has no linear layers, full rotary") {

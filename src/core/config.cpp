@@ -62,6 +62,45 @@ float parse_rope_theta(const nlohmann::json& j) {
   return require<float>(j, "rope_theta");
 }
 
+// Parse the optional ViT sub-object of a multimodal checkpoint. Returns
+// std::nullopt for text-only models (no "vision_config" key). Mirrors Qwen3-VL's
+// vision_config field names; missing optional fields fall back to defaults.
+std::optional<VisionConfig> parse_vision_config(const nlohmann::json& j_top) {
+  auto it = j_top.find("vision_config");
+  if (it == j_top.end() || !it->is_object()) return std::nullopt;
+  const nlohmann::json& v = *it;
+  VisionConfig vc;
+  vc.depth = v.value("depth", 0);
+  vc.hidden = v.value("hidden_size", 0);
+  vc.intermediate_size = v.value("intermediate_size", 0);
+  vc.num_heads = v.value("num_heads", 0);
+  vc.in_channels = v.value("in_channels", 3);
+  vc.patch_size = v.value("patch_size", 0);
+  vc.temporal_patch_size = v.value("temporal_patch_size", 1);
+  vc.spatial_merge_size = v.value("spatial_merge_size", 1);
+  vc.out_hidden_size = v.value("out_hidden_size", 0);
+  vc.num_position_embeddings = v.value("num_position_embeddings", 0);
+  if (auto di = v.find("deepstack_visual_indexes"); di != v.end() && di->is_array()) {
+    vc.deepstack_visual_indexes = di->get<std::vector<int>>();
+  }
+  return vc;
+}
+
+// Interleaved M-RoPE lives under either "rope_scaling" (Qwen3-VL) or
+// "rope_parameters" (Qwen3.5); both carry mrope_section/mrope_interleaved. Fill
+// the out-params from whichever sub-object provides them; leave them at their
+// text-only defaults (empty section, not interleaved) otherwise.
+void parse_mrope(const nlohmann::json& j, std::vector<int>& section, bool& interleaved) {
+  for (const char* key : {"rope_scaling", "rope_parameters"}) {
+    auto it = j.find(key);
+    if (it == j.end() || !it->is_object()) continue;
+    if (auto ms = it->find("mrope_section"); ms != it->end() && ms->is_array()) {
+      section = ms->get<std::vector<int>>();
+    }
+    interleaved = it->value("mrope_interleaved", interleaved);
+  }
+}
+
 }  // namespace
 
 // Constructs and returns a ModelConfig from a nlohmann::json config (typically read from HuggingFace .json).
@@ -148,6 +187,17 @@ ModelConfig ModelConfig::from_json(const nlohmann::json& j_top) {
       }
     }
   }
+  // Multimodal vision tower (VLMs, e.g. Qwen3-VL). The ViT config and the vision
+  // special-token ids live at the top level; M-RoPE parameters nest with the text
+  // rope config (read from `j`). All absent for text-only models, which then keep
+  // every vision/M-RoPE field at its inert default.
+  c.vision = parse_vision_config(j_top);
+  c.image_token_id = j_top.value("image_token_id", -1);
+  c.video_token_id = j_top.value("video_token_id", -1);
+  c.vision_start_token_id = j_top.value("vision_start_token_id", -1);
+  c.vision_end_token_id = j_top.value("vision_end_token_id", -1);
+  parse_mrope(j, c.mrope_section, c.mrope_interleaved);
+
   return c;
 }
 
