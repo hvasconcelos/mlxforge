@@ -17,6 +17,20 @@ The build produces two harness binaries plus the test suite:
 | `build/mlxforge-cli` | `apps/mlxforge_cli.cpp` | CLI **harness**: build smoke test, weight inspection, and golden-reference single-stream generation. |
 | `build/tests/mlxforge_tests` | `tests/` | The doctest suite (see [contributing.md](./contributing.md)). |
 
+### Build options
+
+The harnesses are on by default for development; the released library is built
+with them off. A lean library build —
+`-DMLXFORGE_BUILD_SERVER=OFF -DMLXFORGE_BUILD_CLI=OFF -DMLXFORGE_ENABLE_HF_DOWNLOAD=OFF`
+— produces a `libmlxforge.dylib` with neither `cpp-httplib` nor `libcurl` linked.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `MLXFORGE_BUILD_SHARED` | `ON` | build `libmlxforge.dylib` (the C-ABI product) |
+| `MLXFORGE_BUILD_SERVER` | `ON` | build the HTTP server harness (pulls `cpp-httplib`) |
+| `MLXFORGE_BUILD_CLI` | `ON` | build the CLI harness |
+| `MLXFORGE_ENABLE_HF_DOWNLOAD` | `ON` | HuggingFace download (pulls `libcurl`) |
+
 `$MODEL_DIR` below is any directory containing `config.json`, `tokenizer.json`,
 and the safetensors weights — see [supported-models.md](./supported-models.md).
 

@@ -109,6 +109,33 @@ the safetensors weights (single `model.safetensors`, or sharded
 `model-0000N-of-*.safetensors` plus the index JSON). The HF cache snapshot dir
 (`~/.cache/huggingface/hub/.../snapshots/<rev>`) works directly.
 
+### Spec resolution (repo id or local dir)
+
+The server and CLI accept a model **spec** that is either a HuggingFace repo id or
+a local directory — pass it directly, llama.cpp-style. You don't need to
+pre-download:
+
+```sh
+# a repo id: downloaded on first use, then cached and reused
+./build/mlxforge-cli generate mlx-community/Llama-3.2-1B-Instruct-4bit "Hi" 32
+
+# a local model dir (any folder with config.json + tokenizer.json + safetensors)
+./build/mlxforge-cli generate /path/to/model "Hi" 32
+```
+
+A spec is resolved (by `mlxforge::resolve_model_dir`) in this order:
+
+1. an existing local directory containing `config.json` → used as-is;
+2. an existing HuggingFace parent dir (`…/models--org--name`) → its
+   `snapshots/<rev>/` is auto-resolved (so the cache parent path "just works");
+3. a repo already in the standard HF hub cache → that snapshot is reused;
+4. a repo already downloaded by mlxforge → that download is reused;
+5. otherwise it is **downloaded** (via libcurl) into mlxforge's own cache.
+
+The download cache defaults to `~/.cache/mlxforge` and is overridable with
+`MLXFORGE_CACHE`. The HF hub cache is honored too (`HF_HUB_CACHE` / `HF_HOME`),
+and a `HF_TOKEN` (or `HUGGING_FACE_HUB_TOKEN`) is sent for gated/private repos.
+
 ### GGUF (single-file, self-contained)
 
 A `.gguf` file bundles the config, tokenizer, and weights in one file (no
