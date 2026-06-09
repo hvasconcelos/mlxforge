@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <queue>
@@ -85,6 +86,15 @@ struct Request {
   int pooling = 0;
   bool embedding_normalize = true;
   std::vector<float> embedding_result;
+
+  // Multimodal (Qwen3-VL) one-shot generation: when `mm_image` is non-empty the
+  // worker decodes the image, runs the ViT, renders the chat prompt from
+  // `mm_text` with the image placeholders, and streams generated tokens
+  // single-stream (not merged into the continuous-decode batch). `prompt_ids` is
+  // unused on this path — the worker builds the prompt itself.
+  std::string mm_text;                 // the user's text prompt
+  std::vector<std::uint8_t> mm_image;  // raw encoded image bytes (JPEG/PNG/…)
+  bool is_multimodal() const { return !mm_image.empty(); }
 
   // Set by the submitting thread (e.g. client disconnect); read by the worker.
   std::atomic<bool> cancelled{false};

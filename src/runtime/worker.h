@@ -25,7 +25,8 @@
 
 namespace mlxforge {
 
-class Tokenizer;  // for per-token byte strings used by grammar masking
+class Tokenizer;    // for per-token byte strings used by grammar masking
+class VitEncoder;   // lazily built for multimodal requests (borrows model weights)
 
 class Worker {
  public:
@@ -33,8 +34,9 @@ class Worker {
 
   // `tok` (optional) supplies the per-token byte strings used for constrained
   // decoding; when null, grammar-constrained requests fall back to unconstrained.
-  Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok = nullptr)
-      : factory_(std::move(factory)), sched_(scheduler), tok_(tok) {}
+  // Defined out-of-line (with the destructor) because the unique_ptr<VitEncoder>
+  // member needs the complete type for cleanup.
+  Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok = nullptr);
   ~Worker();
 
   Worker(const Worker&) = delete;
@@ -76,6 +78,12 @@ class Worker {
   // req.embedding_result, then close its token queue. Runs on the worker thread.
   void handle_embedding(Request& req);
 
+  // Handle a one-shot multimodal (Qwen3-VL) request: decode the image, run the
+  // ViT, render the chat prompt, and stream generated tokens into req.tokens
+  // single-stream. Runs on the worker thread (it owns all MLX state). Errors if
+  // the loaded model is not a vision-language model.
+  void handle_multimodal(Request& req);
+
   // Constrained decoding helpers. ensure_token_bytes builds the id->output-bytes
   // table once (from the tokenizer); grammar_mask returns an additive (1, vocab)
   // fp32 mask (-inf on tokens the grammar forbids at its current state); advance
@@ -90,6 +98,7 @@ class Worker {
   std::vector<std::string> token_bytes_;  // id -> output bytes ("" for specials)
   bool token_bytes_built_ = false;
   std::unique_ptr<DecoderModel> model_;  // constructed and owned on the worker thread
+  std::unique_ptr<VitEncoder> vit_;      // built on first multimodal request (VL models)
 
   // Decode-batch state (worker thread only). All vectors are row-aligned with
   // the cache's batch axis.

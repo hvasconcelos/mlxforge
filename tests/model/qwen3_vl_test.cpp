@@ -5,6 +5,8 @@
 
 #include <array>
 #include <cstdint>
+#include <fstream>
+#include <memory>
 #include <vector>
 
 #include "mlx/ops.h"
@@ -16,6 +18,9 @@
 #include "model/model_factory.h"
 #include "model/qwen3_vl.h"
 #include "runtime/multimodal_stream.h"
+#include "runtime/worker.h"
+#include "scheduler/request.h"
+#include "scheduler/scheduler.h"
 #include "tokenizer/tokenizer.h"
 #include "vision/preprocess.h"
 #include "support/model_fixture.h"
@@ -240,6 +245,47 @@ TEST_CASE("Qwen3-VL: generate_from_image composes the full pipeline") {
                                          "What is in this image?", load_qwen3_vl_npy("image_rgb.npy"),
                                          /*max_tokens=*/10, /*eos_ids=*/{});
   assert_tokens_equal(r.tokens, load_qwen3_vl_token_ids("greedy_tokens.npy"));
+}
+
+TEST_CASE("Qwen3-VL: worker serves a multimodal request from another thread") {
+  if (!qwen3_vl_model_available()) {
+    MESSAGE("Qwen3-VL model not found in HF cache; skipping multimodal worker test");
+    return;
+  }
+  // End-to-end through the scheduler/worker: a cross-thread multimodal request
+  // (text + raw image bytes) is served single-stream on the worker thread and
+  // streams the reference greedy tokens.
+  const std::string dir = qwen3_vl_model_dir();
+  Tokenizer tok = Tokenizer::from_file(dir + "/tokenizer.json", /*bos_id=*/-1, ChatFormat::Qwen3);
+
+  mlxforge::Scheduler sched;
+  mlxforge::Worker worker(
+      [dir] {
+        mlxforge::ModelConfig c = mlxforge::ModelConfig::from_file(dir + "/config.json");
+        return mlxforge::create_model(c, mlxforge::load_weights(dir, c));
+      },
+      &sched, &tok);
+  worker.start();
+
+  // Load the raw PNG bytes for the request.
+  std::ifstream f(qwen3_vl_ref_path("image.png"), std::ios::binary);
+  std::vector<std::uint8_t> img_bytes((std::istreambuf_iterator<char>(f)),
+                                      std::istreambuf_iterator<char>());
+
+  auto req = std::make_shared<mlxforge::Request>();
+  req->mm_text = "What is in this image?";
+  req->mm_image = img_bytes;
+  req->max_tokens = 10;
+  // Empty eos_ids so the run matches the fixed-length reference greedy stream.
+  sched.submit(req);
+
+  std::vector<int> got;
+  int t = 0;
+  while (req->tokens.pop(t)) got.push_back(t);
+  worker.stop();
+
+  assert_tokens_equal(got, load_qwen3_vl_token_ids("greedy_tokens.npy"));
+  CHECK(req->finish_reason == "length");
 }
 
 TEST_CASE("Qwen3-VL: cached KV decode reproduces the greedy tokens") {

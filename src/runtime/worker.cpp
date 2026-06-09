@@ -6,10 +6,14 @@
 #include <limits>
 
 #include "core/logging.h"
+#include "model/qwen3_vl.h"
+#include "model/vision/vit.h"
 #include "runtime/batching.h"
 #include "runtime/embedding.h"
+#include "runtime/multimodal_stream.h"
 #include "sample/sampler.h"
 #include "tokenizer/tokenizer.h"
+#include "vision/image_decode.h"
 
 #include "mlx/ops.h"
 #include "mlx/random.h"
@@ -44,6 +48,9 @@ bool consume(Request& req, int& produced, int id) {
 }
 }  // namespace
 
+Worker::Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok)
+    : factory_(std::move(factory)), sched_(scheduler), tok_(tok) {}
+
 Worker::~Worker() { stop(); }
 
 void Worker::handle_embedding(Request& req) {
@@ -57,6 +64,34 @@ void Worker::handle_embedding(Request& req) {
     req.finish_reason = "error";
   }
   req.tokens.close();  // unblock the waiting submitter
+}
+
+void Worker::handle_multimodal(Request& req) {
+  try {
+    auto* vl = dynamic_cast<Qwen3VLModel*>(model_.get());
+    if (vl == nullptr || !model_->config().has_vision_tower() || tok_ == nullptr) {
+      throw std::runtime_error("loaded model is not a vision-language model");
+    }
+    // The ViT borrows the model's weights; build it once and reuse it.
+    if (!vit_) {
+      vit_ = std::make_unique<VitEncoder>(*model_->config().vision, model_->weights());
+    }
+    mx::array image = decode_image(req.mm_image.data(), req.mm_image.size());
+
+    int produced = 0;
+    GenerateResult r = generate_from_image(
+        *vl, *vit_, *tok_, req.mm_text, image, req.max_tokens, req.eos_ids,
+        [&](int id) {
+          if (produced == 0) req.first_token_time = Request::Clock::now();
+          req.tokens.push(id);
+          ++produced;
+        });
+    req.finish_reason = r.hit_eos ? "stop" : "length";
+  } catch (const std::exception& e) {
+    log::error("worker: multimodal error: {}", e.what());
+    req.finish_reason = "error";
+  }
+  req.tokens.close();
 }
 
 void Worker::ensure_token_bytes(int vocab) {
@@ -143,12 +178,13 @@ void Worker::run() {
 
     try {
       if (!incoming.empty()) {
-        // Embedding requests are one-shot (forward -> pool -> close); handle them
-        // inline and only admit the generation requests into the decode batch.
+        // Embedding and multimodal requests are one-shot (handled inline, on this
+        // thread); only text-generation requests are admitted into the decode batch.
         std::vector<std::shared_ptr<Request>> gen;
         gen.reserve(incoming.size());
         for (auto& r : incoming) {
           if (r->embedding) handle_embedding(*r);
+          else if (r->is_multimodal()) handle_multimodal(*r);
           else gen.push_back(std::move(r));
         }
         if (!gen.empty()) admit(gen);
