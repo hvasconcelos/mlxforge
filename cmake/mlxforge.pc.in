@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+exec_prefix=${prefix}
+libdir=${exec_prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: mlxforge
+Description: Embeddable batched MLX LLM inference engine (C ABI)
+Version: 0.1.0
+Libs: -L${libdir} -lmlxforge
+Cflags: -I${includedir}

@@ -19,6 +19,7 @@ add_executable(mlxforge_tests
   cache/batch_kv_filter_merge_test.cpp
   cache/kv_budget_test.cpp
   sample/sampler_test.cpp
+  sample/json_grammar_test.cpp
   runtime/single_stream_test.cpp
   runtime/engine_test.cpp
   scheduler/scheduler_test.cpp
@@ -33,14 +34,28 @@ add_executable(mlxforge_tests
   tokenizer/tokenizer_test.cpp
   tokenizer/bpe_test.cpp
   tokenizer/spm_test.cpp
-  server/openai_test.cpp
-  server/anthropic_test.cpp
-  server/sse_test.cpp
-  server/hardening_test.cpp
   model/quantized_test.cpp
+  # The C ABI is compiled directly into the test binary (it is otherwise only in
+  # the shared library), so capi_test can drive the engine through mlxforge.h.
+  ${CMAKE_SOURCE_DIR}/src/capi/mlxforge.cpp
+  capi/capi_test.cpp
 )
 target_include_directories(mlxforge_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(mlxforge_tests PRIVATE mlxforge_core doctest::doctest)
+target_link_libraries(mlxforge_tests PRIVATE doctest::doctest)
+
+# Server serialization/HTTP tests only build with the server harness, which owns
+# the cpp-httplib dependency. mlxforge_server PUBLIC-links mlxforge_core, so it
+# brings the engine in transitively; otherwise link the core directly.
+if(MLXFORGE_BUILD_SERVER)
+  target_sources(mlxforge_tests PRIVATE
+    server/openai_test.cpp
+    server/anthropic_test.cpp
+    server/sse_test.cpp
+    server/hardening_test.cpp)
+  target_link_libraries(mlxforge_tests PRIVATE mlxforge_server)
+else()
+  target_link_libraries(mlxforge_tests PRIVATE mlxforge_core)
+endif()
 
 # Resolve the local HF snapshot dir for integration tests (empty -> tests skip).
 file(GLOB _mlxforge_model_snapshots

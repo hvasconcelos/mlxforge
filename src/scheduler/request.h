@@ -7,11 +7,13 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
+#include <memory>
 #include <mutex>
 #include <queue>
 #include <string>
 #include <vector>
 
+#include "sample/json_grammar.h"
 #include "sample/sampler.h"
 
 namespace mlxforge {
@@ -68,11 +70,25 @@ struct Request {
   int max_tokens = 64;
   std::vector<int> eos_ids;
 
+  // Constrained decoding: empty = unconstrained; "json" = any valid JSON value;
+  // otherwise a JSON-Schema string (the supported subset, see json_grammar.h).
+  // The worker compiles this into `grammar` on admit and masks logits so the
+  // output can only be valid JSON.
+  std::string json_schema;
+  std::unique_ptr<JsonGrammar> grammar;  // runtime grammar state (worker-owned)
+
+  // Embedding request: when true the worker runs a single forward pass, pools +
+  // normalizes the hidden states into `embedding_result`, and closes `tokens`
+  // (no generation). `pooling` is a mlxforge::Pooling value.
+  bool embedding = false;
+  int pooling = 0;
+  std::vector<float> embedding_result;
+
   // Set by the submitting thread (e.g. client disconnect); read by the worker.
   std::atomic<bool> cancelled{false};
 
   TokenQueue tokens;                 // worker pushes generated ids, then close()s
-  std::string finish_reason;         // "stop" | "length" | "cancel" (worker sets)
+  std::string finish_reason;         // "stop" | "length" | "cancel" | "embed"
 
   // Metrics: enqueue stamped on submit, first_token/finish stamped by the worker.
   using Clock = std::chrono::steady_clock;

@@ -1,0 +1,300 @@
+// Implementation of the libmlxforge C ABI (capi/mlxforge.h).
+//
+// Each entry point is a thin, exception-safe wrapper over the C++ Engine: it
+// translates flat C structs to/from the engine's types, and a try/catch around
+// every body guarantees no C++ exception escapes across `extern "C"` (an
+// exception unwinding into C is undefined behavior). Failures are reported as
+// NULL / negative returns plus an allocated message in `*err`.
+#include "capi/mlxforge.h"
+
+#include <cstdlib>
+#include <cstring>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "core/config.h"
+#include "runtime/engine.h"
+#include "scheduler/request.h"
+#include "tokenizer/tokenizer.h"
+
+namespace {
+
+// Allocate a C string the caller frees with mlxforge_string_free (which uses
+// std::free). Returns nullptr on allocation failure (callers treat that as "no
+// message"); never throws.
+char* dup_cstr(const std::string& s) noexcept {
+  char* out = static_cast<char*>(std::malloc(s.size() + 1));
+  if (out) std::memcpy(out, s.c_str(), s.size() + 1);
+  return out;
+}
+
+void set_err(char** err, const std::string& msg) noexcept {
+  if (err) *err = dup_cstr(msg);
+}
+
+// Translate the flat C sampling struct into the engine's SamplingParams,
+// normalizing the "disabled" sentinels so a zero-initialized struct is valid
+// (zeroed => greedy). A null pointer means greedy defaults.
+mlxforge::SamplingParams to_params(const mlxforge_sampling* s) {
+  mlxforge::SamplingParams p;  // defaults: temperature 1, everything disabled
+  if (!s) {
+    p.temperature = 0.0f;  // null sampling => deterministic greedy
+    return p;
+  }
+  p.temperature = s->temperature;
+  p.top_k = s->top_k > 0 ? s->top_k : 0;
+  p.top_p = (s->top_p > 0.0f && s->top_p < 1.0f) ? s->top_p : 1.0f;
+  p.min_p = s->min_p > 0.0f ? s->min_p : 0.0f;
+  p.repetition_penalty = s->repetition_penalty > 0.0f ? s->repetition_penalty : 1.0f;
+  p.frequency_penalty = s->frequency_penalty;
+  p.presence_penalty = s->presence_penalty;
+  p.seed = s->seed;
+  return p;
+}
+
+int sampling_max_tokens(const mlxforge_sampling* s) {
+  return (s && s->max_tokens > 0) ? s->max_tokens : 64;
+}
+
+}  // namespace
+
+// Opaque handles. The engine wrapper owns the C++ Engine. The request wrapper
+// holds a shared_ptr to the Request (so it stays alive while the worker still
+// references it) plus its own streaming detokenizer over the engine's
+// tokenizer; `done` latches once the stream is fully drained and flushed.
+struct mlxforge_engine {
+  std::unique_ptr<mlxforge::Engine> engine;
+  std::string model_name;  // cached so model_name() can return a stable c_str
+};
+
+struct mlxforge_request {
+  std::shared_ptr<mlxforge::Request> req;
+  std::unique_ptr<mlxforge::StreamingDetokenizer> detok;
+  bool done = false;
+};
+
+extern "C" {
+
+const char* mlxforge_version(void) { return "0.1.0"; }
+
+int mlxforge_abi_version(void) { return MLXFORGE_ABI_VERSION; }
+
+void mlxforge_string_free(char* s) { std::free(s); }
+
+void mlxforge_floats_free(float* p) { std::free(p); }
+
+mlxforge_engine* mlxforge_engine_create(const char* model_spec,
+                                        const mlxforge_engine_opts* opts, char** err) {
+  if (err) *err = nullptr;
+  if (!model_spec || !*model_spec) {
+    set_err(err, "model_spec is null or empty");
+    return nullptr;
+  }
+  try {
+    mlxforge::EngineConfig cfg;
+    cfg.model_spec = model_spec;
+    if (opts && opts->max_waiting > 0) cfg.max_waiting = opts->max_waiting;
+
+    auto handle = std::make_unique<mlxforge_engine>();
+    handle->model_name = model_spec;
+    handle->engine = std::make_unique<mlxforge::Engine>(std::move(cfg));
+    return handle.release();
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error creating engine");
+  }
+  return nullptr;
+}
+
+int mlxforge_engine_ready(mlxforge_engine* engine) {
+  if (!engine || !engine->engine) return 0;
+  try {
+    return engine->engine->ready() ? 1 : 0;
+  } catch (...) {
+    return 0;
+  }
+}
+
+const char* mlxforge_engine_model_name(mlxforge_engine* engine) {
+  return (engine) ? engine->model_name.c_str() : "";
+}
+
+int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float** out,
+                   size_t* out_len, char** err) {
+  if (err) *err = nullptr;
+  if (out) *out = nullptr;
+  if (out_len) *out_len = 0;
+  if (!engine || !engine->engine) {
+    set_err(err, "engine is null");
+    return 1;
+  }
+  if (!out || !out_len) {
+    set_err(err, "out/out_len must not be null");
+    return 1;
+  }
+  try {
+    std::vector<float> v = engine->engine->embed(text ? text : "", pooling);
+    if (v.empty()) {
+      set_err(err, "embedding failed (empty input or model error)");
+      return 1;
+    }
+    float* buf = static_cast<float*>(std::malloc(v.size() * sizeof(float)));
+    if (!buf) {
+      set_err(err, "out of memory");
+      return 1;
+    }
+    std::memcpy(buf, v.data(), v.size() * sizeof(float));
+    *out = buf;
+    *out_len = v.size();
+    return 0;
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error computing embedding");
+  }
+  return 1;
+}
+
+void mlxforge_engine_free(mlxforge_engine* engine) {
+  if (!engine) return;
+  try {
+    if (engine->engine) engine->engine->stop();
+  } catch (...) {
+    // best-effort drain; never throw out of free
+  }
+  delete engine;
+}
+
+namespace {
+
+// Shared submit path: build a Request from already-tokenized prompt ids, attach
+// sampling/limits, wire its streaming detokenizer, and enqueue. Returns the
+// request handle or nullptr (sets *err).
+mlxforge_request* submit_ids(mlxforge_engine* engine, std::vector<int> prompt_ids,
+                             const mlxforge_sampling* sampling, char** err) {
+  auto req = std::make_shared<mlxforge::Request>();
+  req->prompt_ids = std::move(prompt_ids);
+  req->params = to_params(sampling);
+  req->max_tokens = sampling_max_tokens(sampling);
+  req->eos_ids = engine->engine->config().eos_token_ids;
+  if (sampling && sampling->json_schema && *sampling->json_schema)
+    req->json_schema = sampling->json_schema;
+
+  if (!engine->engine->scheduler().submit(req)) {
+    set_err(err, "request rejected: waiting queue is full");
+    return nullptr;
+  }
+
+  auto handle = std::make_unique<mlxforge_request>();
+  handle->req = req;
+  handle->detok =
+      std::make_unique<mlxforge::StreamingDetokenizer>(engine->engine->tokenizer());
+  return handle.release();
+}
+
+}  // namespace
+
+mlxforge_request* mlxforge_submit_chat(mlxforge_engine* engine,
+                                       const mlxforge_msg* messages, size_t n_messages,
+                                       const mlxforge_sampling* sampling, char** err) {
+  if (err) *err = nullptr;
+  if (!engine || !engine->engine) {
+    set_err(err, "engine is null");
+    return nullptr;
+  }
+  try {
+    std::vector<mlxforge::Tokenizer::Message> msgs;
+    msgs.reserve(n_messages);
+    for (size_t i = 0; i < n_messages; ++i) {
+      const char* role = messages[i].role ? messages[i].role : "user";
+      const char* content = messages[i].content ? messages[i].content : "";
+      msgs.push_back({role, content, /*tool_call=*/""});
+    }
+    std::vector<int> ids = engine->engine->tokenizer().apply_chat_template(msgs);
+    return submit_ids(engine, std::move(ids), sampling, err);
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error submitting chat");
+  }
+  return nullptr;
+}
+
+mlxforge_request* mlxforge_submit_text(mlxforge_engine* engine, const char* prompt,
+                                       const mlxforge_sampling* sampling, char** err) {
+  if (err) *err = nullptr;
+  if (!engine || !engine->engine) {
+    set_err(err, "engine is null");
+    return nullptr;
+  }
+  try {
+    std::vector<int> ids = engine->engine->tokenizer().encode(prompt ? prompt : "");
+    return submit_ids(engine, std::move(ids), sampling, err);
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error submitting text");
+  }
+  return nullptr;
+}
+
+int mlxforge_request_next(mlxforge_request* req, char** text) {
+  if (text) *text = nullptr;
+  if (!req || !req->req) return -1;
+  try {
+    if (req->done) return 1;
+    // Pull tokens until one completes some UTF-8 text, or the stream ends. The
+    // detokenizer may return "" for a token that only advances a multi-byte
+    // character; we keep going rather than emit empty chunks.
+    for (;;) {
+      int tok = 0;
+      if (req->req->tokens.pop(tok)) {
+        std::string piece = req->detok->add(tok);
+        if (piece.empty()) continue;
+        if (text) *text = dup_cstr(piece);
+        return 0;
+      }
+      // Producer closed and queue drained: flush any trailing complete bytes
+      // once, then we are done.
+      std::string tail = req->detok->finish();
+      req->done = true;
+      if (!tail.empty()) {
+        if (text) *text = dup_cstr(tail);
+        return 0;
+      }
+      return 1;
+    }
+  } catch (...) {
+    req->done = true;
+    return -1;
+  }
+}
+
+void mlxforge_request_cancel(mlxforge_request* req) {
+  if (req && req->req) req->req->cancelled.store(true);
+}
+
+const char* mlxforge_request_finish_reason(mlxforge_request* req) {
+  return (req && req->req) ? req->req->finish_reason.c_str() : "";
+}
+
+void mlxforge_request_free(mlxforge_request* req) {
+  if (!req) return;
+  try {
+    // If still running, cancel and drain the token queue so the worker's
+    // producer never blocks on a full, abandoned queue.
+    if (!req->done && req->req) {
+      req->req->cancelled.store(true);
+      int tok = 0;
+      while (req->req->tokens.pop(tok)) {
+      }
+    }
+  } catch (...) {
+    // never throw out of free
+  }
+  delete req;
+}
+
+}  // extern "C"

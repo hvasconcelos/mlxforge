@@ -279,15 +279,18 @@ mx::array DecoderModel::forward(const mx::array& tokens, BatchKVCache& cache) co
   return linear(h, head_key);
 }
 
-mx::array DecoderModel::forward(const mx::array& tokens, KVCache* cache) const {
+mx::array DecoderModel::forward_hidden(const mx::array& tokens, KVCache* cache) const {
   const int offset = cache ? cache->offset() : 0;
   mx::array h = embed(tokens);
   for (int layer = 0; layer < cfg_.n_layers; ++layer) {
     h = decoder_block(h, layer, offset, cache);
   }
   if (cache) cache->advance(tokens.shape()[1]);  // one offset bump per token sweep
+  return rms_norm(h, w_.at("model.norm.weight"));  // (B, L, hidden)
+}
 
-  h = rms_norm(h, w_.at("model.norm.weight"));
+mx::array DecoderModel::forward(const mx::array& tokens, KVCache* cache) const {
+  mx::array h = forward_hidden(tokens, cache);
   // LM head: a separate lm_head when present, else the tied input embedding.
   const std::string head_key =
       w_.has("lm_head.weight") ? "lm_head.weight" : "model.embed_tokens.weight";

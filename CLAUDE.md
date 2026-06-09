@@ -5,16 +5,35 @@ Guidance for working in this repo with Claude Code.
 ## What this is
 
 `mlxforge` — a from-scratch Local Inference engine in **C++ on Apple MLX** (the C++
-core library, not `mlx-lm`), served behind an **OpenAI-compatible HTTP API** with
-**continuous batching**. Apple Silicon only (Metal backend). C++17.
+core library, not `mlx-lm`), with **continuous batching**. Apple Silicon only (Metal
+backend). C++17.
 
 The defining constraint: the failure mode is **silent numerical garbage, not a
 crash**. Anything touching the forward pass, KV cache, or sampling must be
 validated against the `mlx-lm` golden reference, not eyeballed.
 
-The `doc/` folder is the design reference: `doc/architecture.md` (engine
-internals + threading), `doc/llm-architecture.md` (the transformer forward
-pass), `doc/supported-models.md`, `doc/applications.md`, and
+**The product is `libmlxforge` — the engine as an embeddable library.** mlxforge is
+the only MLX project that is a *complete, batched* LLM engine (scheduler + continuous
+batching + own tokenizer/GGUF/chat templates, golden-reference-gated) meant to be
+**bound from other languages** through a stable C ABI (Node first, then Swift/Rust),
+not just another Python/Swift app. The single-stream MLX libs (`node-mlx`, Apple's
+`MLXLLM`) have no batching; the batched MLX servers (`vllm-mlx`, `omlx`) are Python and
+can't be embedded. mlxforge sits in that gap: batched + language-neutral + in-process.
+
+**Product hierarchy — read this before adding features.** The **library** (the
+forthcoming `extern "C"` surface in `src/capi/mlxforge.h`, plus its bindings) is the
+product. The **HTTP server** (`src/server/*`) and the **CLI** (`apps/mlxforge_cli.cpp`)
+are **auxiliary QA harnesses** that exist to *exercise and prove the engine's
+stability*: the server is the scheduler/batching concurrency & load harness, the CLI is
+the golden-reference and weight-inspection smoke test. They are dev/QA instruments, not
+user-facing deliverables. A change that only makes the server nicer is out of scope; a
+change that hardens or validates the library is in scope. The released library artifact
+builds with the harnesses **off** (a lean dylib, no httplib/curl).
+
+The `doc/` folder is the design reference: `doc/embedding.md` (the library /
+cross-language engine thesis + C-ABI quickstart — start here), `doc/architecture.md`
+(engine internals + threading), `doc/llm-architecture.md` (the transformer forward
+pass), `doc/supported-models.md`, `doc/applications.md` (the server/CLI harnesses), and
 `doc/contributing.md` (the maintainer guide).
 
 ## Build / test / run
@@ -134,3 +153,8 @@ reference/.venv/bin/python reference/dump_ref.py
 `apps/` (`mlxforge` server, `mlxforge-cli`), tests mirror the module path under `tests/`,
 shared test helpers in `tests/support/`. See the module table in `README.md` and
 `doc/architecture.md` for the per-module responsibilities.
+
+**Planned (product-facing):** `src/capi/` holds the stable `extern "C"` ABI
+(`mlxforge.h`) that wraps `runtime/engine` — the public surface — and `bindings/`
+holds the language bindings on top of it (`bindings/node` first). When these land they
+become the primary entry points; `src/server` and `apps/` remain harnesses behind them.

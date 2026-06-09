@@ -1,0 +1,32 @@
+{
+  "name": "@mlxforge/node",
+  "version": "0.1.0",
+  "description": "Embeddable batched MLX LLM engine for Node.js — bindings over libmlxforge (in-process, MLX-native, continuous batching)",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "binding.gyp",
+    "src/addon.cc",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "test": "node test/smoke.cjs"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "license": "MIT"
+}

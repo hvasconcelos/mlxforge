@@ -12,6 +12,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -24,12 +25,16 @@
 
 namespace mlxforge {
 
+class Tokenizer;  // for per-token byte strings used by grammar masking
+
 class Worker {
  public:
   using ModelFactory = std::function<std::unique_ptr<DecoderModel>()>;
 
-  Worker(ModelFactory factory, Scheduler* scheduler)
-      : factory_(std::move(factory)), sched_(scheduler) {}
+  // `tok` (optional) supplies the per-token byte strings used for constrained
+  // decoding; when null, grammar-constrained requests fall back to unconstrained.
+  Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok = nullptr)
+      : factory_(std::move(factory)), sched_(scheduler), tok_(tok) {}
   ~Worker();
 
   Worker(const Worker&) = delete;
@@ -67,8 +72,23 @@ class Worker {
   // close their token queues).
   void evict_finished();
 
+  // Handle a one-shot embedding request: forward_hidden -> pool -> normalize into
+  // req.embedding_result, then close its token queue. Runs on the worker thread.
+  void handle_embedding(Request& req);
+
+  // Constrained decoding helpers. ensure_token_bytes builds the id->output-bytes
+  // table once (from the tokenizer); grammar_mask returns an additive (1, vocab)
+  // fp32 mask (-inf on tokens the grammar forbids at its current state); advance
+  // commits the chosen token's bytes to a row's grammar.
+  void ensure_token_bytes(int vocab);
+  mx::array grammar_mask(const Request& req, const JsonGrammar& g, int vocab);
+  void advance_grammar(Request& req, int chosen_id);
+
   ModelFactory      factory_;
   Scheduler*        sched_;
+  const Tokenizer*  tok_;  // for per-token bytes (grammar masking); may be null
+  std::vector<std::string> token_bytes_;  // id -> output bytes ("" for specials)
+  bool token_bytes_built_ = false;
   std::unique_ptr<DecoderModel> model_;  // constructed and owned on the worker thread
 
   // Decode-batch state (worker thread only). All vectors are row-aligned with

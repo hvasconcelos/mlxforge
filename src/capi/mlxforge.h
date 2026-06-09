@@ -1,0 +1,170 @@
+/*
+ * libmlxforge — the stable C ABI for the mlxforge inference engine.
+ *
+ * This is the product surface: a single `extern "C"` header that wraps the
+ * batched MLX engine (one GPU worker + continuous-batching scheduler) behind
+ * opaque handles, so it can be bound from any language (Node first, then Swift,
+ * Rust) and embedded in-process. The HTTP server and CLI in this repo are QA
+ * harnesses on the same engine; this header is what mlxforge ships.
+ *
+ * Contract:
+ *   - No C++ types cross this boundary. Strings are UTF-8, NUL-terminated, and
+ *     ownership is documented per function. Strings returned by the library are
+ *     freed by the caller with mlxforge_string_free().
+ *   - Every fallible call takes a `char** err`: on failure it returns NULL / a
+ *     negative code and (if err != NULL) sets *err to a newly-allocated message
+ *     the caller frees with mlxforge_string_free(). A C++ exception is never
+ *     allowed to cross the boundary.
+ *   - The ABI is append-only and versioned (mlxforge_abi_version()).
+ *
+ * Threading: the engine owns a single GPU worker thread; all MLX work happens
+ * there (MLX arrays are thread-bound). Handles are not thread-safe to use
+ * concurrently with themselves, but distinct requests on one engine may be
+ * driven from distinct threads — that is exactly how concurrent requests batch.
+ */
+#ifndef MLXFORGE_H
+#define MLXFORGE_H
+
+#include <stddef.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* Bumped on any additive ABI change; never on a breaking one (those get a new
+ * symbol). Query at runtime with mlxforge_abi_version(). */
+#define MLXFORGE_ABI_VERSION 1
+
+typedef struct mlxforge_engine mlxforge_engine;
+typedef struct mlxforge_request mlxforge_request;
+
+/* Engine creation options. Zero-initialize (`{0}`) for defaults. */
+typedef struct {
+  int max_waiting; /* max queued requests; <= 0 => default (256) */
+} mlxforge_engine_opts;
+
+/* One chat message. role is "system" | "user" | "assistant" | "tool". */
+typedef struct {
+  const char* role;
+  const char* content;
+} mlxforge_msg;
+
+/* Sampling parameters. Zero-initialize (`{0}`) for deterministic greedy decode
+ * with the default token budget. Mirrors the engine's SamplingParams; the
+ * library normalizes "disabled" sentinels so a zeroed struct is always valid. */
+typedef struct {
+  float temperature;          /* <= 0 => greedy (argmax) */
+  int   top_k;                /* <= 0 => disabled */
+  float top_p;                /* <= 0 or >= 1 => disabled */
+  float min_p;                /* <= 0 => disabled */
+  float repetition_penalty;   /* 0 or 1 => disabled */
+  float frequency_penalty;    /* 0 => disabled */
+  float presence_penalty;     /* 0 => disabled */
+  unsigned long long seed;    /* RNG seed (used when temperature > 0) */
+  int   max_tokens;           /* <= 0 => default (64) */
+  /* Constrained decoding (optional; NULL/empty => off): "json" forces any valid
+   * JSON value; otherwise a JSON-Schema string (supported subset: a top-level
+   * object with ordered, required, scalar-typed properties). The output is
+   * masked so it can only be well-formed JSON. */
+  const char* json_schema;
+} mlxforge_sampling;
+
+/* ---- Library info ---------------------------------------------------------*/
+
+/* Human-readable version string (owned by the library; do not free). */
+const char* mlxforge_version(void);
+
+/* The ABI version this build implements (== MLXFORGE_ABI_VERSION at build). */
+int mlxforge_abi_version(void);
+
+/* Free a string the library allocated (every `char** err` and text out-param).
+ * NULL is ignored. */
+void mlxforge_string_free(char* s);
+
+/* Free a float array returned by the library (mlxforge_embed). NULL is ignored. */
+void mlxforge_floats_free(float* p);
+
+/* ---- Engine ---------------------------------------------------------------*/
+
+/* Create an engine for a model spec: a local directory, a HuggingFace repo id,
+ * or a `.gguf` file (or `org/name:VARIANT` for a GGUF download). Loads config +
+ * tokenizer on the calling thread and spawns the GPU worker (which loads weights
+ * on its own thread). `opts` may be NULL for defaults.
+ *
+ * Returns the engine, or NULL on failure (sets *err). Free with
+ * mlxforge_engine_free(). The model may still be loading when this returns;
+ * poll mlxforge_engine_ready(). */
+mlxforge_engine* mlxforge_engine_create(const char* model_spec,
+                                        const mlxforge_engine_opts* opts, char** err);
+
+/* Non-zero once the model has finished loading on the worker thread. Requests
+ * may be submitted before this returns true; they are served once ready. */
+int mlxforge_engine_ready(mlxforge_engine* engine);
+
+/* The served model name (the spec passed to create). Owned by the engine;
+ * valid until mlxforge_engine_free(). */
+const char* mlxforge_engine_model_name(mlxforge_engine* engine);
+
+/* Drain in-flight work, stop the worker thread, and destroy the engine. Any
+ * still-open requests must not be used afterward. NULL is ignored. */
+void mlxforge_engine_free(mlxforge_engine* engine);
+
+/* ---- Embeddings -----------------------------------------------------------*/
+
+/* Embed `text` into a unit-normalized vector (synchronous: blocks until the
+ * worker runs the forward pass). `pooling` is 0 = mean over the sequence
+ * (default), 1 = last token. On success returns 0, sets *out to a newly
+ * allocated float array of length *out_len (free with mlxforge_floats_free).
+ * On failure returns non-zero and sets *err. Any LLaMA/Qwen checkpoint works; an
+ * embedding-tuned checkpoint produces a higher-quality vector. */
+int mlxforge_embed(mlxforge_engine* engine, const char* text, int pooling, float** out,
+                   size_t* out_len, char** err);
+
+/* ---- Requests -------------------------------------------------------------*/
+
+/* Submit a chat completion: renders the model's chat template over `messages`,
+ * tokenizes, and enqueues onto the batching scheduler. Many requests may be in
+ * flight at once on one engine — they share GPU steps (continuous batching).
+ * `sampling` may be NULL for greedy defaults.
+ *
+ * Returns a request handle, or NULL on failure (sets *err). Free with
+ * mlxforge_request_free(). */
+mlxforge_request* mlxforge_submit_chat(mlxforge_engine* engine,
+                                       const mlxforge_msg* messages, size_t n_messages,
+                                       const mlxforge_sampling* sampling, char** err);
+
+/* Submit a raw-text completion: encodes `prompt` directly (no chat template).
+ * Otherwise identical to mlxforge_submit_chat. */
+mlxforge_request* mlxforge_submit_text(mlxforge_engine* engine, const char* prompt,
+                                       const mlxforge_sampling* sampling, char** err);
+
+/* Pull the next chunk of generated text. Blocks until decoded text is available
+ * or the request finishes. The detokenizer is UTF-8-safe: a chunk is always a
+ * run of complete characters (never a split multi-byte sequence).
+ *
+ * Returns:
+ *    0  => *text set to a newly-allocated, non-empty UTF-8 chunk
+ *          (free it with mlxforge_string_free); call again for more.
+ *    1  => done; *text set to NULL. Inspect mlxforge_request_finish_reason().
+ *   -1  => error; *text set to NULL (and *err-style state is terminal). */
+int mlxforge_request_next(mlxforge_request* req, char** text);
+
+/* Request cancellation: the worker evicts this row at the next step boundary,
+ * freeing its batch slot while other streams continue. Idempotent. After this,
+ * mlxforge_request_next() drains and returns 1 with finish_reason "cancel". */
+void mlxforge_request_cancel(mlxforge_request* req);
+
+/* Why generation stopped: "stop" (EOS) | "length" (max_tokens) | "cancel".
+ * Empty string while still running. Valid once mlxforge_request_next() returned
+ * 1. Owned by the request. */
+const char* mlxforge_request_finish_reason(mlxforge_request* req);
+
+/* Destroy a request. If it is still running it is cancelled and drained first
+ * (so the worker never blocks on a full token queue). NULL is ignored. */
+void mlxforge_request_free(mlxforge_request* req);
+
+#ifdef __cplusplus
+}  /* extern "C" */
+#endif
+
+#endif /* MLXFORGE_H */

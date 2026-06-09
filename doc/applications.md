@@ -1,11 +1,20 @@
-# Applications
+# Applications (the engine harnesses)
 
-The build produces two binaries plus the test suite:
+> **These binaries are harnesses, not the product.** `libmlxforge` — the engine behind
+> its C ABI — is the deliverable (see [`embedding.md`](./embedding.md)). The server and
+> CLI here exist to **drive and validate** that engine: the server is the
+> scheduler/batching concurrency & load harness, the CLI is the golden-reference and
+> weight-inspection smoke test. They are how we prove stability and how you can try the
+> engine without writing a binding — they are not what mlxforge ships as its product.
+> Both are built only when `MLXFORGE_BUILD_SERVER` / `MLXFORGE_BUILD_CLI` are on (the
+> default for development and CI); the released library is built without them.
+
+The build produces two harness binaries plus the test suite:
 
 | Binary | Source | Purpose |
 | --- | --- | --- |
-| `build/mlxforge` | `apps/mlxforge.cpp` | The OpenAI-compatible HTTP server with continuous batching. |
-| `build/mlxforge-cli` | `apps/mlxforge_cli.cpp` | A CLI for the build smoke test, weight inspection, and single-stream generation. |
+| `build/mlxforge` | `apps/mlxforge.cpp` | Server **harness**: drives the engine over the OpenAI HTTP API to load-test the scheduler and continuous batching. |
+| `build/mlxforge-cli` | `apps/mlxforge_cli.cpp` | CLI **harness**: build smoke test, weight inspection, and golden-reference single-stream generation. |
 | `build/tests/mlxforge_tests` | `tests/` | The doctest suite (see [contributing.md](./contributing.md)). |
 
 `$MODEL_DIR` below is any directory containing `config.json`, `tokenizer.json`,

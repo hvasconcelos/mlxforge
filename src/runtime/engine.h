@@ -11,6 +11,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "core/config.h"
 #include "runtime/metrics.h"
@@ -53,6 +54,11 @@ class Engine {
   bool ready() const { return worker_.ready(); }
   // Fetch running metrics (queues, timing, active requests, etc.) from the Worker
   WorkerMetrics metrics() const { return worker_.metrics(); }
+
+  // Embed `text` into a unit-normalized vector (synchronous): encodes, submits a
+  // one-shot embedding request through the scheduler, and blocks for the result.
+  // `pooling` is a mlxforge::Pooling value (0 = mean, 1 = last token).
+  std::vector<float> embed(const std::string& text, int pooling = 0);
 
   // Explicitly drain all remaining requests/queues and join/stop the Worker thread.
   // Idempotent: also called by the destructor, so only use if early shutdown/drain is desired.

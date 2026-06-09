@@ -1,11 +1,15 @@
 #include "runtime/worker.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <limits>
 
 #include "core/logging.h"
 #include "runtime/batching.h"
+#include "runtime/embedding.h"
 #include "sample/sampler.h"
+#include "tokenizer/tokenizer.h"
 
 #include "mlx/ops.h"
 #include "mlx/random.h"
@@ -42,6 +46,73 @@ bool consume(Request& req, int& produced, int id) {
 
 Worker::~Worker() { stop(); }
 
+void Worker::handle_embedding(Request& req) {
+  try {
+    req.embedding_result =
+        embed_pooled(*model_, req.prompt_ids, static_cast<Pooling>(req.pooling));
+    req.finish_reason = "embed";
+  } catch (const std::exception& e) {
+    log::error("worker: embedding error: {}", e.what());
+    req.finish_reason = "error";
+  }
+  req.tokens.close();  // unblock the waiting submitter
+}
+
+void Worker::ensure_token_bytes(int vocab) {
+  if (token_bytes_built_ || !tok_) return;
+  token_bytes_.assign(vocab, std::string());
+  for (int id = 0; id < vocab; ++id) token_bytes_[id] = tok_->decode({id});
+  token_bytes_built_ = true;
+}
+
+// Build an additive (1, vocab) fp32 mask: 0 for tokens the grammar allows at its
+// current state, -inf for the rest. Forces EOS once the JSON value is complete,
+// and forbids non-EOS special tokens mid-JSON.
+mx::array Worker::grammar_mask(const Request& req, const JsonGrammar& g, int vocab) {
+  const float NEG = -std::numeric_limits<float>::infinity();
+  std::vector<float> add(static_cast<size_t>(vocab), 0.0f);
+  const bool complete = g.complete();
+
+  // Cheap pre-filter: which first bytes can the grammar accept now? Most tokens
+  // are rejected on their first byte, avoiding a full accepts() copy per token.
+  std::array<bool, 256> first_ok{};
+  if (!complete)
+    for (int b = 0; b < 256; ++b)
+      first_ok[b] = g.accepts(std::string(1, static_cast<char>(b)));
+
+  auto is_eos = [&](int id) {
+    return std::find(req.eos_ids.begin(), req.eos_ids.end(), id) != req.eos_ids.end();
+  };
+
+  int allowed = 0;
+  for (int id = 0; id < vocab; ++id) {
+    bool allow;
+    if (is_eos(id)) {
+      allow = complete;  // may only stop once the JSON value is complete
+    } else if (complete) {
+      allow = false;     // force an EOS token once complete
+    } else {
+      const std::string& bytes = token_bytes_[id];
+      if (bytes.empty()) allow = false;  // non-EOS special token: not valid JSON
+      else if (!first_ok[static_cast<uint8_t>(bytes[0])]) allow = false;
+      else allow = g.accepts(bytes);
+    }
+    if (allow) ++allowed;
+    else add[id] = NEG;
+  }
+
+  // Never emit an all -inf mask (it would NaN the softmax). If nothing is
+  // allowed (e.g. complete but the model defines no EOS id), leave logits as-is.
+  if (allowed == 0) return mx::zeros({1, vocab}, mx::float32);
+  return mx::array(add.data(), {1, vocab}, mx::float32);
+}
+
+void Worker::advance_grammar(Request& req, int chosen_id) {
+  if (!req.grammar) return;
+  if (chosen_id >= 0 && chosen_id < static_cast<int>(token_bytes_.size()))
+    req.grammar->advance(token_bytes_[chosen_id]);  // EOS/specials decode to "" (no-op)
+}
+
 void Worker::start() {
   thread_ = std::thread([this] { run(); });
 }
@@ -70,7 +141,17 @@ void Worker::run() {
     }
 
     try {
-      if (!incoming.empty()) admit(incoming);
+      if (!incoming.empty()) {
+        // Embedding requests are one-shot (forward -> pool -> close); handle them
+        // inline and only admit the generation requests into the decode batch.
+        std::vector<std::shared_ptr<Request>> gen;
+        gen.reserve(incoming.size());
+        for (auto& r : incoming) {
+          if (r->embedding) handle_embedding(*r);
+          else gen.push_back(std::move(r));
+        }
+        if (!gen.empty()) admit(gen);
+      }
       evict_finished();  // a row may finish on its very first token
       if (reqs_.empty()) continue;
 
@@ -114,6 +195,15 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
     finished_.push_back(false);
     history_.push_back(incoming[i]->prompt_ids);
     rng_keys_.push_back(mx::random::key(incoming[i]->params.seed));
+    // Compile the constrained-decoding grammar before the first token is sampled.
+    // Compact mode forbids inter-token whitespace so greedy decoding cannot stall
+    // emitting endless separators.
+    if (tok_ && !incoming[i]->json_schema.empty()) {
+      auto g = std::make_unique<JsonGrammar>(
+          JsonGrammar::from_schema_string(incoming[i]->json_schema));
+      g->set_compact(true);
+      incoming[i]->grammar = std::move(g);
+    }
   }
 
   std::vector<int> first =
@@ -123,6 +213,7 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
     const int b = base + static_cast<int>(i);
     feed_[b] = first[i];               // feed the first token next step
     history_[b].push_back(first[i]);   // and let later penalties see it
+    advance_grammar(*reqs_[b], first[i]);
     if (reqs_[b]->cancelled.load()) {
       reqs_[b]->finish_reason = "cancel";
       finished_[b] = true;
@@ -139,6 +230,11 @@ mx::array Worker::sample_rows(const mx::array& logits, int row_offset, int count
   for (int i = 0; i < count; ++i) {
     const int r = row_offset + i;
     mx::array row = mx::slice(logits, {i, 0}, {i + 1, vocab});  // (1, vocab)
+    // Constrained decoding: mask the logits so only grammar-valid tokens remain.
+    if (tok_ && reqs_[r]->grammar) {
+      ensure_token_bytes(vocab);
+      row = mx::add(row, grammar_mask(*reqs_[r], *reqs_[r]->grammar, vocab));
+    }
     const SamplingParams& p = reqs_[r]->params;
 
     // Advance the per-row key so successive steps draw independently but
@@ -188,6 +284,7 @@ void Worker::decode_step() {
     }
     feed_[b] = ids[b];
     history_[b].push_back(ids[b]);  // penalties see the full sequence so far
+    advance_grammar(*reqs_[b], ids[b]);
     if (consume(*reqs_[b], produced_[b], ids[b])) finished_[b] = true;
   }
 

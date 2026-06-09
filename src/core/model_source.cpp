@@ -7,8 +7,10 @@
 #include <string>
 
 #include "core/env.h"
-#include "core/hf_download.h"
 #include "core/logging.h"
+#ifdef MLXFORGE_ENABLE_HF_DOWNLOAD
+#include "core/hf_download.h"
+#endif
 
 namespace fs = std::filesystem;
 
@@ -175,9 +177,15 @@ std::string resolve_model_dir(const std::string& spec) {
           log::info("model: using cached GGUF '{}'", cached);
           return cached;
         }
+#ifdef MLXFORGE_ENABLE_HF_DOWNLOAD
         log::info("model: '{}' GGUF ({}) not cached; downloading to '{}'", repo, tag,
                   dir.string());
         return hf_download_gguf(repo, dir.string(), tag);
+#else
+        throw std::runtime_error("model: '" + spec +
+                                 "' is not cached and HuggingFace download is disabled "
+                                 "(built without MLXFORGE_ENABLE_HF_DOWNLOAD)");
+#endif
       }
     }
   }
@@ -199,8 +207,14 @@ std::string resolve_model_dir(const std::string& spec) {
     }
 
     // Download.
+#ifdef MLXFORGE_ENABLE_HF_DOWNLOAD
     log::info("model: '{}' not cached; downloading to '{}'", spec, dest);
     return hf_download_repo(spec, dest);
+#else
+    throw std::runtime_error("model: '" + spec +
+                             "' is not cached locally and HuggingFace download is disabled "
+                             "(built without MLXFORGE_ENABLE_HF_DOWNLOAD)");
+#endif
   }
 
   throw std::runtime_error("model: '" + spec +
