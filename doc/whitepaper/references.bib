@@ -1,0 +1,246 @@
+% references.bib --- bibliography for the mlxforge technical white paper.
+%
+% This file is the canonical home for references cited from
+% mlxforge-whitepaper.tex. Entries flagged with "% TODO verify" have
+% plausible-but-unconfirmed metadata (venue, page numbers, exact author
+% lists); confirm against the primary source before any external publication.
+
+% ---------------------------------------------------------------------------
+% Core transformer / attention
+% ---------------------------------------------------------------------------
+
+@inproceedings{vaswani2017attention,
+  title     = {Attention Is All You Need},
+  author    = {Vaswani, Ashish and Shazeer, Noam and Parmar, Niki and Uszkoreit, Jakob and Jones, Llion and Gomez, Aidan N. and Kaiser, Lukasz and Polosukhin, Illia},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2017}
+}
+
+@article{su2021rope,
+  title   = {RoFormer: Enhanced Transformer with Rotary Position Embedding},
+  author  = {Su, Jianlin and Lu, Yu and Pan, Shengfeng and Murtadha, Ahmed and Wen, Bo and Liu, Yunfeng},
+  journal = {arXiv preprint arXiv:2104.09864},
+  year    = {2021}
+}
+
+@inproceedings{zhang2019rmsnorm,
+  title     = {Root Mean Square Layer Normalization},
+  author    = {Zhang, Biao and Sennrich, Rico},
+  booktitle = {Advances in Neural Information Processing Systems (NeurIPS)},
+  year      = {2019}
+}
+
+@article{shazeer2020glu,
+  title   = {GLU Variants Improve Transformer},
+  author  = {Shazeer, Noam},
+  journal = {arXiv preprint arXiv:2002.05202},
+  year    = {2020}
+}
+
+@article{ainslie2023gqa,
+  title   = {GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints},
+  author  = {Ainslie, Joshua and Lee-Thorp, James and de Jong, Michiel and Zemlyanskiy, Yury and Lebr{\'o}n, Federico and Sanghai, Sumit},
+  journal = {arXiv preprint arXiv:2305.13245},
+  year    = {2023}
+}
+
+@article{hendrycks2016gelu,
+  title   = {Gaussian Error Linear Units (GELUs)},
+  author  = {Hendrycks, Dan and Gimpel, Kevin},
+  journal = {arXiv preprint arXiv:1606.08415},
+  year    = {2016}
+}
+
+% ---------------------------------------------------------------------------
+% Model families
+% ---------------------------------------------------------------------------
+
+@article{llama3,
+  title   = {The Llama 3 Herd of Models},
+  author  = {Grattafiori, Aaron and Dubey, Abhimanyu and others},
+  journal = {arXiv preprint arXiv:2407.21783},
+  year    = {2024},
+  note    = {% TODO verify author list and arXiv id}
+}
+
+@article{qwen3,
+  title   = {Qwen3 Technical Report},
+  author  = {{Qwen Team}},
+  journal = {arXiv preprint arXiv:2505.09388},
+  year    = {2025},
+  note    = {% TODO verify arXiv id}
+}
+
+@article{qwenvl,
+  title   = {Qwen-VL: A Versatile Vision-Language Model for Understanding, Localization, Text Reading, and Beyond},
+  author  = {Bai, Jinze and Bai, Shuai and Yang, Shusheng and Wang, Shijie and Tan, Sinan and Wang, Peng and Lin, Junyang and Zhou, Chang and Zhou, Jingren},
+  journal = {arXiv preprint arXiv:2308.12966},
+  year    = {2023}
+}
+
+@article{qwen2vl,
+  title   = {Qwen2-VL: Enhancing Vision-Language Model's Perception of the World at Any Resolution},
+  author  = {Wang, Peng and Bai, Shuai and Tan, Sinan and Wang, Shijie and Fan, Zhihao and Bai, Jinze and others},
+  journal = {arXiv preprint arXiv:2409.12191},
+  year    = {2024},
+  note    = {% TODO verify: M-RoPE / naive dynamic resolution originate here}
+}
+
+% ---------------------------------------------------------------------------
+% Mixture of Experts
+% ---------------------------------------------------------------------------
+
+@article{fedus2022switch,
+  title   = {Switch Transformers: Scaling to Trillion Parameter Models with Simple and Efficient Sparsity},
+  author  = {Fedus, William and Zoph, Barret and Shazeer, Noam},
+  journal = {Journal of Machine Learning Research},
+  volume  = {23},
+  number  = {120},
+  pages   = {1--39},
+  year    = {2022}
+}
+
+@article{jiang2024mixtral,
+  title   = {Mixtral of Experts},
+  author  = {Jiang, Albert Q. and Sablayrolles, Alexandre and Roux, Antoine and others},
+  journal = {arXiv preprint arXiv:2401.04088},
+  year    = {2024}
+}
+
+% ---------------------------------------------------------------------------
+% Linear attention / Gated DeltaNet
+% ---------------------------------------------------------------------------
+
+@inproceedings{schlag2021deltanet,
+  title     = {Linear Transformers Are Secretly Fast Weight Programmers},
+  author    = {Schlag, Imanol and Irie, Kazuki and Schmidhuber, J{\"u}rgen},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  year      = {2021}
+}
+
+@article{yang2024gateddeltanet,
+  title   = {Gated Delta Networks: Improving Mamba2 with Delta Rule},
+  author  = {Yang, Songlin and Kautz, Jan and Hatamizadeh, Ali},
+  journal = {arXiv preprint arXiv:2412.06464},
+  year    = {2024},
+  note    = {% TODO verify arXiv id}
+}
+
+@inproceedings{katharopoulos2020linearattention,
+  title     = {Transformers Are RNNs: Fast Autoregressive Transformers with Linear Attention},
+  author    = {Katharopoulos, Angelos and Vyas, Apoorv and Pappas, Nikolaos and Fleuret, Fran{\c{c}}ois},
+  booktitle = {International Conference on Machine Learning (ICML)},
+  year      = {2020}
+}
+
+% ---------------------------------------------------------------------------
+% Vision
+% ---------------------------------------------------------------------------
+
+@inproceedings{dosovitskiy2021vit,
+  title     = {An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale},
+  author    = {Dosovitskiy, Alexey and Beyer, Lucas and Kolesnikov, Alexander and Weissenborn, Dirk and Zhai, Xiaohua and Unterthiner, Thomas and Dehghani, Mostafa and Minderer, Matthias and Heigold, Georg and Gelly, Sylvain and Uszkoreit, Jakob and Houlsby, Neil},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2021}
+}
+
+% ---------------------------------------------------------------------------
+% Sampling / decoding
+% ---------------------------------------------------------------------------
+
+@inproceedings{holtzman2020nucleus,
+  title     = {The Curious Case of Neural Text Degeneration},
+  author    = {Holtzman, Ari and Buys, Jan and Du, Li and Forbes, Maxwell and Choi, Yejin},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2020}
+}
+
+% ---------------------------------------------------------------------------
+% Serving / continuous batching
+% ---------------------------------------------------------------------------
+
+@inproceedings{kwon2023vllm,
+  title     = {Efficient Memory Management for Large Language Model Serving with PagedAttention},
+  author    = {Kwon, Woosuk and Li, Zhuohan and Zhuang, Siyuan and Sheng, Ying and Zheng, Lianmin and Yu, Cody Hao and Gonzalez, Joseph E. and Zhang, Hao and Stoica, Ion},
+  booktitle = {ACM Symposium on Operating Systems Principles (SOSP)},
+  year      = {2023}
+}
+
+@inproceedings{yu2022orca,
+  title     = {Orca: A Distributed Serving System for Transformer-Based Generative Models},
+  author    = {Yu, Gyeong-In and Jeong, Joo Seong and Kim, Geon-Woo and Kim, Soojeong and Chun, Byung-Gon},
+  booktitle = {USENIX Symposium on Operating Systems Design and Implementation (OSDI)},
+  year      = {2022}
+}
+
+% ---------------------------------------------------------------------------
+% Tokenization
+% ---------------------------------------------------------------------------
+
+@inproceedings{sennrich2016bpe,
+  title     = {Neural Machine Translation of Rare Words with Subword Units},
+  author    = {Sennrich, Rico and Haddow, Barry and Birch, Alexandra},
+  booktitle = {Annual Meeting of the Association for Computational Linguistics (ACL)},
+  year      = {2016}
+}
+
+@inproceedings{kudo2018sentencepiece,
+  title     = {SentencePiece: A Simple and Language Independent Subword Tokenizer and Detokenizer for Neural Text Processing},
+  author    = {Kudo, Taku and Richardson, John},
+  booktitle = {Conference on Empirical Methods in Natural Language Processing (EMNLP): System Demonstrations},
+  year      = {2018}
+}
+
+@techreport{radford2019gpt2,
+  title       = {Language Models Are Unsupervised Multitask Learners},
+  author      = {Radford, Alec and Wu, Jeffrey and Child, Rewon and Luan, David and Amodei, Dario and Sutskever, Ilya},
+  institution = {OpenAI},
+  year        = {2019},
+  note        = {Byte-level BPE}
+}
+
+% ---------------------------------------------------------------------------
+% Frameworks / tooling
+% ---------------------------------------------------------------------------
+
+@misc{mlx2023,
+  title        = {{MLX}: An Array Framework for Apple Silicon},
+  author       = {Hannun, Awni and Digani, Jagrit and Katharopoulos, Angelos and Collins, Ronan},
+  howpublished = {\url{https://github.com/ml-explore/mlx}},
+  year         = {2023}
+}
+
+@misc{ggml_gguf,
+  title        = {{GGUF}: GGML Universal File Format},
+  author       = {{Gerganov, Georgi and the llama.cpp contributors}},
+  howpublished = {\url{https://github.com/ggml-org/ggml/blob/master/docs/gguf.md}},
+  year         = {2023}
+}
+
+@misc{huggingface_tokenizers,
+  title        = {{Hugging Face Tokenizers}},
+  author       = {{Hugging Face}},
+  howpublished = {\url{https://github.com/huggingface/tokenizers}},
+  year         = {2020}
+}
+
+@misc{cpphttplib,
+  title        = {cpp-httplib: A C++ Header-Only HTTP/HTTPS Server and Client Library},
+  author       = {Yuji Hirose},
+  howpublished = {\url{https://github.com/yhirose/cpp-httplib}},
+  year         = {2017}
+}
+
+@misc{openai_api,
+  title        = {{OpenAI} API Reference: Chat Completions},
+  author       = {{OpenAI}},
+  howpublished = {\url{https://platform.openai.com/docs/api-reference/chat}},
+  year         = {2023}
+}
+
+@misc{anthropic_messages_api,
+  title        = {{Anthropic} API Reference: Messages},
+  author       = {{Anthropic}},
+  howpublished = {\url{https://docs.claude.com/en/api/messages}},
+  year         = {2024}
+}
