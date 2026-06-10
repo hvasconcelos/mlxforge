@@ -57,7 +57,7 @@ ServerConfig ServerConfig::from_file(const std::string& path) {
 
   // Reject unknown keys up front so typos (e.g. "prot") fail loudly.
   static const std::set<std::string> kKnownKeys = {
-      "model", "host", "port", "max_ctx", "max_waiting", "kv_budget"};
+      "model", "host", "port", "max_ctx", "max_waiting", "kv_budget", "kv_bits"};
   for (const auto& [key, _] : j.items()) {
     if (kKnownKeys.find(key) == kKnownKeys.end()) {
       throw std::runtime_error("config file: unknown key '" + key + "' in '" + path + "'");
@@ -85,6 +85,11 @@ ServerConfig ServerConfig::from_file(const std::string& path) {
     long long budget = require_type<long long>(j, "kv_budget");
     if (budget < 0) throw std::runtime_error("config file: 'kv_budget' must be >= 0");
     c.kv_budget_bytes = static_cast<std::size_t>(budget);
+  }
+  if (j.contains("kv_bits")) {
+    c.kv_bits = require_type<int>(j, "kv_bits");
+    if (c.kv_bits != 0 && c.kv_bits != 4 && c.kv_bits != 8)
+      throw std::runtime_error("config file: 'kv_bits' must be 0, 4, or 8");
   }
   return c;
 }
@@ -128,6 +133,7 @@ ServerConfig ServerConfig::parse(const std::vector<std::string>& args) {
   c.max_waiting = static_cast<int>(env_long("MLXFORGE_MAX_WAITING", c.max_waiting));
   c.kv_budget_bytes =
       static_cast<std::size_t>(env_long("MLXFORGE_KV_BUDGET", static_cast<long>(c.kv_budget_bytes)));
+  c.kv_bits = static_cast<int>(env_long("MLXFORGE_KV_BITS", c.kv_bits));
 
   // Helper: extract value for a flag (accepts "--flag value" or "--flag=value")
   auto value_of = [&](const std::string& a, size_t& i) -> std::string {
@@ -158,9 +164,13 @@ ServerConfig ServerConfig::parse(const std::vector<std::string>& args) {
       c.max_waiting = std::stoi(value_of(a, i));
     else if (flag == "--kv-budget")
       c.kv_budget_bytes = static_cast<std::size_t>(std::stoll(value_of(a, i)));
+    else if (flag == "--kv-bits")
+      c.kv_bits = std::stoi(value_of(a, i));
     else
       throw std::runtime_error("unknown flag: " + flag);
   }
+  if (c.kv_bits != 0 && c.kv_bits != 4 && c.kv_bits != 8)
+    throw std::runtime_error("--kv-bits must be 0, 4, or 8");
   return c;
 }
 

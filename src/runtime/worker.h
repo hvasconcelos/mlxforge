@@ -35,9 +35,12 @@ class Worker {
 
   // `tok` (optional) supplies the per-token byte strings used for constrained
   // decoding; when null, grammar-constrained requests fall back to unconstrained.
-  // Defined out-of-line (with the destructor) because the unique_ptr<VitEncoder>
-  // member needs the complete type for cleanup.
-  Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok = nullptr);
+  // `kv_quant` selects the decode cache's storage (dense fp16 by default); the
+  // Engine validates it against the model before construction. Defined
+  // out-of-line (with the destructor) because the unique_ptr<VitEncoder> member
+  // needs the complete type for cleanup.
+  Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok = nullptr,
+         KVQuantConfig kv_quant = {});
   ~Worker();
 
   Worker(const Worker&) = delete;
@@ -120,6 +123,7 @@ class Worker {
   ModelFactory      factory_;
   Scheduler*        sched_;
   const Tokenizer*  tok_;  // for per-token bytes (grammar masking); may be null
+  KVQuantConfig     kv_quant_;  // decode-cache storage (dense when bits == 0)
   std::vector<std::string> token_bytes_;  // id -> output bytes ("" for specials)
   bool token_bytes_built_ = false;
   std::unique_ptr<DecoderModel> model_;  // constructed and owned on the worker thread

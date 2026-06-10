@@ -55,7 +55,8 @@ int greedy_last(const mx::array& logits, int top_logprobs, TokenLogprob* lp) {
 
 GenerateResult greedy_generate(const DecoderModel& model, const std::vector<int>& prompt_ids,
                                int max_tokens, const std::vector<int>& eos_ids,
-                               const std::function<void(int)>& on_token, int top_logprobs) {
+                               const std::function<void(int)>& on_token, int top_logprobs,
+                               KVQuantConfig kv_quant) {
   auto is_eos = [&](int id) {
     return std::find(eos_ids.begin(), eos_ids.end(), id) != eos_ids.end();
   };
@@ -66,7 +67,7 @@ GenerateResult greedy_generate(const DecoderModel& model, const std::vector<int>
   };
 
   GenerateResult result;
-  KVCache cache(model.config().n_layers);
+  KVCache cache(model.config().n_layers, kv_quant);
   mx::array prompt(prompt_ids.data(), {1, static_cast<int>(prompt_ids.size())}, mx::int32);
 
   // `next_lp` carries the log-prob record for `next`, pushed when (and only when)

@@ -149,6 +149,21 @@ reference/.venv/bin/python reference/dump_ref.py
   math.
 - **Decode-with-cache vs full-recompute logits differ by fp16 accumulation
   order** — compare argmax / exact tokens, not raw logits at tight tolerance.
+- **Quantized KV (kv_bits 8|4) mirrors mlx-lm's QuantizedKVCache** — triplet
+  storage quantized at write time (`cache/kv_quant`), attention via the
+  hand-rolled `quantized_sdpa` (`model/sdpa`, a port of mlx_lm base.py; MLX has
+  no fused quantized SDPA kernel). Three traps: (1) the batched additive mask
+  must be reshaped `(B,1,N,T)→(B,1,1,N,T)` under GQA, and masked columns must be
+  **overridden** with `finfo(fp16).min`, never added — a fully-masked left-pad
+  row makes NaN that `+(-inf)` cannot cancel; (2) quantized matmuls are
+  **fusion-context-sensitive** (~1 logit shift between lazy and materialized
+  inputs — mlx-lm disagrees with itself across graph contexts), so the golden
+  gates are teacher-forced and margin-gated (`greedy_gaps_kvq*.npy`), never raw
+  exact-stream asserts; (3) both caches deliberately share the block-grow +
+  `slice_update` storage writer (`update_kv_components`) — buffer strides
+  affect kernel accumulation order. Engine-wide setting, default off;
+  vision/hybrid models are rejected at engine creation (no silent fp16
+  fallback).
 - **Qwen3-VL interleaved M-RoPE can't use `fast::rope`** (it takes a 1D offset,
   not 3D `(t,h,w)` positions). `Qwen3VLModel` hand-rolls a half-split rotation
   with a per-frequency t/h/w selector; text tokens have `t==h==w` so it reduces to

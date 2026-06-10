@@ -57,8 +57,9 @@ bool consume(Request& req, int& produced, int id, const TokenLogprob* lp) {
 }
 }  // namespace
 
-Worker::Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok)
-    : factory_(std::move(factory)), sched_(scheduler), tok_(tok) {}
+Worker::Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok,
+               KVQuantConfig kv_quant)
+    : factory_(std::move(factory)), sched_(scheduler), tok_(tok), kv_quant_(kv_quant) {}
 
 Worker::~Worker() { stop(); }
 
@@ -247,7 +248,7 @@ void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
 
   log::debug("worker: admitting {} request(s) (batch {} -> {})", incoming.size(), reqs_.size(),
              reqs_.size() + incoming.size());
-  PrefillResult pr = prefill(*model_, prompts);
+  PrefillResult pr = prefill(*model_, prompts, kPrefillStepSize, /*pad_id=*/0, kv_quant_);
 
   if (!cache_) {
     cache_ = std::make_unique<BatchKVCache>(std::move(pr.cache));

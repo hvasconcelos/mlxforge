@@ -4,6 +4,8 @@
 #include <string>
 #include <vector>
 
+#include "model/sdpa.h"
+
 #include "mlx/fast.h"
 #include "mlx/ops.h"
 
@@ -59,15 +61,10 @@ mx::array Qwen35Model::attention(const mx::array& x, int layer, int offset, KVCa
 
   queries = partial_rope(queries, offset);
   keys = partial_rope(keys, offset);
-  if (cache) {
-    auto kv = cache->update_and_fetch(layer, keys, values);
-    keys = kv.first;
-    values = kv.second;
-  }
 
   const float scale = 1.0f / std::sqrt(static_cast<float>(D));
   const std::string mask_mode = L > 1 ? "causal" : "";
-  mx::array out = mx::fast::scaled_dot_product_attention(queries, keys, values, scale, mask_mode);
+  mx::array out = sdpa_with_cache(queries, keys, values, cache, layer, scale, mask_mode);
 
   // (B, H, L, D) -> (B, L, H*D), apply the sigmoid output gate, then o_proj.
   out = mx::reshape(mx::transpose(out, {0, 2, 1, 3}), {B, L, H * D});
@@ -266,12 +263,10 @@ mx::array Qwen35Model::attention_batched_gated(const mx::array& x, int layer,
       {0, 2, 1, 3});
 
   queries = partial_rope(queries, offset);
-  keys = partial_rope(keys, offset);
-  auto kv = cache.update_and_fetch(layer, keys, values);  // append roped K, un-roped V
+  keys = partial_rope(keys, offset);  // append roped K, un-roped V
 
   const float scale = 1.0f / std::sqrt(static_cast<float>(D));
-  mx::array out = mx::fast::scaled_dot_product_attention(queries, kv.first, kv.second, scale,
-                                                         /*mask_mode=*/"", mask);
+  mx::array out = sdpa_with_cache(queries, keys, values, cache, layer, scale, mask);
   out = mx::reshape(mx::transpose(out, {0, 2, 1, 3}), {B, L, H * D});
 
   // A left-padding query position attends to zero valid keys, so SDPA returns NaN

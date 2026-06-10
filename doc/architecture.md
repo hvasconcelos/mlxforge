@@ -171,6 +171,39 @@ of `B` sequences each reaching `max_len + max_new` tokens is refused/queued if i
 would exceed the configured `--kv-budget`. Combined with the bounded waiting
 queue (which returns `429` on overflow), this is the real OOM defence.
 
+## KV-cache quantization
+
+`--kv-bits 8|4` (engine option `kv_bits`; default 0 = dense fp16) stores the KV
+cache quantized, cutting its memory ~1.9× (8-bit, near-lossless) or ~3.6×
+(4-bit). The port mirrors mlx-lm exactly:
+
+- **Storage** (`cache/kv_quant`): each cached K/V tensor is the `mx::quantize`
+  triplet — packed uint32 words plus per-group fp16 scales and biases
+  (group size 64) — quantized **at write time**, per position, so prefill
+  chunking cannot change stored values. Both `KVCache` and `BatchKVCache` hold
+  per-layer component vectors (1 array dense, 3 quantized); all batch surgery
+  (`filter`/`merge`/`pad_dummies`, block growth) runs per component unchanged.
+- **Attention** (`model/sdpa`): MLX has no fused quantized SDPA kernel, so
+  `quantized_sdpa` ports `mlx_lm/models/base.py` op-for-op — `quantized_matmul`
+  for the scores and the output, GQA via a `(B, n_kv, n_rep, L, D)` reshape,
+  precise softmax. `sdpa_with_cache` is the dispatch seam every model attention
+  call site uses (dense fast-kernel vs quantized path, by the cache's config).
+- **Setting scope**: engine-wide, never per-request — the batched cache's
+  storage is physically shared across rows. Unsupported setups (vision-language
+  and hybrid Qwen3.5 models, which have no quantized golden reference yet;
+  group sizes that don't divide `head_dim`) **fail engine creation**; there is
+  no silent fp16 fallback.
+- **Gating**: teacher-forced greedy walks against mlx-lm `QuantizedKVCache`
+  streams (Llama + Qwen3, 8- and 4-bit), asserting token equality at every step
+  whose reference top-2 margin clears the fusion-context noise (quantized
+  matmuls shift ~1 logit between lazy and materialized inputs, so bit-exact
+  cross-implementation gating is unsound); plus an exact batched-vs-single-
+  stream coherence gate.
+
+The per-token budget figure adjusts accordingly: a K-or-V head row is
+`head_dim × bits/8` packed bytes plus a fp16 scale and bias per group (D=64/g=64:
+68 B at 8-bit, 36 B at 4-bit, vs 128 B fp16).
+
 ## Module map
 
 Source lives under `src/`, grouped by responsibility. Tests mirror the module
@@ -186,7 +219,9 @@ path under `tests/`.
 | `model/` | The transformer: `DecoderModel` base (embedding, RMSNorm, RoPE, GQA SDPA, SwiGLU, LM head; fp16 and quantized paths; single-stream and batched forward) with `LlamaModel`/`Qwen3Model`/`Qwen3MoeModel` subclasses and a `create_model` factory. |
 | `cache/kv_cache` | Single-sequence KV cache (the simplest prefill/decode split). |
 | `cache/batch_kv_cache` | Batched, left-padded KV cache: `update_and_fetch`, `filter` (evict), `merge` (admit), `pad_dummies` (bucketing). |
-| `cache/kv_budget` | KV memory projection / admission gate. |
+| `cache/kv_quant` | Quantized-KV shared types (`KVQuantConfig`, triplets) + the block-grow component writer both caches use. |
+| `cache/kv_budget` | KV memory projection / admission gate (fp16 and quantized accounting). |
+| `model/sdpa` | Cache-aware SDPA dispatch: dense fast kernel vs the hand-rolled quantized path (mlx-lm port). |
 | `sample/sampler` | greedy / temperature / top-k / top-p, all as MLX graph ops. |
 | `scheduler/request` | The `Request` struct and the bounded, blocking `TokenQueue`. |
 | `scheduler/scheduler` | The waiting queue + worker handoff (mutex + condition variable). |

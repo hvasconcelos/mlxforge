@@ -251,15 +251,20 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
       throw Napi::TypeError::New(env, "new Engine(spec, opts?) requires a model spec string");
     std::string spec = info[0].As<Napi::String>().Utf8Value();
 
-    mlxforge_engine_opts opts = {};
+    mlxforge_engine_opts2 opts = {};
+    opts.struct_size = sizeof(opts);
     if (info.Length() >= 2 && info[1].IsObject()) {
       Napi::Object o = info[1].As<Napi::Object>();
       if (o.Has("maxWaiting") && o.Get("maxWaiting").IsNumber())
         opts.max_waiting = o.Get("maxWaiting").As<Napi::Number>().Int32Value();
+      if (o.Has("kvBits") && o.Get("kvBits").IsNumber())
+        opts.kv_bits = o.Get("kvBits").As<Napi::Number>().Int32Value();
+      if (o.Has("kvGroupSize") && o.Get("kvGroupSize").IsNumber())
+        opts.kv_group_size = o.Get("kvGroupSize").As<Napi::Number>().Int32Value();
     }
 
     char* err = nullptr;
-    eng_ = mlxforge_engine_create(spec.c_str(), &opts, &err);
+    eng_ = mlxforge_engine_create2(spec.c_str(), &opts, &err);
     if (!eng_) {
       std::string msg = err ? err : "failed to create engine";
       mlxforge_string_free(err);

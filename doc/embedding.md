@@ -91,6 +91,10 @@ typedef struct mlxforge_request mlxforge_request;
 // Create one engine; it owns the GPU worker thread and the batching scheduler.
 mlxforge_engine* eng = mlxforge_engine_create("mlx-community/Llama-3.2-1B-Instruct-4bit",
                                               /*opts=*/NULL, &err);
+// Or with extended options (ABI v6+): a quantized KV cache cuts the dominant
+// growing allocation ~1.9x (8-bit, near-lossless) or ~3.6x (4-bit).
+//   mlxforge_engine_opts2 opts = { .struct_size = sizeof(opts), .kv_bits = 8 };
+//   eng = mlxforge_engine_create2(spec, &opts, &err);
 while (!mlxforge_engine_ready(eng)) { /* model still loading on the worker thread */ }
 
 // Submit many requests concurrently — they share one batched engine. This is the

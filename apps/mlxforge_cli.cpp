@@ -6,11 +6,12 @@
 //   mlxforge-cli dump-weights <dir>
 //     - Loads a model's weights from the supplied directory, prints key/shape/dtype for each tensor,
 //       asserts that all tensors are fp16, and reports the peak resident memory used.
-//   mlxforge-cli generate <model> <prompt> [max_tokens] [--logprobs [N]]
+//   mlxforge-cli generate <model> <prompt> [max_tokens] [--logprobs [N]] [--kv-bits N]
 //     - Runs greedy single-stream generation: pre-fills the prompt (as raw text using the chat template
 //       or as a pre-tokenized .npy of ids), then streams the detokenized text to stdout until EOS or
 //       max_tokens. With --logprobs [N], each emitted token's log-prob (and its N most-likely
 //       alternatives) is printed to stderr after generation; stdout stays the generated text.
+//       --kv-bits 8|4 stores the KV cache quantized (the manual harness for the quantized path).
 //   mlxforge-cli bench <model> [max_tokens] [runs]
 //     - Repeatable throughput benchmark over a fixed prompt: one discarded warmup run, then `runs`
 //       timed runs (defaults: max_tokens=128, runs=3) reporting time-to-first-token and decode tok/s.
@@ -181,7 +182,7 @@ std::string show_token(const std::string& s) {
 // `top_logprobs` mirrors the engine knob: -1 = off; 0 = each token's own log-prob;
 // N > 0 = also its N most-likely alternatives (printed to stderr after generation).
 int run_generate(const std::string& spec, const std::string& prompt_arg, int max_tokens,
-                 int top_logprobs = -1) {
+                 int top_logprobs = -1, int kv_bits = 0) {
   // Resolve and load the model (GGUF file or safetensors dir; downloads if needed)
   LoadedModel lm = load_for_inference(spec);
   mlxforge::DecoderModel& model = *lm.model;
@@ -212,7 +213,7 @@ int run_generate(const std::string& spec, const std::string& prompt_arg, int max
           std::string piece = detok.add(id);
           std::fwrite(piece.data(), 1, piece.size(), stdout);
           std::fflush(stdout);
-       }, top_logprobs);
+       }, top_logprobs, mlxforge::KVQuantConfig{kv_bits, 64});
 
   // Output any final detokenized tail remaining in the streaming detokenizer
   std::string tail = detok.finish();
@@ -370,13 +371,15 @@ int main(int argc, char** argv) {
     if (argc < 4) {
       std::fprintf(stderr,
                    "usage: mlxforge-cli generate <model_dir> <prompt_ids.npy> [max_tokens] "
-                   "[--logprobs [N]]\n");
+                   "[--logprobs [N]] [--kv-bits N]\n");
       return 2;
     }
-    // Positional [max_tokens] (default 64) plus an optional --logprobs [N] flag (N
-    // alternatives, default 0 = the chosen token's own log-prob only).
+    // Positional [max_tokens] (default 64), an optional --logprobs [N] flag (N
+    // alternatives, default 0 = the chosen token's own log-prob only), and an
+    // optional --kv-bits N (0 = fp16 cache, 8 or 4 = quantized).
     int max_tokens = 64;
     int top_logprobs = -1;
+    int kv_bits = 0;
     for (int i = 4; i < argc; ++i) {
       const std::string a = argv[i];
       if (a == "--logprobs") {
@@ -384,11 +387,21 @@ int main(int argc, char** argv) {
           top_logprobs = std::stoi(argv[++i]);
         else
           top_logprobs = 0;
+      } else if (a == "--kv-bits") {
+        if (i + 1 >= argc) {
+          std::fprintf(stderr, "error: --kv-bits needs a value (0, 4, or 8)\n");
+          return 2;
+        }
+        kv_bits = std::stoi(argv[++i]);
+        if (kv_bits != 0 && kv_bits != 4 && kv_bits != 8) {
+          std::fprintf(stderr, "error: --kv-bits must be 0, 4, or 8\n");
+          return 2;
+        }
       } else {
         max_tokens = std::stoi(a);
       }
     }
-    return run_generate(argv[2], argv[3], max_tokens, top_logprobs);
+    return run_generate(argv[2], argv[3], max_tokens, top_logprobs, kv_bits);
   }
   if (cmd == "image") {
     // Vision-language generation: describe / answer about an image.

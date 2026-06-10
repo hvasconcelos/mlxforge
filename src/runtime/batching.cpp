@@ -15,7 +15,7 @@ int next_bucket(int n) {
 }
 
 PrefillResult prefill(const DecoderModel& model, const std::vector<std::vector<int>>& prompts,
-                      int step_size, int pad_id) {
+                      int step_size, int pad_id, KVQuantConfig kv_quant) {
   const int B = static_cast<int>(prompts.size());
   int p_max = 0;
   for (const auto& p : prompts) p_max = std::max(p_max, static_cast<int>(p.size()));
@@ -30,7 +30,7 @@ PrefillResult prefill(const DecoderModel& model, const std::vector<std::vector<i
   }
   mx::array tokens(padded.data(), {B, p_max}, mx::int32);
 
-  BatchKVCache cache(model.config().n_layers, left_padding);
+  BatchKVCache cache(model.config().n_layers, left_padding, kv_quant);
 
   // Dedicated prefill forward, chunked to bound graph growth on long prompts.
   mx::array logits = mx::zeros({B, 1, model.config().vocab}, mx::float16);

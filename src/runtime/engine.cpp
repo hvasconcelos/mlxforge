@@ -2,6 +2,7 @@
 
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <utility>
 
 #include <nlohmann/json.hpp>
@@ -34,6 +35,30 @@ void detect_embedding_defaults(const std::string& dir, int& pooling, bool& add_e
   } catch (...) {
     // malformed sidecar -> keep defaults
   }
+}
+
+// Validate the engine's KV-quantization request against the loaded model and
+// return the Worker's KVQuantConfig. Unsupported setups are hard errors —
+// never a silent fp16 fallback (the failure mode here is silent numerical
+// garbage, so the caller must know exactly what storage they got).
+KVQuantConfig validate_kv_quant(const EngineConfig& ec, const ModelConfig& mc) {
+  if (ec.kv_bits == 0) return {};
+  if (ec.kv_bits != 4 && ec.kv_bits != 8)
+    throw std::runtime_error("kv_bits must be 0 (off), 4, or 8; got " +
+                             std::to_string(ec.kv_bits));
+  if (ec.kv_group_size != 32 && ec.kv_group_size != 64 && ec.kv_group_size != 128)
+    throw std::runtime_error("kv_group_size must be 32, 64, or 128; got " +
+                             std::to_string(ec.kv_group_size));
+  if (mc.head_dim % ec.kv_group_size != 0)
+    throw std::runtime_error("kv_group_size " + std::to_string(ec.kv_group_size) +
+                             " does not divide head_dim " + std::to_string(mc.head_dim));
+  // Golden-gated for the standard attention paths only so far: the vision
+  // (mlx-vlm-gated) and Qwen3.5 hybrid streams have no quantized reference yet.
+  if (mc.has_vision_tower())
+    throw std::runtime_error("KV-cache quantization is not supported for vision-language models");
+  if (mc.full_attention_interval > 0)
+    throw std::runtime_error("KV-cache quantization is not supported for hybrid (Qwen3.5) models");
+  return {ec.kv_bits, ec.kv_group_size};
 }
 
 }  // namespace
@@ -112,7 +137,9 @@ Engine::Engine(EngineConfig cfg, Loaded loaded)
       embed_add_eos_default_(loaded.embed_add_eos_default),
       // Pass the tokenizer so the worker can build per-token byte strings for
       // constrained decoding. tok_ is initialized above and outlives worker_.
-      worker_(make_factory(std::move(loaded.dir), loaded.is_gguf), &scheduler_, &tok_) {
+      // cfg_ is initialized above, so the KV-quant validation sees the model.
+      worker_(make_factory(std::move(loaded.dir), loaded.is_gguf), &scheduler_, &tok_,
+              validate_kv_quant(cfg, cfg_)) {
   // Configure the max waiting requests for the batch scheduler.
   scheduler_.set_max_waiting(cfg.max_waiting);
 

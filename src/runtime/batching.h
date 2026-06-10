@@ -32,8 +32,10 @@ struct PrefillResult {
 // Left-pad `prompts` to a common P_max and prefill them into a fresh
 // BatchKVCache, chunking at `step_size`. Returns the cache plus the last-real-
 // position logits (rows are left-padded, so every row's last token sits at
-// P_max-1). `pad_id` fills the masked-out left padding.
+// P_max-1). `pad_id` fills the masked-out left padding. `kv_quant` selects the
+// cache's storage (dense fp16 by default).
 PrefillResult prefill(const DecoderModel& model, const std::vector<std::vector<int>>& prompts,
-                      int step_size = kPrefillStepSize, int pad_id = 0);
+                      int step_size = kPrefillStepSize, int pad_id = 0,
+                      KVQuantConfig kv_quant = {});
 
 }  // namespace mlxforge

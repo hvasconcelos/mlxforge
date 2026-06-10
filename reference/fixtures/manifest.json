@@ -123,6 +123,30 @@
         20
       ],
       "dtype": "int32"
+    },
+    "greedy_tokens_kvq8": {
+      "shape": [
+        20
+      ],
+      "dtype": "int32"
+    },
+    "greedy_gaps_kvq8": {
+      "shape": [
+        20
+      ],
+      "dtype": "float32"
+    },
+    "greedy_tokens_kvq4": {
+      "shape": [
+        20
+      ],
+      "dtype": "int32"
+    },
+    "greedy_gaps_kvq4": {
+      "shape": [
+        20
+      ],
+      "dtype": "float32"
     }
   },
   "eos_token_ids": [

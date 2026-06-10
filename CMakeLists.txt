@@ -56,6 +56,7 @@ add_library(mlxforge_core STATIC
   src/core/gguf.cpp
   src/core/model_source.cpp
   src/model/decoder_model.cpp
+  src/model/sdpa.cpp
   src/model/qwen3.cpp
   src/model/qwen3_moe.cpp
   src/model/qwen3_5.cpp
@@ -66,6 +67,7 @@ add_library(mlxforge_core STATIC
   src/model/model_factory.cpp
   src/cache/kv_cache.cpp
   src/cache/batch_kv_cache.cpp
+  src/cache/kv_quant.cpp
   src/cache/kv_budget.cpp
   src/sample/sampler.cpp
   src/sample/json_grammar.cpp

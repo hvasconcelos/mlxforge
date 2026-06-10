@@ -72,12 +72,13 @@ void print_help() {
       "      --max-ctx <N>      max prompt length in tokens (default 8192)\n"
       "      --max-waiting <N>  max queued requests (default 256)\n"
       "      --kv-budget <B>    KV cache budget in bytes, 0 = unbounded (default 0)\n"
+      "      --kv-bits <N>      KV cache quantization: 0 = fp16, 8 or 4 (default 0)\n"
       "  -h, --help             show this help and exit\n"
       "\n"
       "The model may be given via -m or the config file's \"model\" key.\n"
       "Config precedence (low to high): defaults < config file < env vars < CLI flags.\n"
       "Env vars: MLXFORGE_HOST, MLXFORGE_PORT, MLXFORGE_MAX_CTX, MLXFORGE_MAX_WAITING, "
-      "MLXFORGE_KV_BUDGET.");
+      "MLXFORGE_KV_BUDGET, MLXFORGE_KV_BITS.");
   std::fflush(stdout);
 }
 
@@ -126,8 +127,11 @@ int main(int argc, char** argv) {
   // engine boundary; the server below is just one consumer of it.
   std::unique_ptr<mlxforge::Engine> engine;
   try {
-    engine = std::make_unique<mlxforge::Engine>(
-        mlxforge::EngineConfig{sc.model_dir, sc.max_waiting});
+    mlxforge::EngineConfig ec;
+    ec.model_spec = sc.model_dir;
+    ec.max_waiting = sc.max_waiting;
+    ec.kv_bits = sc.kv_bits;
+    engine = std::make_unique<mlxforge::Engine>(std::move(ec));
   } catch (const std::exception& e) {
     mlxforge::log::error("model error: {}", e.what());
     return 2;
@@ -163,8 +167,8 @@ int main(int argc, char** argv) {
   std::signal(SIGTERM, on_signal);
 
   // Info log: server has started, print bind details and config bounds.
-  mlxforge::log::info("mlxforge serving on http://{}:{} (max_ctx={} max_waiting={})",
-                      sc.host, sc.port, sc.max_ctx, sc.max_waiting);
+  mlxforge::log::info("mlxforge serving on http://{}:{} (max_ctx={} max_waiting={} kv_bits={})",
+                      sc.host, sc.port, sc.max_ctx, sc.max_waiting, sc.kv_bits);
 
   // Run the server's request loop (blocks until stop() is called).
   server.listen(sc.host, sc.port);

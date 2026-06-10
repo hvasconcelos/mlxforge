@@ -9,14 +9,17 @@
 
 #include <cstddef>
 
+#include "cache/kv_quant.h"
 #include "core/config.h"
 
 namespace mlxforge {
 
 class KVBudget {
  public:
-  // budget_bytes == 0 means "unbounded" (admission always allowed).
-  KVBudget(const ModelConfig& cfg, std::size_t budget_bytes);
+  // budget_bytes == 0 means "unbounded" (admission always allowed). With a
+  // KVQuantConfig the per-token figure accounts for the quantized triplet
+  // storage (packed words + per-group fp16 scales and biases) instead of fp16.
+  KVBudget(const ModelConfig& cfg, std::size_t budget_bytes, KVQuantConfig kv_quant = {});
 
   // KV bytes consumed by one token across all layers (the 32 KiB/token figure).
   std::size_t bytes_per_token() const { return bytes_per_token_; }

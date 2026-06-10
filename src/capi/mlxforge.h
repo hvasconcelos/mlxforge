@@ -41,8 +41,10 @@ extern "C" {
  *   v5: mlxforge_sampling.logprobs + mlxforge_request_logprobs (OpenAI per-token
  *       log-probabilities: the chosen token's logprob and its top-N alternatives,
  *       accumulated as the request is drained and returned as an OpenAI-shaped
- *       JSON array). */
-#define MLXFORGE_ABI_VERSION 5
+ *       JSON array).
+ *   v6: mlxforge_engine_create2 + mlxforge_engine_opts2 (KV-cache quantization;
+ *       opts2 carries struct_size so future fields append without a create3). */
+#define MLXFORGE_ABI_VERSION 6
 
 typedef struct mlxforge_engine mlxforge_engine;
 typedef struct mlxforge_request mlxforge_request;
@@ -111,6 +113,30 @@ void mlxforge_floats_free(float* p);
  * poll mlxforge_engine_ready(). */
 mlxforge_engine* mlxforge_engine_create(const char* model_spec,
                                         const mlxforge_engine_opts* opts, char** err);
+
+/* Extended engine creation options (v6+). Set struct_size = sizeof(...) and
+ * zero-initialize the rest for defaults; the library reads only the fields
+ * struct_size covers, so binaries built against this header stay correct when
+ * later versions append fields.
+ *
+ * kv_bits enables KV-cache quantization (engine-wide; the batched cache's
+ * storage is shared across rows, so it cannot be per-request): 0 = dense fp16
+ * (the default), 8 or 4 store the cache as quantized triplets matching
+ * mlx-lm's QuantizedKVCache (8 is near-lossless at ~1.9x less cache memory;
+ * 4 is ~3.6x). Unsupported setups (vision-language or hybrid Qwen3.5 models,
+ * invalid bits/group sizes) FAIL engine creation with a clear *err — there is
+ * never a silent fp16 fallback. */
+typedef struct {
+  size_t struct_size;   /* caller sets sizeof(mlxforge_engine_opts2) */
+  int max_waiting;      /* max queued requests; <= 0 => default (256) */
+  int kv_bits;          /* 0 = fp16 KV cache (default); 8 or 4 = quantized */
+  int kv_group_size;    /* quantization group size; <= 0 => default (64) */
+} mlxforge_engine_opts2;
+
+/* Create an engine with extended options (v6+). Identical contract to
+ * mlxforge_engine_create; `opts` may be NULL for all defaults. */
+mlxforge_engine* mlxforge_engine_create2(const char* model_spec,
+                                         const mlxforge_engine_opts2* opts, char** err);
 
 /* Non-zero once the model has finished loading on the worker thread. Requests
  * may be submitted before this returns true; they are served once ready. */

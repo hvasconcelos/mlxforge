@@ -42,3 +42,13 @@ TEST_CASE("a zero budget is treated as unbounded") {
   KVBudget budget(llama32_1b(), /*budget_bytes=*/0);
   CHECK(budget.can_admit(131072, 4096, 256));
 }
+
+TEST_CASE("quantized KV accounting: packed words + per-group scales/biases") {
+  // Llama-3.2-1B, D=64, group 64: one K-or-V head row is 64*bits/8 packed bytes
+  // plus one fp16 scale + bias (4 bytes). 8-bit: 68 B vs 128 B fp16 (1.88x);
+  // 4-bit: 36 B (3.56x).
+  KVBudget q8(llama32_1b(), 0, KVQuantConfig{8, 64});
+  CHECK(q8.bytes_per_token() == 2u * 16 * 8 * 68);
+  KVBudget q4(llama32_1b(), 0, KVQuantConfig{4, 64});
+  CHECK(q4.bytes_per_token() == 2u * 16 * 8 * 36);
+}

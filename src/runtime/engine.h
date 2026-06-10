@@ -25,6 +25,14 @@ namespace mlxforge {
 struct EngineConfig {
   std::string model_spec;  // Model description: local directory, HuggingFace repo id, or .gguf file path (to be resolved internally)
   int max_waiting = 256;   // Maximum length of the Scheduler's waiting queue; 0 disables the cap
+  // KV-cache quantization (engine-wide: the batched cache's storage is shared
+  // across rows, so this cannot be per-request). 0 = dense fp16 (default);
+  // 8 or 4 store the cache as mx::quantize triplets, matching mlx-lm's
+  // QuantizedKVCache numerics. Validated against the model at construction:
+  // unsupported combinations (vision/hybrid models, group_size not dividing
+  // head_dim) throw rather than silently falling back.
+  int kv_bits = 0;
+  int kv_group_size = 64;
 };
 
 // Per-call embedding options. The two int fields are tri-state: -1 means "use

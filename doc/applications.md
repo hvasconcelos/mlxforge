@@ -57,6 +57,7 @@ with environment-variable fallbacks (`server/config`):
 | `--max-ctx` | `MLXFORGE_MAX_CTX` | `8192` | Reject prompts longer than this → `400`. |
 | `--max-waiting` | `MLXFORGE_MAX_WAITING` | `256` | Bounded waiting queue → `429` on overflow. |
 | `--kv-budget` | `MLXFORGE_KV_BUDGET` | `0` (unbounded) | KV-memory admission budget in bytes. |
+| `--kv-bits` | `MLXFORGE_KV_BITS` | `0` (fp16) | KV-cache quantization: `8` (~1.9× less cache memory, near-lossless) or `4` (~3.6×). Unsupported models (vision, hybrid Qwen3.5) fail startup rather than silently falling back. |
 
 ### Logging
 

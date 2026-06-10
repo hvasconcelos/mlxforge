@@ -138,6 +138,41 @@ mlxforge_engine* mlxforge_engine_create(const char* model_spec,
   return nullptr;
 }
 
+mlxforge_engine* mlxforge_engine_create2(const char* model_spec,
+                                         const mlxforge_engine_opts2* opts, char** err) {
+  if (err) *err = nullptr;
+  if (!model_spec || !*model_spec) {
+    set_err(err, "model_spec is null or empty");
+    return nullptr;
+  }
+  try {
+    mlxforge::EngineConfig cfg;
+    cfg.model_spec = model_spec;
+    // Read only the fields the caller's struct_size covers, so a binary built
+    // against this header stays correct when later versions append fields.
+    auto covered = [&](const void* field_end) {
+      return opts && static_cast<size_t>(static_cast<const char*>(field_end) -
+                                         reinterpret_cast<const char*>(opts)) <=
+                         opts->struct_size;
+    };
+    if (covered(&opts->max_waiting + 1) && opts->max_waiting > 0)
+      cfg.max_waiting = opts->max_waiting;
+    if (covered(&opts->kv_bits + 1)) cfg.kv_bits = opts->kv_bits;
+    if (covered(&opts->kv_group_size + 1) && opts->kv_group_size > 0)
+      cfg.kv_group_size = opts->kv_group_size;
+
+    auto handle = std::make_unique<mlxforge_engine>();
+    handle->model_name = model_spec;
+    handle->engine = std::make_unique<mlxforge::Engine>(std::move(cfg));
+    return handle.release();
+  } catch (const std::exception& e) {
+    set_err(err, e.what());
+  } catch (...) {
+    set_err(err, "unknown error creating engine");
+  }
+  return nullptr;
+}
+
 int mlxforge_engine_ready(mlxforge_engine* engine) {
   if (!engine || !engine->engine) return 0;
   try {

@@ -3,6 +3,15 @@
 export interface EngineOptions {
   /** Max queued requests before submit is rejected (default 256). */
   maxWaiting?: number;
+  /**
+   * KV-cache quantization bits (engine-wide): 0 (default) keeps the cache
+   * dense fp16; 8 is near-lossless at ~1.9x less cache memory; 4 is ~3.6x.
+   * Unsupported models (vision-language, hybrid Qwen3.5) fail engine creation
+   * rather than silently falling back to fp16.
+   */
+  kvBits?: 0 | 4 | 8;
+  /** Quantization group size (default 64; must divide the model's head_dim). */
+  kvGroupSize?: number;
 }
 
 export interface SamplingOptions {

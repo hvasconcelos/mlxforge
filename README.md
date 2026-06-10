@@ -51,7 +51,10 @@ the C-ABI / Node quickstart.
   caller of `eval`/`async_eval`; exactly **one `async_eval` per decode step** over the
   whole batch, with batch-size bucketing.
 - **KV cache** — single-sequence and batched (`BatchKVCache`), left-padded, grown in
-  256-token blocks, with `filter` (eviction) / `merge` (admission).
+  256-token blocks, with `filter` (eviction) / `merge` (admission). Optional
+  **KV-cache quantization** (`--kv-bits 8|4`, default fp16): mlx-lm-matching quantized
+  storage + attention for ~1.9×/~3.6× less cache memory — including the active
+  continuous-decode batch, which no other MLX server quantizes.
 - **Sampling as graph ops** — greedy, temperature, top-k, top-p (no host readback).
 - **Embeddings** — `engine.embed` runs the decoder to its final hidden states, pools
   (mean or last-token) and L2-normalizes. **Qwen3-Embedding** is first-class. Exposed

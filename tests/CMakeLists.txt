@@ -17,7 +17,10 @@ add_executable(mlxforge_tests
   cache/kv_cache_test.cpp
   cache/batch_kv_cache_test.cpp
   cache/batch_kv_filter_merge_test.cpp
+  cache/kv_quant_cache_test.cpp
+  cache/kv_cache_quantized_test.cpp
   cache/kv_budget_test.cpp
+  model/quantized_sdpa_test.cpp
   sample/sampler_test.cpp
   sample/json_grammar_test.cpp
   runtime/single_stream_test.cpp

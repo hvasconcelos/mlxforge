@@ -37,11 +37,19 @@ std::size_t compute_linear_state_bytes(const ModelConfig& cfg) {
   const std::size_t recur_bytes = value_dim * cfg.linear_key_head_dim * kFp32Bytes;
   return linear_layers * (conv_bytes + recur_bytes);
 }
+// One K-or-V row of head_dim values: fp16 when dense; packed bits plus the
+// per-group fp16 scale and bias when quantized (e.g. D=64/g=64: 128 B fp16,
+// 68 B at 8-bit, 36 B at 4-bit).
+std::size_t per_head_row_bytes(const ModelConfig& cfg, KVQuantConfig q) {
+  const std::size_t d = static_cast<std::size_t>(cfg.head_dim);
+  if (!q.enabled()) return d * kFp16Bytes;
+  return d * q.bits / 8 + (d / q.group_size) * 2 /*scale+bias*/ * kFp16Bytes;
+}
 }  // namespace
 
-KVBudget::KVBudget(const ModelConfig& cfg, std::size_t budget_bytes)
-    : bytes_per_token_(2 /*K and V*/ * kv_layer_count(cfg) * cfg.n_kv_heads * cfg.head_dim *
-                       kFp16Bytes),
+KVBudget::KVBudget(const ModelConfig& cfg, std::size_t budget_bytes, KVQuantConfig kv_quant)
+    : bytes_per_token_(2 /*K and V*/ * kv_layer_count(cfg) * cfg.n_kv_heads *
+                       per_head_row_bytes(cfg, kv_quant)),
       linear_state_bytes_(compute_linear_state_bytes(cfg)),
       budget_bytes_(budget_bytes) {}
 

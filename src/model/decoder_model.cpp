@@ -7,6 +7,8 @@
 #include <utility>
 
 #include "core/logging.h"
+#include "model/sdpa.h"
+
 #include "mlx/fast.h"
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
@@ -183,18 +185,12 @@ mx::array DecoderModel::attention(const mx::array& x, int layer, int offset, KVC
   const int L = x.shape()[1];
 
   QKV qkv = attn_qkv(x, layer, offset);  // q (B, n_heads, L, head_dim), k/v use n_kv_heads
-  if (cache) {
-    auto kv = cache->update_and_fetch(layer, qkv.k, qkv.v);
-    qkv.k = kv.first;
-    qkv.v = kv.second;
-  }
   const float scale = 1.0f / std::sqrt(static_cast<float>(cfg_.head_dim));
 
   // Multi-token chunks (prefill) are causal; a single decode token attends over
   // the whole cached history unmasked. GQA is handled natively by SDPA.
   const std::string mask_mode = L > 1 ? "causal" : "";
-  mx::array out =
-      mx::fast::scaled_dot_product_attention(qkv.q, qkv.k, qkv.v, scale, mask_mode);
+  mx::array out = sdpa_with_cache(qkv.q, qkv.k, qkv.v, cache, layer, scale, mask_mode);
 
   // (B, n_heads, L, head_dim) -> (B, L, n_heads*head_dim)
   out = mx::reshape(mx::transpose(out, {0, 2, 1, 3}), {B, L, cfg_.n_heads * cfg_.head_dim});
@@ -246,12 +242,10 @@ mx::array DecoderModel::attention_batched(const mx::array& x, int layer, const m
 
   QKV p = project_qkv(x, layer);
   mx::array q = apply_rope(p.q, offset);
-  mx::array k = apply_rope(p.k, offset);
-  auto kv = cache.update_and_fetch(layer, k, p.v);  // append roped K, un-roped V
+  mx::array k = apply_rope(p.k, offset);  // append roped K, un-roped V
 
   const float scale = 1.0f / std::sqrt(static_cast<float>(cfg_.head_dim));
-  mx::array out = mx::fast::scaled_dot_product_attention(q, kv.first, kv.second, scale,
-                                                         /*mask_mode=*/"", mask);
+  mx::array out = sdpa_with_cache(q, k, p.v, cache, layer, scale, mask);
   out = mx::reshape(mx::transpose(out, {0, 2, 1, 3}), {B, L, cfg_.n_heads * cfg_.head_dim});
   return linear(out, layer_key(layer, "self_attn.o_proj.weight"));
 }

@@ -32,10 +32,12 @@ struct GenerateResult {
 // emitted token. Stops when an EOS token would be produced or after max_tokens.
 // `top_logprobs` mirrors SamplingParams: -1 = off (no logprob work); 0 = record
 // each emitted token's own log-prob into result.token_logprobs; N > 0 = also
-// record its N most-likely alternatives.
+// record its N most-likely alternatives. `kv_quant` selects the cache storage
+// (dense fp16 by default; the quantized-KV golden tests and the CLI's --kv-bits
+// drive the quantized path).
 GenerateResult greedy_generate(const DecoderModel& model, const std::vector<int>& prompt_ids,
                                int max_tokens, const std::vector<int>& eos_ids,
                                const std::function<void(int)>& on_token = {},
-                               int top_logprobs = -1);
+                               int top_logprobs = -1, KVQuantConfig kv_quant = {});
 
 }  // namespace mlxforge

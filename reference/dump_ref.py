@@ -192,6 +192,33 @@ def _dump_greedy(model, save, prompt_ids):
     save("greedy_tokens", np.array(greedy, dtype=np.int32))
 
 
+def _dump_greedy_quantized(model, save, prompt_ids, bits, group_size=64):
+    """Greedy continuation with mlx-lm's QuantizedKVCache (prefill + cached
+    decode). The oracle for the C++ quantized-KV path, which ports the same
+    triplet storage and quantized_matmul SDPA.
+
+    Besides the tokens, the per-step top-2 logit margin is dumped: 4-bit
+    quantized matmuls at head_dim 128 are fusion-context-sensitive (the same
+    mlx-lm function on the same values shifts by ~1 logit depending on whether
+    its inputs are materialized or lazy), so the C++ gate for such combinations
+    is teacher-forced and asserts token equality only where the margin exceeds
+    that noise — exact gating would be asserting kernel fusion, not math."""
+    from mlx_lm.models.cache import QuantizedKVCache
+
+    cache = [QuantizedKVCache(group_size=group_size, bits=bits) for _ in model.layers]
+    logits = model(mx.array(prompt_ids, dtype=mx.int32)[None], cache=cache)[:, -1, :]
+    greedy, gaps = [], []
+    for i in range(GREEDY_MAX_NEW):
+        top2 = mx.sort(logits.astype(mx.float32), axis=-1)[0, -2:]
+        gaps.append(float(top2[1] - top2[0]))
+        nxt = int(mx.argmax(logits, axis=-1).item())
+        greedy.append(nxt)
+        if i + 1 < GREEDY_MAX_NEW:
+            logits = model(mx.array([[nxt]], dtype=mx.int32), cache=cache)[:, -1, :]
+    save(f"greedy_tokens_kvq{bits}", np.array(greedy, dtype=np.int32))
+    save(f"greedy_gaps_kvq{bits}", np.array(gaps, dtype=np.float32))
+
+
 def _write_manifest(fixtures_dir, manifest, tok):
     manifest["eos_token_ids"] = sorted(int(x) for x in tok.eos_token_ids)
     with open(os.path.join(fixtures_dir, "manifest.json"), "w") as f:
@@ -638,6 +665,12 @@ def main():
 
     # --- Greedy token stream (full-recompute reference; gates the greedy decode stream) ---
     _dump_greedy(model, save, prompt_id_lists[0])
+
+    # Quantized-KV greedy streams (8- and 4-bit): gate the C++ quantized cache +
+    # quantized SDPA end to end against mlx-lm's QuantizedKVCache.
+    for bits in (8, 4):
+        _dump_greedy_quantized(model, save, prompt_id_lists[0], bits)
+
     _write_manifest(FIXTURES_DIR, manifest, tok)
 
 
