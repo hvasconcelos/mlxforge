@@ -9,6 +9,7 @@ mlxforge_floats_free
 mlxforge_request_cancel
 mlxforge_request_finish_reason
 mlxforge_request_free
+mlxforge_request_logprobs
 mlxforge_request_next
 mlxforge_string_free
 mlxforge_submit_chat

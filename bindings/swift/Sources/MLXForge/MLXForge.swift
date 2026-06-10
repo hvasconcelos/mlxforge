@@ -23,6 +23,9 @@ public struct Sampling {
   /// JSON-Schema string (supported subset: a top-level object with ordered,
   /// required, scalar-typed properties). Output is masked to be well-formed JSON.
   public var jsonSchema: String? = nil
+  /// OpenAI logprobs: 0 = off; N > 0 = the chosen token's log-prob plus (N - 1)
+  /// alternatives (so 1 = chosen-only). Retrieved via `Engine.completeWithLogprobs`.
+  public var logprobs: Int32 = 0
 
   public init() {}
   public static var greedy: Sampling { Sampling() }
@@ -34,7 +37,7 @@ public struct Sampling {
       temperature: temperature, top_k: topK, top_p: topP, min_p: minP,
       repetition_penalty: repetitionPenalty, frequency_penalty: frequencyPenalty,
       presence_penalty: presencePenalty, seed: seed, max_tokens: maxTokens,
-      json_schema: nil)
+      json_schema: nil, logprobs: logprobs)
   }
 }
 
@@ -166,6 +169,37 @@ public final class Engine {
     var out = ""
     for try await chunk in try chat(messages, sampling: sampling) { out += chunk }
     return out
+  }
+
+  /// Run a chat to completion and return both the text and the per-token log-probs
+  /// (the C ABI's OpenAI-shaped JSON `content` string, or nil when `logprobs` was
+  /// not set on `sampling`). Logprobs are read once the stream is fully drained.
+  public func completeWithLogprobs(_ messages: [ChatMessage], sampling: Sampling = .greedy)
+    async throws -> (text: String, logprobs: String?)
+  {
+    let req = try submitChat(messages, sampling)
+    return try await withCheckedThrowingContinuation { cont in
+      DispatchQueue.global(qos: .userInitiated).async {
+        var out = ""
+        while true {
+          var text: UnsafeMutablePointer<CChar>?
+          let rc = mlxforge_request_next(req, &text)
+          if rc == 0, let t = text {
+            out += String(cString: t)
+            mlxforge_string_free(t)
+          } else {
+            break
+          }
+        }
+        var logprobs: String? = nil
+        if let lp = mlxforge_request_logprobs(req) {
+          logprobs = String(cString: lp)
+          mlxforge_string_free(lp)
+        }
+        mlxforge_request_free(req)
+        cont.resume(returning: (out, logprobs))
+      }
+    }
   }
 
   /// Embed text into a (by default unit-normalized) vector.

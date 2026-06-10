@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "sample/sampler.h"
+#include "scheduler/request.h"  // TokenLogprob
 #include "tokenizer/tokenizer.h"
 
 namespace mlxforge {
@@ -31,6 +32,11 @@ struct ChatRequest {
   }
   SamplingParams params;
   int max_tokens = 128;
+  // OpenAI logprobs: `logprobs` enables per-token log-prob reporting; when set,
+  // `top_logprobs` (0–20) is how many alternatives to include per token. Mapped
+  // onto params.top_logprobs (-1 when off) by the HTTP layer.
+  bool logprobs = false;
+  int top_logprobs = 0;
   bool stream = false;
   std::vector<std::string> stop;
   int n = 1;
@@ -73,10 +79,19 @@ EmbeddingsRequest parse_embeddings_request(const nlohmann::json& body);
 // chat.completion and text_completion response shapes.
 nlohmann::json make_usage(int prompt_tokens, int completion_tokens);
 
-// Serialize a finished completion into the OpenAI chat.completion shape.
+// Build the OpenAI logprobs `content` array from a request's per-token log-probs:
+// one entry {token, logprob, bytes, top_logprobs:[{token, logprob, bytes}]} per
+// token, where the token text and `bytes` come from decoding the id with `tok`.
+nlohmann::json make_logprobs_content(const std::vector<TokenLogprob>& logprobs,
+                                     const Tokenizer& tok);
+
+// Serialize a finished completion into the OpenAI chat.completion shape. When
+// `logprobs_content` is non-null it is attached as choices[0].logprobs.content
+// (pass an empty array for an enabled-but-empty result; null/omitted = disabled).
 nlohmann::json make_chat_completion(const std::string& id, long created, const std::string& model,
                                     const std::string& content, const std::string& finish_reason,
-                                    int prompt_tokens, int completion_tokens);
+                                    int prompt_tokens, int completion_tokens,
+                                    const nlohmann::json& logprobs_content = nlohmann::json());
 
 // Detect a Llama-3.2 tool call in the model's decoded output. Returns the parsed
 // calls, or an empty vector when the text is not a tool call (treat as content).
@@ -105,9 +120,11 @@ nlohmann::json make_models_list(const std::string& model);
 
 // One streaming chunk object. `delta` is the partial message delta (e.g.
 // {{"content","..."}} or {{"role","assistant"}}); `finish_reason` is the JSON
-// finish reason (null until the final chunk).
+// finish reason (null until the final chunk). When `logprobs_content` is non-null
+// it is attached as choices[0].logprobs.content for the tokens in this delta.
 nlohmann::json make_chat_chunk(const std::string& id, long created, const std::string& model,
-                               const nlohmann::json& delta, const nlohmann::json& finish_reason);
+                               const nlohmann::json& delta, const nlohmann::json& finish_reason,
+                               const nlohmann::json& logprobs_content = nlohmann::json());
 
 // Wrap a JSON payload as an SSE frame: "data: <json>\n\n".
 std::string sse_frame(const nlohmann::json& payload);

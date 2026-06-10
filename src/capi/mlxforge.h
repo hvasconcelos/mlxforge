@@ -37,8 +37,12 @@ extern "C" {
  *       last-token pooling, trailing EOS, instruction prefix).
  *   v3: mlxforge_submit_image (Qwen3-VL vision-language: a prompt + one image,
  *       served single-stream).
- *   v4: mlxforge_image + mlxforge_submit_images (a prompt + N images). */
-#define MLXFORGE_ABI_VERSION 4
+ *   v4: mlxforge_image + mlxforge_submit_images (a prompt + N images).
+ *   v5: mlxforge_sampling.logprobs + mlxforge_request_logprobs (OpenAI per-token
+ *       log-probabilities: the chosen token's logprob and its top-N alternatives,
+ *       accumulated as the request is drained and returned as an OpenAI-shaped
+ *       JSON array). */
+#define MLXFORGE_ABI_VERSION 5
 
 typedef struct mlxforge_engine mlxforge_engine;
 typedef struct mlxforge_request mlxforge_request;
@@ -72,6 +76,12 @@ typedef struct {
    * object with ordered, required, scalar-typed properties). The output is
    * masked so it can only be well-formed JSON. */
   const char* json_schema;
+  /* Per-token log-probabilities (OpenAI logprobs). 0 (the zero-init default) =>
+   * off. N > 0 => report each emitted token's own log-prob plus its (N - 1) most
+   * likely alternatives, so 1 = the chosen token's log-prob only. Retrieve them
+   * with mlxforge_request_logprobs() once the request is drained. Not supported
+   * on vision (mlxforge_submit_image) requests, which ignore it. */
+  int logprobs;
 } mlxforge_sampling;
 
 /* ---- Library info ---------------------------------------------------------*/
@@ -216,6 +226,16 @@ void mlxforge_request_cancel(mlxforge_request* req);
  * Empty string while still running. Valid once mlxforge_request_next() returned
  * 1. Owned by the request. */
 const char* mlxforge_request_finish_reason(mlxforge_request* req);
+
+/* Per-token log-probabilities for the tokens emitted so far, as a newly-allocated
+ * JSON array in the OpenAI logprobs `content` shape:
+ *   [{ "token": "...", "logprob": <float>, "bytes": [<int>...],
+ *      "top_logprobs": [{ "token", "logprob", "bytes" }, ...] }, ...]
+ * Log-probs accumulate as mlxforge_request_next() drains the stream, so call this
+ * once the request is done (next() returned 1). Returns NULL when logprobs were
+ * not requested (sampling.logprobs == 0) or none were produced. The caller owns
+ * the string and frees it with mlxforge_string_free(). */
+char* mlxforge_request_logprobs(mlxforge_request* req);
 
 /* Destroy a request. If it is still running it is cancelled and drained first
  * (so the worker never blocks on a full token queue). NULL is ignored. */

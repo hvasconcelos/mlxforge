@@ -140,3 +140,64 @@ TEST_CASE("sample returns batched tokens and logprobs") {
   CHECK(r.logprobs.shape() == mx::Shape{2});
   for (float lp : floats(r.logprobs)) CHECK(lp <= 0.0f);  // log-probabilities
 }
+
+TEST_CASE("top_logprobs off leaves the top arrays empty") {
+  mx::array logits = logits2d({{1.0f, 2.0f, 3.0f}});
+  SampleResult r = Sampler::sample(logits, SamplingParams{}, mx::random::key(0));  // default -1
+  CHECK(r.top_tokens.shape() == mx::Shape{1, 0});
+  CHECK(r.top_logprobs.shape() == mx::Shape{1, 0});
+}
+
+TEST_CASE("top_logprobs == 0 reports the chosen logprob but no alternatives") {
+  mx::array logits = logits2d({{1.0f, 2.0f, 3.0f}});
+  SamplingParams p;
+  p.temperature = 0.0f;  // greedy
+  p.top_logprobs = 0;
+  SampleResult r = Sampler::sample(logits, p, mx::random::key(0));
+  CHECK(ints(r.tokens) == std::vector<int>{2});  // argmax
+  CHECK(floats(r.logprobs)[0] <= 0.0f);
+  CHECK(r.top_tokens.shape() == mx::Shape{1, 0});
+  CHECK(r.top_logprobs.shape() == mx::Shape{1, 0});
+}
+
+TEST_CASE("top_logprobs > 0 returns the top-k ids in descending logprob order") {
+  // logits 1,4,2,3,0 -> ranked ids 1(4), 3(3), 2(2), 0(1), 4(0).
+  mx::array logits = logits2d({{1.0f, 4.0f, 2.0f, 3.0f, 0.0f}});
+  SamplingParams p;
+  p.temperature = 0.0f;
+  p.top_logprobs = 3;
+  SampleResult r = Sampler::sample(logits, p, mx::random::key(0));
+  CHECK(r.top_tokens.shape() == mx::Shape{1, 3});
+  CHECK(r.top_logprobs.shape() == mx::Shape{1, 3});
+  CHECK(ints(r.top_tokens) == std::vector<int>{1, 3, 2});
+
+  std::vector<float> lp = floats(r.top_logprobs);
+  CHECK(lp[0] >= lp[1]);
+  CHECK(lp[1] >= lp[2]);
+  for (float x : lp) CHECK(x <= 0.0f);
+  // The chosen token is the argmax and its logprob equals the top alternative.
+  CHECK(ints(r.tokens) == std::vector<int>{1});
+  CHECK(floats(r.logprobs)[0] == doctest::Approx(lp[0]));
+}
+
+TEST_CASE("a full top-k recovers a normalized distribution") {
+  mx::array logits = logits2d({{0.5f, 1.5f, -0.5f, 2.0f}});
+  SamplingParams p;
+  p.temperature = 0.0f;
+  p.top_logprobs = 4;  // == vocab
+  SampleResult r = Sampler::sample(logits, p, mx::random::key(0));
+  float sum = 0.0f;
+  for (float x : floats(r.top_logprobs)) sum += std::exp(x);
+  CHECK(sum == doctest::Approx(1.0f).epsilon(0.01));
+}
+
+TEST_CASE("top_logprobs is reported under temperature sampling too") {
+  mx::array logits = logits2d({{1.0f, 4.0f, 2.0f, 3.0f}});
+  SamplingParams p;
+  p.temperature = 0.8f;
+  p.top_logprobs = 2;
+  SampleResult r = Sampler::sample(logits, p, mx::random::key(3));
+  CHECK(r.top_tokens.shape() == mx::Shape{1, 2});
+  // Alternatives come from the pre-temperature distribution: highest-logit first.
+  CHECK(ints(r.top_tokens) == std::vector<int>{1, 3});
+}

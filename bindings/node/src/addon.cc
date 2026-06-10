@@ -32,6 +32,9 @@ mlxforge_sampling parse_sampling(const Napi::Object& o, std::string& schema_out)
   s.presence_penalty = static_cast<float>(num("presencePenalty", 0.0));
   s.seed = static_cast<unsigned long long>(num("seed", 0.0));
   s.max_tokens = static_cast<int>(num("maxTokens", 0.0));
+  // OpenAI logprobs: 0 = off; N > 0 = the chosen token's logprob plus (N - 1)
+  // alternatives (so 1 = chosen-only). Retrieved via Request.logprobs().
+  s.logprobs = static_cast<int>(num("logprobs", 0.0));
   if (o.Has("jsonSchema") && o.Get("jsonSchema").IsString())
     schema_out = o.Get("jsonSchema").As<Napi::String>().Utf8Value();
   else if (o.Has("responseFormat") && o.Get("responseFormat").IsString())
@@ -53,6 +56,7 @@ class RequestWrap : public Napi::ObjectWrap<RequestWrap> {
                                        InstanceMethod("next", &RequestWrap::Next),
                                        InstanceMethod("cancel", &RequestWrap::Cancel),
                                        InstanceMethod("finishReason", &RequestWrap::FinishReason),
+                                       InstanceMethod("logprobs", &RequestWrap::Logprobs),
                                        InstanceMethod("dispose", &RequestWrap::Dispose),
                                    });
     g_request_ctor = Napi::Persistent(f);
@@ -91,6 +95,19 @@ class RequestWrap : public Napi::ObjectWrap<RequestWrap> {
 
   Napi::Value FinishReason(const Napi::CallbackInfo& info) {
     return Napi::String::New(info.Env(), req_ ? mlxforge_request_finish_reason(req_) : "");
+  }
+
+  // The accumulated per-token log-probs, parsed from the C ABI's OpenAI-shaped
+  // JSON (or null when none / not requested). Call after the stream is drained,
+  // before dispose().
+  Napi::Value Logprobs(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    char* j = req_ ? mlxforge_request_logprobs(req_) : nullptr;
+    if (!j) return env.Null();
+    std::string s(j);
+    mlxforge_string_free(j);
+    Napi::Object json = env.Global().Get("JSON").As<Napi::Object>();
+    return json.Get("parse").As<Napi::Function>().Call(json, {Napi::String::New(env, s)});
   }
 
   void Dispose(const Napi::CallbackInfo&) { free_req(); }

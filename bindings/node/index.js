@@ -8,6 +8,9 @@ const native = require('./build/Release/mlxforge_node.node');
 // Wrap a native Request as an async-iterable of decoded text chunks. The
 // request is disposed when iteration finishes (or the consumer breaks out).
 function streamRequest(req) {
+  // Captured once the stream is fully drained (the native handle is disposed
+  // right after, so we read logprobs while it is still valid).
+  let logprobs = null;
   return {
     // The underlying native handle, in case callers want cancel()/finishReason().
     request: req,
@@ -17,10 +20,18 @@ function streamRequest(req) {
     get finishReason() {
       return req.finishReason();
     },
+    /**
+     * Per-token log-probs (OpenAI logprobs `content` shape), or null when none
+     * were requested. Available after the stream has been fully consumed.
+     */
+    logprobs() {
+      return logprobs;
+    },
     async *[Symbol.asyncIterator]() {
       try {
         let chunk;
         while ((chunk = await req.next()) !== null) yield chunk;
+        logprobs = req.logprobs();  // capture before dispose() invalidates the handle
       } finally {
         req.dispose();
       }

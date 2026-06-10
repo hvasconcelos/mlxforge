@@ -1,7 +1,10 @@
 // OpenAI request parsing + response serialization (pure, no GPU).
 #include <doctest/doctest.h>
 
+#include <fstream>
+
 #include "server/openai.h"
+#include "tokenizer/tokenizer.h"
 
 using namespace mlxforge;
 using nlohmann::json;
@@ -76,6 +79,93 @@ TEST_CASE("make_chat_completion emits the OpenAI chat.completion shape") {
   CHECK(c["usage"]["prompt_tokens"] == 10);
   CHECK(c["usage"]["completion_tokens"] == 3);
   CHECK(c["usage"]["total_tokens"] == 13);
+}
+
+TEST_CASE("parse_chat_request reads logprobs and top_logprobs") {
+  const std::string msgs = R"("messages":[{"role":"user","content":"x"}])";
+  ChatRequest off = parse_chat_request(json::parse("{" + msgs + "}"));
+  CHECK_FALSE(off.logprobs);
+  CHECK(off.top_logprobs == 0);
+
+  ChatRequest on =
+      parse_chat_request(json::parse("{" + msgs + R"(,"logprobs":true,"top_logprobs":5})"));
+  CHECK(on.logprobs);
+  CHECK(on.top_logprobs == 5);
+
+  // top_logprobs is validated to the OpenAI [0, 20] range.
+  CHECK_THROWS_AS(parse_chat_request(json::parse("{" + msgs + R"(,"top_logprobs":21})")),
+                  std::runtime_error);
+  CHECK_THROWS_AS(parse_chat_request(json::parse("{" + msgs + R"(,"top_logprobs":-1})")),
+                  std::runtime_error);
+}
+
+TEST_CASE("make_chat_completion attaches a logprobs block when content is given") {
+  // A hand-built content array (the shape make_logprobs_content produces).
+  json content = json::array(
+      {{{"token", "Paris"}, {"logprob", -0.1}, {"bytes", json::array({80, 97, 114, 105, 115})},
+        {"top_logprobs", json::array({{{"token", "Paris"}, {"logprob", -0.1}, {"bytes", json::array()}},
+                                      {{"token", "Lyon"}, {"logprob", -2.0}, {"bytes", json::array()}}})}}});
+  json c = make_chat_completion("chatcmpl-1", 1, "mlxforge", "Paris", "stop", 4, 1, content);
+  REQUIRE(c["choices"][0]["logprobs"].is_object());
+  const json& lc = c["choices"][0]["logprobs"]["content"];
+  REQUIRE(lc.is_array());
+  CHECK(lc.size() == 1);
+  CHECK(lc[0]["token"] == "Paris");
+  CHECK(lc[0]["logprob"] == doctest::Approx(-0.1));
+  CHECK(lc[0]["bytes"].size() == 5);
+  CHECK(lc[0]["top_logprobs"].size() == 2);
+
+  // Omitted (null default) => logprobs is present but null (OpenAI convention).
+  json off = make_chat_completion("chatcmpl-1", 1, "mlxforge", "Paris", "stop", 4, 1);
+  CHECK(off["choices"][0]["logprobs"].is_null());
+}
+
+TEST_CASE("make_chat_chunk attaches logprobs to the streamed choice") {
+  json content = json::array({{{"token", " a"}, {"logprob", -0.5}, {"bytes", json::array({32, 97})},
+                               {"top_logprobs", json::array()}}});
+  json chunk = make_chat_chunk("chatcmpl-1", 1, "mlxforge", {{"content", " a"}}, nullptr, content);
+  REQUIRE(chunk["choices"][0]["logprobs"].is_object());
+  CHECK(chunk["choices"][0]["logprobs"]["content"][0]["token"] == " a");
+
+  // Without logprobs the field is omitted (back-compat with existing chunks).
+  json plain = make_chat_chunk("chatcmpl-1", 1, "mlxforge", {{"content", " a"}}, nullptr);
+  CHECK_FALSE(plain["choices"][0].contains("logprobs"));
+}
+
+TEST_CASE("make_logprobs_content decodes tokens, bytes, and alternatives") {
+  // Needs a real tokenizer to decode ids; uses the cached model's tokenizer.
+  const std::string dir = MLXFORGE_MODEL_DIR;
+  if (dir.empty() || !std::ifstream(dir + "/tokenizer.json").good()) {
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping logprobs content test");
+    return;
+  }
+  Tokenizer tok = Tokenizer::from_file(dir + "/tokenizer.json");
+
+  // Two tokens; the first carries two alternatives, the second none.
+  std::vector<TokenLogprob> lps;
+  TokenLogprob a;
+  a.id = tok.encode("Paris").back();
+  a.logprob = -0.25f;
+  a.top = {{a.id, -0.25f}, {tok.encode("Lyon").back(), -1.5f}};
+  TokenLogprob b;
+  b.id = tok.encode(" France").back();
+  b.logprob = -0.5f;
+  lps = {a, b};
+
+  json content = make_logprobs_content(lps, tok);
+  REQUIRE(content.is_array());
+  REQUIRE(content.size() == 2);
+
+  // Entry 0: token text matches a decode, bytes are the UTF-8 of that text, and
+  // top_logprobs has both alternatives.
+  CHECK(content[0]["token"] == tok.decode({a.id}));
+  CHECK(content[0]["logprob"] == doctest::Approx(-0.25));
+  CHECK(content[0]["bytes"].size() == tok.decode({a.id}).size());
+  REQUIRE(content[0]["top_logprobs"].is_array());
+  CHECK(content[0]["top_logprobs"].size() == 2);
+  CHECK(content[0]["top_logprobs"][0]["logprob"] == doctest::Approx(-0.25));
+  // Entry 1: no alternatives.
+  CHECK(content[1]["top_logprobs"].empty());
 }
 
 TEST_CASE("parse_completion_request reads a prompt string") {

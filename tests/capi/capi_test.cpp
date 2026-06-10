@@ -134,6 +134,69 @@ TEST_CASE("C ABI generates text and batches concurrent requests deterministicall
   mlxforge_engine_free(eng);
 }
 
+TEST_CASE("C ABI reports per-token logprobs aligned with the generated tokens") {
+  if (!model_available()) {
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
+    return;
+  }
+  char* err = nullptr;
+  mlxforge_engine* eng = mlxforge_engine_create(model_dir().c_str(), nullptr, &err);
+  REQUIRE_MESSAGE(eng != nullptr, (err ? err : "engine_create failed"));
+  while (!mlxforge_engine_ready(eng)) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+  mlxforge_sampling s = {};  // greedy
+  s.max_tokens = 12;
+  s.logprobs = 4;  // the chosen token's logprob + 3 alternatives
+
+  mlxforge_msg msg = {"user", "What is the capital of France?"};
+  mlxforge_request* r = mlxforge_submit_chat(eng, &msg, 1, &s, &err);
+  REQUIRE_MESSAGE(r != nullptr, (err ? err : "submit_chat failed"));
+
+  drain(r);  // logprobs accumulate as the stream is drained
+  const std::string reason = mlxforge_request_finish_reason(r);
+
+  char* lj = mlxforge_request_logprobs(r);
+  REQUIRE_MESSAGE(lj != nullptr, "expected a logprobs JSON payload");
+  const std::string lp_json = lj;
+  mlxforge_string_free(lj);
+  mlxforge_request_free(r);
+
+  auto content = nlohmann::json::parse(lp_json, nullptr, /*allow_exceptions=*/false);
+  REQUIRE_FALSE(content.is_discarded());
+  REQUIRE(content.is_array());
+  CHECK(content.size() >= 1);
+  // One entry per emitted token: a "length" stop means exactly max_tokens tokens.
+  if (reason == "length") CHECK(content.size() == 12);
+  CHECK(content.size() <= 12);
+
+  for (const auto& e : content) {
+    CHECK(e.contains("token"));
+    CHECK(e["logprob"].is_number());
+    CHECK(e["logprob"].get<double>() <= 0.0);  // a log-probability
+    CHECK(e["bytes"].is_array());
+    REQUIRE(e["top_logprobs"].is_array());
+    CHECK(e["top_logprobs"].size() == 3);  // logprobs=4 => 3 alternatives
+    // Greedy: the chosen token is the most likely, so it equals the top entry.
+    CHECK(e["top_logprobs"][0]["token"] == e["token"]);
+    CHECK(e["top_logprobs"][0]["logprob"].get<double>() == doctest::Approx(e["logprob"].get<double>()));
+    // Alternatives are in descending log-prob order.
+    const auto& top = e["top_logprobs"];
+    for (size_t i = 1; i < top.size(); ++i)
+      CHECK(top[i - 1]["logprob"].get<double>() >= top[i]["logprob"].get<double>());
+  }
+
+  // A request without logprobs returns no payload.
+  mlxforge_sampling plain = {};
+  plain.max_tokens = 4;
+  mlxforge_request* r2 = mlxforge_submit_chat(eng, &msg, 1, &plain, nullptr);
+  REQUIRE(r2 != nullptr);
+  drain(r2);
+  CHECK(mlxforge_request_logprobs(r2) == nullptr);
+  mlxforge_request_free(r2);
+
+  mlxforge_engine_free(eng);
+}
+
 TEST_CASE("C ABI embeddings are unit-normalized, deterministic, and semantic") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");

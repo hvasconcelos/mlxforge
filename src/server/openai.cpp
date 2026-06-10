@@ -148,6 +148,14 @@ void parse_common(const json& body, ChatRequest& r) {
   if (body.contains("seed") && !body["seed"].is_null())
     r.params.seed = body["seed"].get<uint64_t>();
 
+  // OpenAI logprobs: `logprobs` (bool) turns on per-token reporting; with it,
+  // `top_logprobs` (0–20) is the alternatives count. We carry both on the request
+  // for serialization and let the HTTP layer fold them into params.top_logprobs.
+  r.logprobs = body.value("logprobs", false);
+  r.top_logprobs = body.value("top_logprobs", 0);
+  if (r.top_logprobs < 0 || r.top_logprobs > 20)
+    throw std::runtime_error("'top_logprobs' must be in [0, 20]");
+
   r.stream = body.value("stream", false);
   r.n = body.value("n", 1);
   r.stop = parse_stop(body);
@@ -233,18 +241,45 @@ nlohmann::json make_embeddings_response(const std::string& model,
   };
 }
 
+namespace {
+// One {token, logprob, bytes} entry: decode `id` to its text and raw UTF-8 bytes.
+json logprob_entry(int id, float logprob, const Tokenizer& tok) {
+  const std::string text = tok.decode({id});
+  json bytes = json::array();
+  for (unsigned char c : text) bytes.push_back(static_cast<int>(c));
+  return {{"token", text}, {"logprob", logprob}, {"bytes", std::move(bytes)}};
+}
+}  // namespace
+
+nlohmann::json make_logprobs_content(const std::vector<TokenLogprob>& logprobs,
+                                     const Tokenizer& tok) {
+  json content = json::array();
+  for (const TokenLogprob& lp : logprobs) {
+    json entry = logprob_entry(lp.id, lp.logprob, tok);
+    json top = json::array();
+    for (const auto& alt : lp.top) top.push_back(logprob_entry(alt.first, alt.second, tok));
+    entry["top_logprobs"] = std::move(top);
+    content.push_back(std::move(entry));
+  }
+  return content;
+}
+
 nlohmann::json make_chat_completion(const std::string& id, long created, const std::string& model,
                                     const std::string& content, const std::string& finish_reason,
-                                    int prompt_tokens, int completion_tokens) {
+                                    int prompt_tokens, int completion_tokens,
+                                    const nlohmann::json& logprobs_content) {
+  json choice = {{"index", 0},
+                 {"message", {{"role", "assistant"}, {"content", content}}},
+                 {"finish_reason", finish_reason}};
+  // null => logprobs disabled (omit the field); an array (even empty) => enabled.
+  choice["logprobs"] =
+      logprobs_content.is_null() ? json(nullptr) : json{{"content", logprobs_content}};
   return {
       {"id", id},
       {"object", "chat.completion"},
       {"created", created},
       {"model", model},
-      {"choices",
-       json::array({{{"index", 0},
-                     {"message", {{"role", "assistant"}, {"content", content}}},
-                     {"finish_reason", finish_reason}}})},
+      {"choices", json::array({std::move(choice)})},
       {"usage", make_usage(prompt_tokens, completion_tokens)},
   };
 }
@@ -327,13 +362,16 @@ nlohmann::json make_chat_completion_tools(const std::string& id, long created,
 }
 
 nlohmann::json make_chat_chunk(const std::string& id, long created, const std::string& model,
-                               const nlohmann::json& delta, const nlohmann::json& finish_reason) {
+                               const nlohmann::json& delta, const nlohmann::json& finish_reason,
+                               const nlohmann::json& logprobs_content) {
+  json choice = {{"index", 0}, {"delta", delta}, {"finish_reason", finish_reason}};
+  // Attach logprobs for the tokens in this delta when present (null => omit).
+  if (!logprobs_content.is_null()) choice["logprobs"] = json{{"content", logprobs_content}};
   return {{"id", id},
           {"object", "chat.completion.chunk"},
           {"created", created},
           {"model", model},
-          {"choices",
-           json::array({{{"index", 0}, {"delta", delta}, {"finish_reason", finish_reason}}})}};
+          {"choices", json::array({std::move(choice)})}};
 }
 
 std::string sse_frame(const nlohmann::json& payload) { return "data: " + payload.dump() + "\n\n"; }

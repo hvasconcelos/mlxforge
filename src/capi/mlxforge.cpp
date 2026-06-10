@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "core/config.h"
 #include "runtime/engine.h"
 #include "scheduler/request.h"
@@ -61,11 +63,22 @@ mlxforge::SamplingParams to_params(const mlxforge_sampling* s) {
   p.frequency_penalty = std::isfinite(s->frequency_penalty) ? s->frequency_penalty : 0.0f;
   p.presence_penalty = std::isfinite(s->presence_penalty) ? s->presence_penalty : 0.0f;
   p.seed = s->seed;
+  // logprobs: 0 => off (-1); N > 0 => the chosen token's logprob plus (N - 1)
+  // alternatives, so the engine's top_logprobs (alternatives count) is N - 1.
+  p.top_logprobs = s->logprobs > 0 ? s->logprobs - 1 : -1;
   return p;
 }
 
 int sampling_max_tokens(const mlxforge_sampling* s) {
   return (s && s->max_tokens > 0) ? s->max_tokens : 64;
+}
+
+// One {token, logprob, bytes} entry: decode `id` to its text and raw UTF-8 bytes.
+nlohmann::json lp_entry(int id, float logprob, const mlxforge::Tokenizer& tok) {
+  const std::string text = tok.decode({id});
+  nlohmann::json bytes = nlohmann::json::array();
+  for (unsigned char c : text) bytes.push_back(static_cast<int>(c));
+  return {{"token", text}, {"logprob", logprob}, {"bytes", std::move(bytes)}};
 }
 
 }  // namespace
@@ -83,6 +96,12 @@ struct mlxforge_request {
   std::shared_ptr<mlxforge::Request> req;
   std::unique_ptr<mlxforge::StreamingDetokenizer> detok;
   bool done = false;
+  // OpenAI logprobs: when `want_logprobs`, each token drained by
+  // mlxforge_request_next pops its log-prob (in lockstep) into `logprobs`;
+  // mlxforge_request_logprobs serializes the accumulated list using `tok`.
+  bool want_logprobs = false;
+  const mlxforge::Tokenizer* tok = nullptr;
+  std::vector<mlxforge::TokenLogprob> logprobs;
 };
 
 extern "C" {
@@ -231,6 +250,8 @@ mlxforge_request* submit_ids(mlxforge_engine* engine, std::vector<int> prompt_id
   handle->req = req;
   handle->detok =
       std::make_unique<mlxforge::StreamingDetokenizer>(engine->engine->tokenizer());
+  handle->tok = &engine->engine->tokenizer();
+  handle->want_logprobs = req->params.top_logprobs >= 0;
   return handle.release();
 }
 
@@ -370,6 +391,12 @@ int mlxforge_request_next(mlxforge_request* req, char** text) {
     for (;;) {
       int tok = 0;
       if (req->req->tokens.pop(tok)) {
+        // Pop this token's log-prob in lockstep (the worker pushes one per emitted
+        // token) and accumulate it for mlxforge_request_logprobs.
+        if (req->want_logprobs) {
+          mlxforge::TokenLogprob lp;
+          if (req->req->logprobs.pop(lp)) req->logprobs.push_back(std::move(lp));
+        }
         std::string piece = req->detok->add(tok);
         if (piece.empty()) continue;
         if (text) *text = dup_cstr(piece);
@@ -399,6 +426,23 @@ const char* mlxforge_request_finish_reason(mlxforge_request* req) {
   return (req && req->req) ? req->req->finish_reason.c_str() : "";
 }
 
+char* mlxforge_request_logprobs(mlxforge_request* req) {
+  if (!req || !req->tok || req->logprobs.empty()) return nullptr;
+  try {
+    nlohmann::json content = nlohmann::json::array();
+    for (const mlxforge::TokenLogprob& lp : req->logprobs) {
+      nlohmann::json entry = lp_entry(lp.id, lp.logprob, *req->tok);
+      nlohmann::json top = nlohmann::json::array();
+      for (const auto& alt : lp.top) top.push_back(lp_entry(alt.first, alt.second, *req->tok));
+      entry["top_logprobs"] = std::move(top);
+      content.push_back(std::move(entry));
+    }
+    return dup_cstr(content.dump());
+  } catch (...) {
+    return nullptr;
+  }
+}
+
 void mlxforge_request_free(mlxforge_request* req) {
   if (!req) return;
   try {
@@ -408,6 +452,12 @@ void mlxforge_request_free(mlxforge_request* req) {
       req->req->cancelled.store(true);
       int tok = 0;
       while (req->req->tokens.pop(tok)) {
+        // Drain log-probs in lockstep too, so the worker's producer never blocks
+        // on a full, abandoned log-prob queue.
+        if (req->want_logprobs) {
+          mlxforge::TokenLogprob lp;
+          req->req->logprobs.pop(lp);
+        }
       }
     }
   } catch (...) {

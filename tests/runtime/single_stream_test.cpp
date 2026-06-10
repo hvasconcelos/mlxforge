@@ -42,6 +42,36 @@ TEST_CASE("loop terminates on max_tokens") {
   CHECK_FALSE(r.hit_eos);
 }
 
+TEST_CASE("greedy_generate reports per-token logprobs aligned with the tokens") {
+  if (!model_available()) {
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
+    return;
+  }
+  mlxforge::LlamaModel& model = shared_model();
+  std::vector<int> prompt = load_token_ids("prompt_0_ids.npy");
+
+  mlxforge::GenerateResult r = mlxforge::greedy_generate(
+      model, prompt, /*max_tokens=*/8, model.config().eos_token_ids, {}, /*top_logprobs=*/3);
+
+  // One logprob record per emitted token, each aligned with its id.
+  REQUIRE(r.token_logprobs.size() == r.tokens.size());
+  for (size_t i = 0; i < r.tokens.size(); ++i) {
+    const mlxforge::TokenLogprob& lp = r.token_logprobs[i];
+    CHECK(lp.id == r.tokens[i]);
+    CHECK(lp.logprob <= 0.0f);
+    REQUIRE(lp.top.size() == 3);
+    // Greedy: the chosen token is the most likely, so it heads the alternatives.
+    CHECK(lp.top.front().first == lp.id);
+    CHECK(lp.top.front().second == doctest::Approx(lp.logprob));
+    for (size_t k = 1; k < lp.top.size(); ++k) CHECK(lp.top[k - 1].second >= lp.top[k].second);
+  }
+
+  // Off by default: no logprob work, no records.
+  mlxforge::GenerateResult plain =
+      mlxforge::greedy_generate(model, prompt, /*max_tokens=*/4, model.config().eos_token_ids);
+  CHECK(plain.token_logprobs.empty());
+}
+
 TEST_CASE("loop terminates on EOS") {
   if (!model_available()) {
     MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");

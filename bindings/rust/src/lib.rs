@@ -48,6 +48,7 @@ struct CSampling {
     seed: u64,
     max_tokens: c_int,
     json_schema: *const c_char,
+    logprobs: c_int,
 }
 
 // Mirrors mlxforge_embed_opts. pooling/add_eos are tri-state: -1 = model default.
@@ -122,6 +123,7 @@ extern "C" {
     ) -> *mut mlxforge_request;
     fn mlxforge_request_next(r: *mut mlxforge_request, text: *mut *mut c_char) -> c_int;
     fn mlxforge_request_finish_reason(r: *mut mlxforge_request) -> *const c_char;
+    fn mlxforge_request_logprobs(r: *mut mlxforge_request) -> *mut c_char;
     fn mlxforge_request_free(r: *mut mlxforge_request);
 }
 
@@ -159,6 +161,9 @@ pub struct Sampling {
     pub max_tokens: i32,
     /// Constrained decoding: "json" or a JSON-Schema string (see the C ABI docs).
     pub json_schema: Option<String>,
+    /// OpenAI logprobs: 0 = off; N > 0 = the chosen token's log-prob plus (N - 1)
+    /// alternatives (so 1 = chosen-only). Retrieve via [`Engine::chat_with_logprobs`].
+    pub logprobs: i32,
 }
 
 impl Sampling {
@@ -234,6 +239,7 @@ impl Engine {
             seed: s.seed,
             max_tokens: s.max_tokens,
             json_schema,
+            logprobs: s.logprobs,
         }
     }
 
@@ -266,6 +272,42 @@ impl Engine {
             return Err(unsafe { take_string(err) }.unwrap_or_else(|| "submit failed".into()));
         }
         Ok(drain(req))
+    }
+
+    /// Run a chat completion and return both the text and the per-token log-probs
+    /// (the C ABI's OpenAI-shaped JSON `content` array, or `None` when `logprobs`
+    /// was not set on `sampling`).
+    pub fn chat_with_logprobs(
+        &self,
+        messages: &[(&str, &str)],
+        sampling: &Sampling,
+    ) -> Result<(String, Option<String>), String> {
+        let owned: Vec<(CString, CString)> = messages
+            .iter()
+            .map(|(r, c)| {
+                (
+                    CString::new(*r).unwrap_or_default(),
+                    CString::new(*c).unwrap_or_default(),
+                )
+            })
+            .collect();
+        let msgs: Vec<Msg> = owned
+            .iter()
+            .map(|(r, c)| Msg {
+                role: r.as_ptr(),
+                content: c.as_ptr(),
+            })
+            .collect();
+
+        let mut schema_keep: Option<CString> = None;
+        let cs = Self::c_sampling(sampling, &mut schema_keep);
+        let mut err: *mut c_char = ptr::null_mut();
+        let req =
+            unsafe { mlxforge_submit_chat(self.handle, msgs.as_ptr(), msgs.len(), &cs, &mut err) };
+        if req.is_null() {
+            return Err(unsafe { take_string(err) }.unwrap_or_else(|| "submit failed".into()));
+        }
+        Ok(drain_with_logprobs(req))
     }
 
     /// Run a raw-text completion (no chat template) to completion.
@@ -435,4 +477,26 @@ fn drain(req: *mut mlxforge_request) -> String {
     let _ = unsafe { mlxforge_request_finish_reason(req) }; // available if needed
     unsafe { mlxforge_request_free(req) };
     out
+}
+
+// Drain a request to text and then read its accumulated per-token log-probs
+// (the OpenAI-shaped JSON `content` array, or None when none were produced),
+// freeing the request.
+fn drain_with_logprobs(req: *mut mlxforge_request) -> (String, Option<String>) {
+    let mut out = String::new();
+    loop {
+        let mut text: *mut c_char = ptr::null_mut();
+        let rc = unsafe { mlxforge_request_next(req, &mut text) };
+        if rc == 0 {
+            if let Some(s) = unsafe { take_string(text) } {
+                out.push_str(&s);
+            }
+        } else {
+            break;
+        }
+    }
+    // Read logprobs while the request is still alive, then free it.
+    let logprobs = unsafe { take_string(mlxforge_request_logprobs(req)) };
+    unsafe { mlxforge_request_free(req) };
+    (out, logprobs)
 }

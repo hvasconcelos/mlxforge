@@ -14,28 +14,33 @@
 #include <string>
 #include <vector>
 
+#include <utility>
+
 #include "sample/json_grammar.h"
 #include "sample/sampler.h"
 
 namespace mlxforge {
 
 // Bounded, blocking, single-producer (worker) / single-consumer (request thread)
-// token queue. push() applies backpressure when full (slow SSE consumers); the
-// consumer pop()s until the producer close()s and the queue drains.
-class TokenQueue {
+// queue. push() applies backpressure when full (slow SSE consumers); the consumer
+// pop()s until the producer close()s and the queue drains. Used for both the
+// generated token ids (TokenQueue) and their optional per-token log-probs
+// (LogprobQueue), which the worker pushes in lockstep.
+template <class T>
+class SpscQueue {
  public:
-  explicit TokenQueue(std::size_t capacity = 1024) : capacity_(capacity) {}
+  explicit SpscQueue(std::size_t capacity = 1024) : capacity_(capacity) {}
 
-  // Producer: append a token, blocking while full unless closed.
-  void push(int token) {
+  // Producer: append an item, blocking while full unless closed.
+  void push(T item) {
     std::unique_lock<std::mutex> lk(m_);
     not_full_.wait(lk, [&] { return q_.size() < capacity_ || closed_; });
     if (closed_) return;
-    q_.push(token);
+    q_.push(std::move(item));
     not_empty_.notify_one();
   }
 
-  // Producer: signal that no more tokens will be pushed.
+  // Producer: signal that no more items will be pushed.
   void close() {
     {
       std::lock_guard<std::mutex> lk(m_);
@@ -45,12 +50,12 @@ class TokenQueue {
     not_full_.notify_all();
   }
 
-  // Consumer: pop the next token; returns false once closed and drained.
-  bool pop(int& out) {
+  // Consumer: pop the next item; returns false once closed and drained.
+  bool pop(T& out) {
     std::unique_lock<std::mutex> lk(m_);
     not_empty_.wait(lk, [&] { return !q_.empty() || closed_; });
     if (q_.empty()) return false;
-    out = q_.front();
+    out = std::move(q_.front());
     q_.pop();
     not_full_.notify_one();
     return true;
@@ -58,12 +63,26 @@ class TokenQueue {
 
  private:
   std::size_t capacity_;
-  std::queue<int> q_;
+  std::queue<T> q_;
   bool closed_ = false;
   std::mutex m_;
   std::condition_variable not_empty_;
   std::condition_variable not_full_;
 };
+
+using TokenQueue = SpscQueue<int>;
+
+// One emitted token's log-probability data (OpenAI logprobs). `id`/`logprob` are
+// the chosen token and its log-prob; `top` holds the requested alternatives as
+// (id, log-prob) pairs in descending order (empty when only the chosen logprob
+// was requested). Carried on Request::logprobs in lockstep with Request::tokens.
+struct TokenLogprob {
+  int id = 0;
+  float logprob = 0.0f;
+  std::vector<std::pair<int, float>> top;
+};
+
+using LogprobQueue = SpscQueue<TokenLogprob>;
 
 struct Request {
   std::vector<int> prompt_ids;
@@ -103,6 +122,9 @@ struct Request {
   std::atomic<bool> cancelled{false};
 
   TokenQueue tokens;                 // worker pushes generated ids, then close()s
+  // Per-token log-probs, pushed in lockstep with `tokens` when
+  // params.top_logprobs >= 0 (otherwise never touched). Closed alongside `tokens`.
+  LogprobQueue logprobs;
   std::string finish_reason;         // "stop" | "length" | "cancel" | "embed"
 
   // Metrics: enqueue stamped on submit, first_token/finish stamped by the worker.

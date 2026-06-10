@@ -25,6 +25,12 @@ export interface SamplingOptions {
   /** Max new tokens (default 64). */
   maxTokens?: number;
   /**
+   * OpenAI logprobs. 0 (default) => off. N > 0 => report each emitted token's
+   * own log-prob plus its (N - 1) most-likely alternatives (so 1 = chosen-only).
+   * Retrieve them from the stream's {@link Stream.logprobs} after consumption.
+   */
+  logprobs?: number;
+  /**
    * Constrained decoding. "json" forces any valid JSON value; otherwise a
    * JSON-Schema string (supported subset: a top-level object with ordered,
    * required, scalar-typed properties). Output is masked to be well-formed JSON.
@@ -39,12 +45,29 @@ export interface ChatMessage {
   content: string;
 }
 
+/** One token's log-probability (OpenAI logprobs `content` entry). */
+export interface TokenLogprob {
+  /** The token's decoded text. */
+  token: string;
+  /** Natural-log probability of the token (<= 0). */
+  logprob: number;
+  /** The token's raw UTF-8 bytes. */
+  bytes: number[];
+  /** The most-likely alternatives at this position (may be empty). */
+  top_logprobs: { token: string; logprob: number; bytes: number[] }[];
+}
+
 /** An async-iterable stream of decoded text chunks for one request. */
 export interface Stream extends AsyncIterable<string> {
   /** Ask the engine to stop generating this request. */
   cancel(): void;
   /** "stop" | "length" | "cancel" | "" (while running). */
   readonly finishReason: string;
+  /**
+   * Per-token log-probs, available after the stream has been fully consumed.
+   * Returns null when `logprobs` was not requested (or none were produced).
+   */
+  logprobs(): TokenLogprob[] | null;
 }
 
 export class Engine {

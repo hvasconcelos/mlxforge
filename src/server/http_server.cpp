@@ -50,6 +50,10 @@ std::string HttpServer::next_id(const char* prefix) {
 std::shared_ptr<Request> HttpServer::make_request(const ChatRequest& cr) const {
   auto req = std::make_shared<Request>();
   req->params = cr.params;
+  // OpenAI logprobs -> engine top_logprobs: off (-1) unless `logprobs` is set,
+  // then the requested alternatives count (0 = chosen-token logprob only).
+  // Unsupported on the single-stream vision path, so off when an image is present.
+  req->params.top_logprobs = (cr.logprobs && !cr.has_images()) ? cr.top_logprobs : -1;
   req->max_tokens = cr.max_tokens;
   req->eos_ids = cfg_.eos_token_ids;
 
@@ -94,9 +98,18 @@ nlohmann::json HttpServer::run_blocking(const std::shared_ptr<Request>& req,
                                        const ChatRequest& cr) {
   const int prompt_tokens = static_cast<int>(req->prompt_ids.size());
 
+  // Drain tokens and (when enabled) their log-probs in lockstep.
+  const bool want_lp = req->params.top_logprobs >= 0;
   std::vector<int> out;
+  std::vector<TokenLogprob> out_lp;
   int tok = 0;
-  while (req->tokens.pop(tok)) out.push_back(tok);
+  while (req->tokens.pop(tok)) {
+    out.push_back(tok);
+    if (want_lp) {
+      TokenLogprob lp;
+      if (req->logprobs.pop(lp)) out_lp.push_back(std::move(lp));
+    }
+  }
 
   const std::string content = tok_->decode(out);
   const std::string finish = finish_reason_of(req->finish_reason);
@@ -110,8 +123,11 @@ nlohmann::json HttpServer::run_blocking(const std::shared_ptr<Request>& req,
         return make_chat_completion_tools(next_id("chatcmpl-"), created, model_name_, calls,
                                           prompt_tokens, completion_tokens);
     }
+    // Pass an array (possibly empty) when logprobs were requested, else null.
+    const json logprobs_content =
+        want_lp ? make_logprobs_content(out_lp, *tok_) : json(nullptr);
     return make_chat_completion(next_id("chatcmpl-"), created, model_name_, content, finish,
-                                prompt_tokens, completion_tokens);
+                                prompt_tokens, completion_tokens, logprobs_content);
   }
   // Legacy text completion shape.
   return {{"id", next_id("cmpl-")},
@@ -138,9 +154,15 @@ void HttpServer::stream_chat(const std::shared_ptr<Request>& req, httplib::Respo
           req->cancelled.store(true);  // client disconnected -> worker evicts
           return false;
         };
+        // Per-token log-probs, popped in lockstep with the token ids and attached
+        // (as choices[0].logprobs.content) to the next content delta we emit.
+        const bool want_lp = req->params.top_logprobs >= 0;
+        std::vector<TokenLogprob> pending_lp;
         auto send_content = [&](const std::string& s) {
-          return s.empty() || send(sse_frame(make_chat_chunk(id, created, model,
-                                                             {{"content", s}}, nullptr)));
+          if (s.empty()) return true;
+          json lp = want_lp ? make_logprobs_content(pending_lp, *tok) : json(nullptr);
+          pending_lp.clear();
+          return send(sse_frame(make_chat_chunk(id, created, model, {{"content", s}}, nullptr, lp)));
         };
 
         // First chunk announces the assistant role.
@@ -155,6 +177,12 @@ void HttpServer::stream_chat(const std::shared_ptr<Request>& req, httplib::Respo
         bool buffering = allow_tools;
         int t = 0;
         while (req->tokens.pop(t)) {
+          // Pop this token's log-prob in lockstep (the worker pushes one per
+          // emitted token) so it stays aligned with the detokenized text.
+          if (want_lp) {
+            TokenLogprob lp;
+            if (req->logprobs.pop(lp)) pending_lp.push_back(std::move(lp));
+          }
           std::string piece = detok.add(t);
           if (piece.empty()) continue;
           if (buffering) {

@@ -6,10 +6,11 @@
 //   mlxforge-cli dump-weights <dir>
 //     - Loads a model's weights from the supplied directory, prints key/shape/dtype for each tensor,
 //       asserts that all tensors are fp16, and reports the peak resident memory used.
-//   mlxforge-cli generate <model> <prompt> [max_tokens]
+//   mlxforge-cli generate <model> <prompt> [max_tokens] [--logprobs [N]]
 //     - Runs greedy single-stream generation: pre-fills the prompt (as raw text using the chat template
 //       or as a pre-tokenized .npy of ids), then streams the detokenized text to stdout until EOS or
-//       max_tokens.
+//       max_tokens. With --logprobs [N], each emitted token's log-prob (and its N most-likely
+//       alternatives) is printed to stderr after generation; stdout stays the generated text.
 //   mlxforge-cli bench <model> [max_tokens] [runs]
 //     - Repeatable throughput benchmark over a fixed prompt: one discarded warmup run, then `runs`
 //       timed runs (defaults: max_tokens=128, runs=3) reporting time-to-first-token and decode tok/s.
@@ -22,6 +23,7 @@
 // which will be downloaded on first use.
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <string>
@@ -162,8 +164,24 @@ int run_dump_weights(const std::string& spec) {
   return non_fp16 == 0 ? 0 : 1;
 }
 
+// Render a token's text for the logprobs dump: quoted, with the common control
+// characters escaped so whitespace tokens stay legible on one line.
+std::string show_token(const std::string& s) {
+  std::string out = "\"";
+  for (char c : s) {
+    if (c == '\n') out += "\\n";
+    else if (c == '\t') out += "\\t";
+    else if (c == '\r') out += "\\r";
+    else out += c;
+  }
+  return out + "\"";
+}
+
 // Performs generation using a loaded model, with either raw text or pre-tokenized prompts.
-int run_generate(const std::string& spec, const std::string& prompt_arg, int max_tokens) {
+// `top_logprobs` mirrors the engine knob: -1 = off; 0 = each token's own log-prob;
+// N > 0 = also its N most-likely alternatives (printed to stderr after generation).
+int run_generate(const std::string& spec, const std::string& prompt_arg, int max_tokens,
+                 int top_logprobs = -1) {
   // Resolve and load the model (GGUF file or safetensors dir; downloads if needed)
   LoadedModel lm = load_for_inference(spec);
   mlxforge::DecoderModel& model = *lm.model;
@@ -194,12 +212,28 @@ int run_generate(const std::string& spec, const std::string& prompt_arg, int max
           std::string piece = detok.add(id);
           std::fwrite(piece.data(), 1, piece.size(), stdout);
           std::fflush(stdout);
-       });
+       }, top_logprobs);
 
   // Output any final detokenized tail remaining in the streaming detokenizer
   std::string tail = detok.finish();
   std::fwrite(tail.data(), 1, tail.size(), stdout);
   std::fputc('\n', stdout);
+
+  // Per-token log-probs go to stderr (stdout stays the generated text). One line
+  // per emitted token: its text + log-prob, then any requested alternatives.
+  if (top_logprobs >= 0) {
+    std::fprintf(stderr, "logprobs (%zu tokens):\n", r.token_logprobs.size());
+    for (const mlxforge::TokenLogprob& lp : r.token_logprobs) {
+      std::fprintf(stderr, "  %-16s logprob=%8.4f", show_token(tok.decode({lp.id})).c_str(),
+                   lp.logprob);
+      if (!lp.top.empty()) {
+        std::fprintf(stderr, "  top:");
+        for (const auto& alt : lp.top)
+          std::fprintf(stderr, " %s=%.4f", show_token(tok.decode({alt.first})).c_str(), alt.second);
+      }
+      std::fputc('\n', stderr);
+    }
+  }
 
   // Log some generation statistics
   mlxforge::log::info("generated {} tokens{}", r.tokens.size(),
@@ -334,12 +368,27 @@ int main(int argc, char** argv) {
   if (cmd == "generate") {
     // Print usage if not enough arguments; otherwise run generation logic
     if (argc < 4) {
-      std::fprintf(stderr, "usage: mlxforge-cli generate <model_dir> <prompt_ids.npy> [max_tokens]\n");
+      std::fprintf(stderr,
+                   "usage: mlxforge-cli generate <model_dir> <prompt_ids.npy> [max_tokens] "
+                   "[--logprobs [N]]\n");
       return 2;
     }
-    // Parse max_tokens if provided, otherwise default to 64
-    const int max_tokens = argc >= 5 ? std::stoi(argv[4]) : 64;
-    return run_generate(argv[2], argv[3], max_tokens);
+    // Positional [max_tokens] (default 64) plus an optional --logprobs [N] flag (N
+    // alternatives, default 0 = the chosen token's own log-prob only).
+    int max_tokens = 64;
+    int top_logprobs = -1;
+    for (int i = 4; i < argc; ++i) {
+      const std::string a = argv[i];
+      if (a == "--logprobs") {
+        if (i + 1 < argc && std::isdigit(static_cast<unsigned char>(argv[i + 1][0])))
+          top_logprobs = std::stoi(argv[++i]);
+        else
+          top_logprobs = 0;
+      } else {
+        max_tokens = std::stoi(a);
+      }
+    }
+    return run_generate(argv[2], argv[3], max_tokens, top_logprobs);
   }
   if (cmd == "image") {
     // Vision-language generation: describe / answer about an image.

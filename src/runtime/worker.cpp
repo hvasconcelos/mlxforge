@@ -28,18 +28,27 @@ std::vector<int> read_ids(const mx::array& a) {
   return std::vector<int>(c.data<int32_t>(), c.data<int32_t>() + c.size());
 }
 
+std::vector<float> read_floats(const mx::array& a) {
+  mx::array c = mx::contiguous(mx::astype(a, mx::float32));
+  mx::eval(c);
+  return std::vector<float>(c.data<float>(), c.data<float>() + c.size());
+}
+
 bool is_eos(const Request& req, int id) {
   return std::find(req.eos_ids.begin(), req.eos_ids.end(), id) != req.eos_ids.end();
 }
 
 // Emit token `id` for a request, returning true if the request is now finished.
-bool consume(Request& req, int& produced, int id) {
+// `lp` (when non-null) is the token's log-prob record, pushed in lockstep with
+// the token; EOS is never emitted, so it carries no logprob.
+bool consume(Request& req, int& produced, int id, const TokenLogprob* lp) {
   if (is_eos(req, id)) {
     req.finish_reason = "stop";
     return true;
   }
   if (produced == 0) req.first_token_time = Request::Clock::now();  // TTFT marker
   req.tokens.push(id);
+  if (lp) req.logprobs.push(*lp);
   if (++produced >= req.max_tokens) {
     req.finish_reason = "length";
     return true;
@@ -64,6 +73,7 @@ void Worker::handle_embedding(Request& req) {
     req.finish_reason = "error";
   }
   req.tokens.close();  // unblock the waiting submitter
+  req.logprobs.close();
 }
 
 void Worker::admit_multimodal(const std::shared_ptr<Request>& req) {
@@ -111,6 +121,7 @@ void Worker::admit_multimodal(const std::shared_ptr<Request>& req) {
     log::error("worker: multimodal admit error: {}", e.what());
     req->finish_reason = "error";
     req->tokens.close();
+    req->logprobs.close();
   }
 }
 
@@ -270,27 +281,31 @@ void Worker::register_rows(const std::vector<std::shared_ptr<Request>>& incoming
     }
   }
 
-  std::vector<int> first =
-      read_ids(sample_rows(last_logits, base, static_cast<int>(incoming.size())));
+  const int count = static_cast<int>(incoming.size());
+  std::vector<int> first;
+  std::vector<TokenLogprob> row_lp;
+  std::vector<char> has_lp;
+  finalize_sample(sample_rows(last_logits, base, count), count, first, row_lp, has_lp);
 
-  for (size_t i = 0; i < incoming.size(); ++i) {
-    const int b = base + static_cast<int>(i);
+  for (int i = 0; i < count; ++i) {
+    const int b = base + i;
     feed_[b] = first[i];               // feed the first token next step
     history_[b].push_back(first[i]);   // and let later penalties see it
     advance_grammar(*reqs_[b], first[i]);
     if (reqs_[b]->cancelled.load()) {
       reqs_[b]->finish_reason = "cancel";
       finished_[b] = true;
-    } else if (consume(*reqs_[b], produced_[b], first[i])) {
+    } else if (consume(*reqs_[b], produced_[b], first[i], has_lp[i] ? &row_lp[i] : nullptr)) {
       finished_[b] = true;
     }
   }
 }
 
-mx::array Worker::sample_rows(const mx::array& logits, int row_offset, int count) {
+Worker::SampledRows Worker::sample_rows(const mx::array& logits, int row_offset, int count) {
   const int vocab = logits.shape()[1];
   std::vector<mx::array> tokens;
   tokens.reserve(count);
+  SampledRows out{mx::zeros({0}, mx::int32), {}, {}, {}, {}};
   for (int i = 0; i < count; ++i) {
     const int r = row_offset + i;
     mx::array row = mx::slice(logits, {i, 0}, {i + 1, vocab});  // (1, vocab)
@@ -313,8 +328,45 @@ mx::array Worker::sample_rows(const mx::array& logits, int row_offset, int count
       return Sampler::sample(row, p, ks.second, history);
     }();
     tokens.push_back(res.tokens);  // (1,)
+    // Collect the log-prob arrays only for rows that asked, so the logprob
+    // subgraph stays dead (MLX prunes it) for everyone else.
+    if (p.top_logprobs >= 0) {
+      out.lp_rows.push_back(i);
+      out.lp_chosen.push_back(res.logprobs);      // (1,)
+      out.lp_top_ids.push_back(res.top_tokens);   // (1, K)
+      out.lp_top_lp.push_back(res.top_logprobs);  // (1, K)
+    }
   }
-  return mx::concatenate(tokens, /*axis=*/0);  // (count,)
+  out.tokens = mx::concatenate(tokens, /*axis=*/0);  // (count,)
+  return out;
+}
+
+void Worker::finalize_sample(const SampledRows& s, int count, std::vector<int>& ids,
+                             std::vector<TokenLogprob>& row_lp, std::vector<char>& has_lp) {
+  // The ONE async_eval per step, over the whole batch: the chosen tokens plus
+  // every logprob-enabled row's log-prob arrays, so they ride the same eval.
+  std::vector<mx::array> to_eval;
+  to_eval.reserve(1 + s.lp_chosen.size() + s.lp_top_ids.size() + s.lp_top_lp.size());
+  to_eval.push_back(s.tokens);
+  for (const auto& a : s.lp_chosen) to_eval.push_back(a);
+  for (const auto& a : s.lp_top_ids) to_eval.push_back(a);
+  for (const auto& a : s.lp_top_lp) to_eval.push_back(a);
+  mx::async_eval(to_eval);
+
+  ids = read_ids(s.tokens);
+  row_lp.assign(count, TokenLogprob{});
+  has_lp.assign(count, 0);
+  for (size_t j = 0; j < s.lp_rows.size(); ++j) {
+    const int i = s.lp_rows[j];
+    has_lp[i] = 1;
+    TokenLogprob& lp = row_lp[i];
+    lp.id = ids[i];
+    lp.logprob = read_floats(s.lp_chosen[j])[0];
+    const std::vector<int> tids = read_ids(s.lp_top_ids[j]);
+    const std::vector<float> tlp = read_floats(s.lp_top_lp[j]);
+    lp.top.reserve(tids.size());
+    for (size_t k = 0; k < tids.size(); ++k) lp.top.emplace_back(tids[k], tlp[k]);
+  }
 }
 
 void Worker::decode_step() {
@@ -334,10 +386,13 @@ void Worker::decode_step() {
   mx::array inputs(fed.data(), {bucket, 1}, mx::int32);
   mx::array logits = model_->forward(inputs, *cache_);  // (bucket, 1, vocab)
   // Sample only the B real rows (dummy rows are excluded from the graph).
-  mx::array next = sample_rows(mx::reshape(logits, {bucket, logits.shape()[2]}), 0, B);
+  SampledRows sampled = sample_rows(mx::reshape(logits, {bucket, logits.shape()[2]}), 0, B);
 
-  mx::async_eval(next);  // the ONE eval per decode step, over the whole batch
-  std::vector<int> ids = read_ids(next);
+  // One async_eval over the whole batch (tokens + any logprob arrays).
+  std::vector<int> ids;
+  std::vector<TokenLogprob> row_lp;
+  std::vector<char> has_lp;
+  finalize_sample(sampled, B, ids, row_lp, has_lp);
 
   for (int b = 0; b < B; ++b) {
     if (finished_[b]) continue;
@@ -349,7 +404,8 @@ void Worker::decode_step() {
     feed_[b] = ids[b];
     history_[b].push_back(ids[b]);  // penalties see the full sequence so far
     advance_grammar(*reqs_[b], ids[b]);
-    if (consume(*reqs_[b], produced_[b], ids[b])) finished_[b] = true;
+    if (consume(*reqs_[b], produced_[b], ids[b], has_lp[b] ? &row_lp[b] : nullptr))
+      finished_[b] = true;
   }
 
   // Drop the dummy rows so the cache holds only real rows again.
@@ -387,6 +443,7 @@ void Worker::evict_finished() {
       request_us_sum_ += static_cast<long long>(us(now - r.enqueue_time).count());
 
       reqs_[b]->tokens.close();  // signal the consumer
+      reqs_[b]->logprobs.close();
     } else {
       keep.push_back(b);
     }

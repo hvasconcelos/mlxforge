@@ -22,6 +22,12 @@ struct SamplingParams {
   float presence_penalty = 0.0f;    // 0 => disabled (subtracts penalty if seen)
   uint64_t seed = 0;
 
+  // Per-token log-probability reporting (OpenAI logprobs/top_logprobs). -1 = off
+  // (no logprob work); 0 = report the chosen token's logprob only; N > 0 = also
+  // report the N most-likely alternatives. Off by default so the hot path is
+  // untouched unless a consumer asks for it.
+  int top_logprobs = -1;
+
   // Whether any penalty is active (skips the per-row history machinery when not).
   bool has_penalties() const {
     return repetition_penalty != 1.0f || frequency_penalty != 0.0f ||
@@ -32,6 +38,10 @@ struct SamplingParams {
 struct SampleResult {
   mx::array tokens;    // (B,) int32
   mx::array logprobs;  // (B,) fp32 — log-prob of each chosen token
+  // Top-N alternatives, when params.top_logprobs > 0 (else (B, 0) placeholders).
+  // Both are (B, K), aligned column-wise and ordered by descending log-prob.
+  mx::array top_tokens;    // (B, K) int32 — the K most-likely token ids
+  mx::array top_logprobs;  // (B, K) fp32 — their log-probs
 };
 
 class Sampler {

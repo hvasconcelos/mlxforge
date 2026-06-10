@@ -19,6 +19,7 @@
 #include "cache/batch_kv_cache.h"
 #include "model/decoder_model.h"
 #include "runtime/metrics.h"
+#include "scheduler/request.h"  // Request, TokenLogprob
 #include "scheduler/scheduler.h"
 
 #include "mlx/array.h"
@@ -70,11 +71,28 @@ class Worker {
   // One decode step over the whole batch: forward -> sample -> async_eval ->
   // push each row's token, marking finished rows.
   void decode_step();
+
+  // Result of sampling the active batch in one graph: the chosen tokens, plus —
+  // for the rows that requested log-probs (params.top_logprobs >= 0) — their
+  // per-row log-prob arrays. All are built into the same graph so one async_eval
+  // covers them; the parallel vectors are aligned with `lp_rows`.
+  struct SampledRows {
+    mx::array tokens;                   // (count,) int32
+    std::vector<int> lp_rows;           // row-local indices (0..count-1) wanting logprobs
+    std::vector<mx::array> lp_chosen;   // aligned: (1,) chosen-token log-prob
+    std::vector<mx::array> lp_top_ids;  // aligned: (1,K) int32 alternatives
+    std::vector<mx::array> lp_top_lp;   // aligned: (1,K) fp32 alternatives
+  };
   // Sample one token for `count` rows of `logits`, where logits row i belongs to
   // request reqs_[row_offset + i]. Applies each request's SamplingParams + penalty
   // history and advances its RNG key. Builds one graph (no eval) so the caller
-  // keeps the single-async_eval-per-step invariant. Returns a (count,) int32 array.
-  mx::array sample_rows(const mx::array& logits, int row_offset, int count);
+  // keeps the single-async_eval-per-step invariant.
+  SampledRows sample_rows(const mx::array& logits, int row_offset, int count);
+  // Async-eval a sampled batch (the ONE eval per step) and read it back: fills
+  // `ids` with the chosen token id per local row, and — for logprob-enabled rows —
+  // `row_lp`/`has_lp` (both sized `count`) with the reconstructed TokenLogprob.
+  void finalize_sample(const SampledRows& s, int count, std::vector<int>& ids,
+                       std::vector<TokenLogprob>& row_lp, std::vector<char>& has_lp);
   // Drop rows marked finished (filter the cache, compact the row vectors,
   // close their token queues).
   void evict_finished();
