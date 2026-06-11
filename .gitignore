@@ -10,6 +10,10 @@
 __pycache__/
 *.pyc
 
+# Benchmark harness output (the harness itself is committed, results are not)
+/bench/results/
+/bench/.venv/
+
 # Editor / OS
 .DS_Store
 .idea/

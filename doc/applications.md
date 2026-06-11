@@ -282,3 +282,20 @@ any tensor is not fp16.
 Confirms Metal is available, adds two small arrays, calls `mx::eval`, and prints
 the sum — the minimal "MLX is working" check and a demonstration of MLX's lazy
 evaluation (nothing computes until `eval`).
+
+## The benchmark harness: `bench/`
+
+```sh
+uv run bench/bench.py --quick --engines mlxforge --models qwen3-0.6b
+```
+
+A Python orchestrator (not a build target) that measures the engine under
+different configurations — concurrency levels, prompt lengths, `kv_bits`,
+prefix cache on/off, multi-turn prefix reuse — and compares it against the
+other local engines on Apple Silicon (llama.cpp's `llama-server`, vllm-mlx,
+omlx), all driven identically through their OpenAI-compatible streaming APIs,
+one engine at a time. It launches and tears down each server itself, skips
+engines that aren't installed, and writes a plain-text report plus raw JSON
+under `bench/results/`. It complements the CLI's single-stream `bench` /
+`bench-prefix` subcommands with the cross-engine and continuous-batching
+story. See [`bench/README.md`](../bench/README.md).
