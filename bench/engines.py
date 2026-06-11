@@ -238,7 +238,18 @@ class VllmMlxAdapter(EngineAdapter):
         try:
             return importlib.metadata.version("vllm-mlx")
         except importlib.metadata.PackageNotFoundError:
-            return "unknown"
+            pass
+        # pipx/uv-tool installs live in their own venv; ask the entry script's
+        # interpreter (its shebang) for the package version.
+        shebang = Path(shutil.which("vllm-mlx")).read_text(errors="replace").splitlines()[0]
+        if shebang.startswith("#!"):
+            out = subprocess.run(
+                [shebang[2:].strip(), "-c",
+                 "import importlib.metadata as m; print(m.version('vllm-mlx'))"],
+                capture_output=True, text=True)
+            if out.returncode == 0:
+                return out.stdout.strip()
+        return "unknown"
 
     def launch_cmd(self, model: ModelSpec, port: int, opts: ServerOpts) -> list[str]:
         # Assumed invocation per the vllm-mlx README; override via TOML if it drifts.
