@@ -215,10 +215,15 @@ void HttpServer::stream_chat(const std::shared_ptr<Request>& req, httplib::Respo
           return false;  // trailing text from detok.finish()
         }
 
-        // Final chunk carries the finish_reason, then the [DONE] sentinel.
+        // Final chunk carries the finish_reason, then the [DONE] sentinel. The
+        // stream must end via sink.done() (writes the chunked-encoding terminator);
+        // returning false instead aborts the connection mid-body, which strict
+        // HTTP/1.1 clients (httpx/h11, hence the OpenAI SDK) reject as a protocol
+        // error even after seeing [DONE].
         send(sse_frame(make_chat_chunk(id, created, model, json::object(), finish)));
         send(kSseDone);
-        return false;  // stream complete
+        sink.done();
+        return true;
       });
 }
 
@@ -364,7 +369,8 @@ void HttpServer::stream_messages(const std::shared_ptr<Request>& req, httplib::R
         if (!send(sse_event("message_delta", make_message_delta(stop_reason, output_tokens))))
           return false;
         send(sse_event("message_stop", kMessageStop));
-        return false;  // stream complete
+        sink.done();  // terminate the chunked body cleanly (see stream_chat)
+        return true;
       });
 }
 
