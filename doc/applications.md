@@ -58,6 +58,11 @@ with environment-variable fallbacks (`server/config`):
 | `--max-waiting` | `MLXFORGE_MAX_WAITING` | `256` | Bounded waiting queue → `429` on overflow. |
 | `--kv-budget` | `MLXFORGE_KV_BUDGET` | `0` (unbounded) | KV-memory admission budget in bytes. |
 | `--kv-bits` | `MLXFORGE_KV_BITS` | `0` (fp16) | KV-cache quantization: `8` (~1.9× less cache memory, near-lossless) or `4` (~3.6×). Unsupported models (vision, hybrid Qwen3.5) fail startup rather than silently falling back. |
+| `--prefix-cache` | `MLXFORGE_PREFIX_CACHE` | `0` (off) | Reuse pooled KV across requests sharing a token prefix (system prompts, multi-turn). Same greedy tokens, ~20× lower warm TTFT on a 2k-token prefix. Unsupported models (vision, hybrid Qwen3.5) fail startup. |
+| `--kv-block` | `MLXFORGE_KV_BLOCK` | `256` | Prefix-pool block size in tokens (power of two, 16–4096). |
+| `--kv-pool` | `MLXFORGE_KV_POOL` | `1 GiB` | Prefix-pool RAM budget in bytes (LRU beyond it); `0` = unbounded. |
+| `--kv-spill-dir` | `MLXFORGE_KV_SPILL_DIR` | off | SSD spill directory: RAM-evicted prefix blocks persist here and survive restarts. |
+| `--kv-spill-bytes` | `MLXFORGE_KV_SPILL_BYTES` | `0` (unbounded) | Disk budget for the spill directory. |
 
 ### Logging
 
@@ -226,7 +231,8 @@ print(final.choices[0].message.content)
 
 ## The CLI: `mlxforge-cli`
 
-Subcommands (the main ones below; `embed` and `bench` also exist).
+Subcommands (the main ones below; `embed`, `bench`, and `bench-prefix` — the
+prefix-cache cold-vs-warm TTFT benchmark — also exist).
 
 ### `generate` — single-stream greedy generation
 

@@ -253,6 +253,7 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
 
     mlxforge_engine_opts2 opts = {};
     opts.struct_size = sizeof(opts);
+    std::string spill_dir;  // must outlive the create call (opts borrows it)
     if (info.Length() >= 2 && info[1].IsObject()) {
       Napi::Object o = info[1].As<Napi::Object>();
       if (o.Has("maxWaiting") && o.Get("maxWaiting").IsNumber())
@@ -261,6 +262,18 @@ class EngineWrap : public Napi::ObjectWrap<EngineWrap> {
         opts.kv_bits = o.Get("kvBits").As<Napi::Number>().Int32Value();
       if (o.Has("kvGroupSize") && o.Get("kvGroupSize").IsNumber())
         opts.kv_group_size = o.Get("kvGroupSize").As<Napi::Number>().Int32Value();
+      if (o.Has("prefixCache") && o.Get("prefixCache").IsBoolean())
+        opts.prefix_cache = o.Get("prefixCache").As<Napi::Boolean>().Value() ? 1 : 0;
+      if (o.Has("kvBlockSize") && o.Get("kvBlockSize").IsNumber())
+        opts.kv_block_size = o.Get("kvBlockSize").As<Napi::Number>().Int32Value();
+      if (o.Has("kvPoolBytes") && o.Get("kvPoolBytes").IsNumber())
+        opts.kv_pool_bytes = o.Get("kvPoolBytes").As<Napi::Number>().Int64Value();
+      if (o.Has("kvSpillDir") && o.Get("kvSpillDir").IsString()) {
+        spill_dir = o.Get("kvSpillDir").As<Napi::String>().Utf8Value();
+        opts.kv_spill_dir = spill_dir.c_str();
+      }
+      if (o.Has("kvSpillBytes") && o.Get("kvSpillBytes").IsNumber())
+        opts.kv_spill_bytes = o.Get("kvSpillBytes").As<Napi::Number>().Int64Value();
     }
 
     char* err = nullptr;

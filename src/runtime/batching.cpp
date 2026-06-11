@@ -51,4 +51,31 @@ PrefillResult prefill(const DecoderModel& model, const std::vector<std::vector<i
   return {std::move(cache), last, std::move(left_padding)};
 }
 
+PrefillResult prefill_with_prefix(const DecoderModel& model, const std::vector<int>& prompt,
+                                  const std::vector<std::shared_ptr<const KVBlock>>& blocks,
+                                  int cached_len, int step_size, KVQuantConfig kv_quant) {
+  const int n = static_cast<int>(prompt.size());
+  BatchKVCache cache =
+      BatchKVCache::from_prefix(model.config().n_layers, blocks, cached_len, kv_quant);
+  cache.eval_state();  // materialize the seeded storage before the forward
+
+  // Suffix prefill, chunked like the cold path. The cache's offset/idx already
+  // sit at cached_len, so RoPE positions and the mask line up unchanged.
+  const int suffix = n - cached_len;
+  mx::array logits = mx::zeros({1, 1, model.config().vocab}, mx::float16);
+  for (int c = 0; c < suffix; c += step_size) {
+    const int m = std::min(step_size, suffix - c);
+    mx::array chunk(prompt.data() + cached_len + c, {1, m}, mx::int32);
+    logits = model.forward(chunk, cache);
+    cache.eval_state();
+  }
+
+  const int n_last = logits.shape()[1];
+  const int vocab = logits.shape()[2];
+  mx::array last =
+      mx::reshape(mx::slice(logits, {0, n_last - 1, 0}, {1, n_last, vocab}), {1, vocab});
+  mx::eval(last);
+  return {std::move(cache), last, std::vector<int>{0}};
+}
+
 }  // namespace mlxforge

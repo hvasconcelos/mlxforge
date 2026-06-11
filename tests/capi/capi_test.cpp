@@ -320,3 +320,37 @@ TEST_CASE("C ABI constrained decoding forces well-formed JSON") {
 
   mlxforge_engine_free(eng);
 }
+
+TEST_CASE("C ABI v7 prefix cache: warm reuse keeps greedy output identical") {
+  if (!model_available()) {
+    MESSAGE("MLXFORGE_MODEL_DIR not present; skipping");
+    return;
+  }
+  char* err = nullptr;
+  mlxforge_engine_opts2 opts = {};
+  opts.struct_size = sizeof(opts);
+  opts.prefix_cache = 1;
+  opts.kv_block_size = 16;  // the test prompt is short; default 256 would never hit
+  mlxforge_engine* eng = mlxforge_engine_create2(model_dir().c_str(), &opts, &err);
+  REQUIRE_MESSAGE(eng != nullptr, (err ? err : "engine_create2 failed"));
+
+  // A prompt long enough to span full blocks (greedy, deterministic).
+  const char* prompt =
+      "Once upon a time in a quiet village by the sea, a young engineer set out "
+      "to build a tiny inference engine that could remember every prompt prefix "
+      "it had ever seen. Describe the first thing it cached.";
+  mlxforge_sampling s = {};
+  s.max_tokens = 12;
+
+  std::string first, second;
+  for (std::string* out : {&first, &second}) {
+    mlxforge_request* r = mlxforge_submit_text(eng, prompt, &s, &err);
+    REQUIRE_MESSAGE(r != nullptr, (err ? err : "submit failed"));
+    *out = drain(r);
+    mlxforge_request_free(r);
+  }
+  CHECK(first.size() > 0);
+  CHECK(first == second);  // the warm (prefix-reused) run must not change tokens
+
+  mlxforge_engine_free(eng);
+}

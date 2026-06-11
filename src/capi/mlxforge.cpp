@@ -160,6 +160,18 @@ mlxforge_engine* mlxforge_engine_create2(const char* model_spec,
     if (covered(&opts->kv_bits + 1)) cfg.kv_bits = opts->kv_bits;
     if (covered(&opts->kv_group_size + 1) && opts->kv_group_size > 0)
       cfg.kv_group_size = opts->kv_group_size;
+    /* v7: prefix cache. kv_pool_bytes is zero-init-friendly: 0 keeps the
+     * engine default (1 GiB), negative means unbounded (engine 0). */
+    if (covered(&opts->prefix_cache + 1)) cfg.prefix_cache = opts->prefix_cache != 0;
+    if (covered(&opts->kv_block_size + 1) && opts->kv_block_size > 0)
+      cfg.kv_block_size = opts->kv_block_size;
+    if (covered(&opts->kv_pool_bytes + 1) && opts->kv_pool_bytes != 0)
+      cfg.kv_pool_bytes =
+          opts->kv_pool_bytes < 0 ? 0 : static_cast<std::size_t>(opts->kv_pool_bytes);
+    if (covered(&opts->kv_spill_dir + 1) && opts->kv_spill_dir && *opts->kv_spill_dir)
+      cfg.kv_spill_dir = opts->kv_spill_dir;
+    if (covered(&opts->kv_spill_bytes + 1) && opts->kv_spill_bytes > 0)
+      cfg.kv_spill_bytes = static_cast<std::size_t>(opts->kv_spill_bytes);
 
     auto handle = std::make_unique<mlxforge_engine>();
     handle->model_name = model_spec;

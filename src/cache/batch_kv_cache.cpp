@@ -5,6 +5,8 @@
 #include <utility>
 #include <vector>
 
+#include "cache/block_pool.h"
+
 #include "mlx/ops.h"
 #include "mlx/transforms.h"
 
@@ -41,6 +43,41 @@ BatchKVCache BatchKVCache::from_single_sequence(
   c.idx_ = seq;  // physical sequence length (drives the attention mask)
   int off = decode_offset;
   c.offset_ = mx::array(&off, {1}, mx::int32);  // decoupled RoPE position
+  mx::eval(c.offset_);
+  return c;
+}
+
+BatchKVCache BatchKVCache::from_prefix(int n_layers,
+                                       const std::vector<std::shared_ptr<const KVBlock>>& blocks,
+                                       int len, KVQuantConfig qcfg) {
+  BatchKVCache c(n_layers, std::vector<int>{0}, qcfg);  // batch 1, no left padding
+  if (len <= 0 || blocks.empty()) return c;
+
+  // Per layer, stitch the blocks into one [0, len) span and write it through
+  // the standard writer (one chunk at position 0) so capacity rounding and
+  // buffer layout match a normal prefill. `len` may stop short of the last
+  // block's end (the prompt's final token is always recomputed).
+  for (int l = 0; l < n_layers; ++l) {
+    std::vector<mx::array> k_in, v_in;
+    const std::size_t n_comp = blocks[0]->k[l].size();
+    for (std::size_t i = 0; i < n_comp; ++i) {
+      std::vector<mx::array> kp, vp;
+      kp.reserve(blocks.size());
+      vp.reserve(blocks.size());
+      for (const auto& b : blocks) {
+        kp.push_back(b->k[l][i]);
+        vp.push_back(b->v[l][i]);
+      }
+      mx::array kj = kp.size() == 1 ? kp[0] : mx::concatenate(kp, /*axis=*/2);
+      mx::array vj = vp.size() == 1 ? vp[0] : mx::concatenate(vp, /*axis=*/2);
+      k_in.push_back(slice_seq(kj, 0, len));
+      v_in.push_back(slice_seq(vj, 0, len));
+    }
+    update_kv_components(c.keys_[l], k_in, /*prev=*/0, kStep);
+    update_kv_components(c.values_[l], v_in, /*prev=*/0, kStep);
+  }
+  c.idx_ = len;
+  c.offset_ = mx::array(&len, {1}, mx::int32);
   mx::eval(c.offset_);
   return c;
 }
@@ -140,6 +177,24 @@ int scalar_int(const mx::array& a) {
   return e.item<int>();
 }
 }  // namespace
+
+std::pair<std::vector<mx::array>, std::vector<mx::array>> BatchKVCache::fetch_row_components(
+    int layer, int row, int left_pad, int len) const {
+  auto row_slice = [&](const mx::array& c) {
+    const auto& s = c.shape();
+    return mx::slice(c, {row, 0, left_pad, 0}, {row + 1, s[1], left_pad + len, s[3]});
+  };
+  std::vector<mx::array> k, v;
+  for (const auto& c : keys_[layer]) k.push_back(row_slice(c));
+  for (const auto& c : values_[layer]) v.push_back(row_slice(c));
+  return {std::move(k), std::move(v)};
+}
+
+std::vector<int> BatchKVCache::left_padding_host() const {
+  mx::array c = mx::contiguous(left_padding_);
+  mx::eval(c);
+  return std::vector<int>(c.data<int32_t>(), c.data<int32_t>() + c.size());
+}
 
 void BatchKVCache::filter(const std::vector<int>& keep) {
   mx::array idxs(keep.data(), {static_cast<int>(keep.size())}, mx::int32);

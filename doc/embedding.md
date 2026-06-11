@@ -92,8 +92,12 @@ typedef struct mlxforge_request mlxforge_request;
 mlxforge_engine* eng = mlxforge_engine_create("mlx-community/Llama-3.2-1B-Instruct-4bit",
                                               /*opts=*/NULL, &err);
 // Or with extended options (ABI v6+): a quantized KV cache cuts the dominant
-// growing allocation ~1.9x (8-bit, near-lossless) or ~3.6x (4-bit).
-//   mlxforge_engine_opts2 opts = { .struct_size = sizeof(opts), .kv_bits = 8 };
+// growing allocation ~1.9x (8-bit, near-lossless) or ~3.6x (4-bit), and the
+// prefix cache (v7+) skips re-prefilling shared prompt prefixes — ~20x lower
+// warm TTFT on a 2k-token system prompt, same greedy tokens. kv_spill_dir adds
+// an SSD tier that survives engine restarts.
+//   mlxforge_engine_opts2 opts = { .struct_size = sizeof(opts), .kv_bits = 8,
+//                                  .prefix_cache = 1 };
 //   eng = mlxforge_engine_create2(spec, &opts, &err);
 while (!mlxforge_engine_ready(eng)) { /* model still loading on the worker thread */ }
 

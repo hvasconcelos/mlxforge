@@ -43,8 +43,11 @@ extern "C" {
  *       accumulated as the request is drained and returned as an OpenAI-shaped
  *       JSON array).
  *   v6: mlxforge_engine_create2 + mlxforge_engine_opts2 (KV-cache quantization;
- *       opts2 carries struct_size so future fields append without a create3). */
-#define MLXFORGE_ABI_VERSION 6
+ *       opts2 carries struct_size so future fields append without a create3).
+ *   v7: mlxforge_engine_opts2 prefix-cache fields (prefix_cache, kv_block_size,
+ *       kv_pool_bytes, kv_spill_dir, kv_spill_bytes) — appended, struct_size-
+ *       gated; no new symbols. */
+#define MLXFORGE_ABI_VERSION 7
 
 typedef struct mlxforge_engine mlxforge_engine;
 typedef struct mlxforge_request mlxforge_request;
@@ -125,12 +128,25 @@ mlxforge_engine* mlxforge_engine_create(const char* model_spec,
  * mlx-lm's QuantizedKVCache (8 is near-lossless at ~1.9x less cache memory;
  * 4 is ~3.6x). Unsupported setups (vision-language or hybrid Qwen3.5 models,
  * invalid bits/group sizes) FAIL engine creation with a clear *err — there is
- * never a silent fp16 fallback. */
+ * never a silent fp16 fallback.
+ *
+ * prefix_cache (v7+) enables prompt-prefix reuse (also engine-wide): finished
+ * prompts' KV is pooled in immutable kv_block_size-token blocks, and a later
+ * prompt sharing a token prefix skips that part of prefill (same greedy
+ * tokens, much lower time-to-first-token). kv_spill_dir adds an SSD tier:
+ * RAM-evicted blocks persist there and survive engine restarts. Vision-
+ * language and hybrid (Qwen3.5) models reject the option at creation. */
 typedef struct {
   size_t struct_size;   /* caller sets sizeof(mlxforge_engine_opts2) */
   int max_waiting;      /* max queued requests; <= 0 => default (256) */
   int kv_bits;          /* 0 = fp16 KV cache (default); 8 or 4 = quantized */
   int kv_group_size;    /* quantization group size; <= 0 => default (64) */
+  /* ---- v7 ---- */
+  int prefix_cache;          /* 0 = off (default); non-zero = on */
+  int kv_block_size;         /* pool block size in tokens; <= 0 => default (256) */
+  long long kv_pool_bytes;   /* pool RAM budget; 0 => default (1 GiB); < 0 => unbounded */
+  const char* kv_spill_dir;  /* SSD spill directory; NULL/empty => no spill */
+  long long kv_spill_bytes;  /* spill disk budget; <= 0 => unbounded */
 } mlxforge_engine_opts2;
 
 /* Create an engine with extended options (v6+). Identical contract to

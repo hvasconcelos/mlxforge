@@ -57,7 +57,8 @@ ServerConfig ServerConfig::from_file(const std::string& path) {
 
   // Reject unknown keys up front so typos (e.g. "prot") fail loudly.
   static const std::set<std::string> kKnownKeys = {
-      "model", "host", "port", "max_ctx", "max_waiting", "kv_budget", "kv_bits"};
+      "model",     "host",    "port",         "max_ctx",  "max_waiting",  "kv_budget",
+      "kv_bits",   "prefix_cache", "kv_block", "kv_pool", "kv_spill_dir", "kv_spill_bytes"};
   for (const auto& [key, _] : j.items()) {
     if (kKnownKeys.find(key) == kKnownKeys.end()) {
       throw std::runtime_error("config file: unknown key '" + key + "' in '" + path + "'");
@@ -90,6 +91,22 @@ ServerConfig ServerConfig::from_file(const std::string& path) {
     c.kv_bits = require_type<int>(j, "kv_bits");
     if (c.kv_bits != 0 && c.kv_bits != 4 && c.kv_bits != 8)
       throw std::runtime_error("config file: 'kv_bits' must be 0, 4, or 8");
+  }
+  if (j.contains("prefix_cache")) c.prefix_cache = require_type<bool>(j, "prefix_cache");
+  if (j.contains("kv_block")) {
+    c.kv_block = require_type<int>(j, "kv_block");
+    if (c.kv_block <= 0) throw std::runtime_error("config file: 'kv_block' must be > 0");
+  }
+  if (j.contains("kv_pool")) {
+    long long pool = require_type<long long>(j, "kv_pool");
+    if (pool < 0) throw std::runtime_error("config file: 'kv_pool' must be >= 0");
+    c.kv_pool_bytes = static_cast<std::size_t>(pool);
+  }
+  if (j.contains("kv_spill_dir")) c.kv_spill_dir = require_type<std::string>(j, "kv_spill_dir");
+  if (j.contains("kv_spill_bytes")) {
+    long long spill = require_type<long long>(j, "kv_spill_bytes");
+    if (spill < 0) throw std::runtime_error("config file: 'kv_spill_bytes' must be >= 0");
+    c.kv_spill_bytes = static_cast<std::size_t>(spill);
   }
   return c;
 }
@@ -134,6 +151,13 @@ ServerConfig ServerConfig::parse(const std::vector<std::string>& args) {
   c.kv_budget_bytes =
       static_cast<std::size_t>(env_long("MLXFORGE_KV_BUDGET", static_cast<long>(c.kv_budget_bytes)));
   c.kv_bits = static_cast<int>(env_long("MLXFORGE_KV_BITS", c.kv_bits));
+  c.prefix_cache = env_long("MLXFORGE_PREFIX_CACHE", c.prefix_cache ? 1 : 0) != 0;
+  c.kv_block = static_cast<int>(env_long("MLXFORGE_KV_BLOCK", c.kv_block));
+  c.kv_pool_bytes =
+      static_cast<std::size_t>(env_long("MLXFORGE_KV_POOL", static_cast<long>(c.kv_pool_bytes)));
+  c.kv_spill_dir = env_or("MLXFORGE_KV_SPILL_DIR", c.kv_spill_dir);
+  c.kv_spill_bytes = static_cast<std::size_t>(
+      env_long("MLXFORGE_KV_SPILL_BYTES", static_cast<long>(c.kv_spill_bytes)));
 
   // Helper: extract value for a flag (accepts "--flag value" or "--flag=value")
   auto value_of = [&](const std::string& a, size_t& i) -> std::string {
@@ -166,6 +190,16 @@ ServerConfig ServerConfig::parse(const std::vector<std::string>& args) {
       c.kv_budget_bytes = static_cast<std::size_t>(std::stoll(value_of(a, i)));
     else if (flag == "--kv-bits")
       c.kv_bits = std::stoi(value_of(a, i));
+    else if (flag == "--prefix-cache")
+      c.prefix_cache = std::stoi(value_of(a, i)) != 0;
+    else if (flag == "--kv-block")
+      c.kv_block = std::stoi(value_of(a, i));
+    else if (flag == "--kv-pool")
+      c.kv_pool_bytes = static_cast<std::size_t>(std::stoll(value_of(a, i)));
+    else if (flag == "--kv-spill-dir")
+      c.kv_spill_dir = value_of(a, i);
+    else if (flag == "--kv-spill-bytes")
+      c.kv_spill_bytes = static_cast<std::size_t>(std::stoll(value_of(a, i)));
     else
       throw std::runtime_error("unknown flag: " + flag);
   }

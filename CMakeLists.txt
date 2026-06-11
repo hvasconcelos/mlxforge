@@ -69,6 +69,9 @@ add_library(mlxforge_core STATIC
   src/cache/batch_kv_cache.cpp
   src/cache/kv_quant.cpp
   src/cache/kv_budget.cpp
+  src/cache/block_pool.cpp
+  src/cache/prefix_cache.cpp
+  src/cache/block_store.cpp
   src/sample/sampler.cpp
   src/sample/json_grammar.cpp
   src/runtime/single_stream.cpp

@@ -61,6 +61,43 @@ KVQuantConfig validate_kv_quant(const EngineConfig& ec, const ModelConfig& mc) {
   return {ec.kv_bits, ec.kv_group_size};
 }
 
+// Validate the prefix-cache request against the loaded model and return the
+// Worker's PrefixCacheConfig. Same philosophy as validate_kv_quant: unsupported
+// setups are hard errors, never a silent off.
+// `model_name` is passed separately: by the time the Worker member initializes,
+// EngineConfig::model_spec has already been moved into Engine::model_name_.
+PrefixCacheConfig validate_prefix_cache(const EngineConfig& ec, const ModelConfig& mc,
+                                        const std::string& model_name) {
+  if (!ec.prefix_cache) {
+    if (!ec.kv_spill_dir.empty())
+      throw std::runtime_error("kv_spill_dir requires prefix_cache to be enabled");
+    return {};
+  }
+  const int bs = ec.kv_block_size;
+  if (bs < 16 || bs > 4096 || (bs & (bs - 1)) != 0)
+    throw std::runtime_error("kv_block_size must be a power of two in [16, 4096]; got " +
+                             std::to_string(bs));
+  // Token-id hashing cannot identify image content / 3D positions, and the
+  // hybrid linear-attention state cannot be reconstructed at block boundaries.
+  if (mc.has_vision_tower())
+    throw std::runtime_error("the prefix cache is not supported for vision-language models");
+  if (mc.full_attention_interval > 0)
+    throw std::runtime_error("the prefix cache is not supported for hybrid (Qwen3.5) models");
+  PrefixCacheConfig pc;
+  pc.enabled = true;
+  pc.block_size = bs;
+  pc.pool_bytes = ec.kv_pool_bytes;
+  pc.spill_dir = ec.kv_spill_dir;
+  pc.spill_bytes = ec.kv_spill_bytes;
+  // Salt every block key with the model identity + storage config so pooled
+  // (and, later, persisted) blocks can never cross models or settings.
+  const std::string fp = model_name + "|" + mc.model_type + "|" + std::to_string(mc.n_layers) +
+                         "|" + std::to_string(ec.kv_bits) + "|" + std::to_string(ec.kv_group_size) +
+                         "|" + std::to_string(bs);
+  pc.salt = fnv1a(fp.data(), fp.size());
+  return pc;
+}
+
 }  // namespace
 
 // Loads the model directory, config, and tokenizer metadata, but not weights.
@@ -139,7 +176,7 @@ Engine::Engine(EngineConfig cfg, Loaded loaded)
       // constrained decoding. tok_ is initialized above and outlives worker_.
       // cfg_ is initialized above, so the KV-quant validation sees the model.
       worker_(make_factory(std::move(loaded.dir), loaded.is_gguf), &scheduler_, &tok_,
-              validate_kv_quant(cfg, cfg_)) {
+              validate_kv_quant(cfg, cfg_), validate_prefix_cache(cfg, cfg_, model_name_)) {
   // Configure the max waiting requests for the batch scheduler.
   scheduler_.set_max_waiting(cfg.max_waiting);
 

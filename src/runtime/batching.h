@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "cache/batch_kv_cache.h"
+#include "cache/block_pool.h"
 #include "model/decoder_model.h"
 #include "scheduler/request.h"
 
@@ -37,5 +38,15 @@ struct PrefillResult {
 PrefillResult prefill(const DecoderModel& model, const std::vector<std::vector<int>>& prompts,
                       int step_size = kPrefillStepSize, int pad_id = 0,
                       KVQuantConfig kv_quant = {});
+
+// Prefix-cache admission: seed a batch-1 cache with `cached_len` tokens of
+// already-computed K/V (`blocks`, from PrefixCache::match) and prefill only
+// prompt[cached_len:], chunked like prefill(). cached_len must be in
+// [1, prompt.size() - 1] (the last prompt token is always recomputed so the
+// result carries next-token logits).
+PrefillResult prefill_with_prefix(const DecoderModel& model, const std::vector<int>& prompt,
+                                  const std::vector<std::shared_ptr<const KVBlock>>& blocks,
+                                  int cached_len, int step_size = kPrefillStepSize,
+                                  KVQuantConfig kv_quant = {});
 
 }  // namespace mlxforge

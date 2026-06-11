@@ -20,6 +20,7 @@
 // zero-filled pad regions dequantize to exactly 0 and are masked anyway.
 #pragma once
 
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -31,6 +32,8 @@
 namespace mlxforge {
 
 namespace mx = mlx::core;
+
+struct KVBlock;  // cache/block_pool.h
 
 class BatchKVCache {
  public:
@@ -51,6 +54,16 @@ class BatchKVCache {
   // Always dense (the vision path is rejected when KV quantization is on).
   static BatchKVCache from_single_sequence(
       std::vector<std::pair<mx::array, mx::array>> kv_per_layer, int seq, int decode_offset);
+
+  // Build a batch-1 cache whose first `len` positions are the given prefix-pool
+  // blocks' K/V (consecutive from position 0; `len` may stop short of the last
+  // block's end — the prompt's final token is always recomputed). The blocks
+  // are written through the standard block-grow writer (update_kv_components)
+  // so the buffer layout matches a normal prefill chunk's; RoPE offset = len,
+  // no left padding. The suffix prefill then appends at idx == len.
+  static BatchKVCache from_prefix(int n_layers,
+                                  const std::vector<std::shared_ptr<const KVBlock>>& blocks,
+                                  int len, KVQuantConfig qcfg = {});
 
   int batch_size() const { return batch_; }
   int idx() const { return idx_; }  // populated sequence length (_idx)
@@ -88,6 +101,16 @@ class BatchKVCache {
   // Populated K/V slice of a quantized layer, dequantized back to fp16 (for
   // inspection/tests — the model attends over the triplets directly).
   std::pair<mx::array, mx::array> fetch_dequantized(int layer) const;
+
+  // One row's populated K/V component vectors for a layer, as
+  // (1, n_kv_heads, len, comp_dim) views over physical slots
+  // [left_pad, left_pad + len). For harvesting a finished row into the prefix
+  // pool (which materializes its own copies — these are lazy views).
+  std::pair<std::vector<mx::array>, std::vector<mx::array>> fetch_row_components(
+      int layer, int row, int left_pad, int len) const;
+
+  // Host copy of the per-row left padding (small, already materialized).
+  std::vector<int> left_padding_host() const;
 
   // Eviction: keep only the given batch rows (take on axis 0) across every
   // layer's K/V plus offset/left_padding, then shift off any common left

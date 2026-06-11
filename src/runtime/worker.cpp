@@ -5,6 +5,7 @@
 #include <chrono>
 #include <limits>
 
+#include "cache/block_store.h"
 #include "core/logging.h"
 #include "model/qwen3_vl.h"
 #include "model/vision/vit.h"
@@ -58,8 +59,9 @@ bool consume(Request& req, int& produced, int id, const TokenLogprob* lp) {
 }  // namespace
 
 Worker::Worker(ModelFactory factory, Scheduler* scheduler, const Tokenizer* tok,
-               KVQuantConfig kv_quant)
-    : factory_(std::move(factory)), sched_(scheduler), tok_(tok), kv_quant_(kv_quant) {}
+               KVQuantConfig kv_quant, PrefixCacheConfig prefix)
+    : factory_(std::move(factory)), sched_(scheduler), tok_(tok), kv_quant_(kv_quant),
+      prefix_cfg_(prefix) {}
 
 Worker::~Worker() { stop(); }
 
@@ -193,6 +195,32 @@ void Worker::stop() {
 void Worker::run() {
   log::info("worker: loading model...");
   model_ = factory_();  // load the model on this thread so its arrays live here
+  // The prefix pool holds MLX arrays, so it lives (and dies) with this thread.
+  if (prefix_cfg_.enabled) {
+    prefix_ = std::make_unique<PrefixCache>(prefix_cfg_);
+    log::info("worker: prefix cache on (block={} pool={} bytes)", prefix_cfg_.block_size,
+              prefix_cfg_.pool_bytes);
+    if (!prefix_cfg_.spill_dir.empty()) {
+      // SSD tier: RAM-evicted blocks are serialized HERE (this thread owns the
+      // arrays) and queued to the store's byte-only writer thread; a pool miss
+      // synchronously revives the bytes into fresh worker-thread arrays.
+      block_store_ = std::make_unique<BlockStore>(prefix_cfg_.spill_dir, prefix_cfg_.spill_bytes,
+                                                  prefix_cfg_.salt);
+      prefix_->pool().set_evict_hook(
+          [this](uint64_t h, const std::shared_ptr<const KVBlock>& b) {
+            if (block_store_->contains(h)) return;
+            block_store_->put(h, serialize_block(*b, prefix_cfg_.salt));
+            ++spill_writes_;
+          });
+      prefix_->set_miss_fn([this](uint64_t h) -> std::shared_ptr<const KVBlock> {
+        std::optional<std::vector<char>> bytes = block_store_->get(h);
+        if (!bytes) return nullptr;
+        std::shared_ptr<KVBlock> blk = deserialize_block(*bytes, prefix_cfg_.salt);
+        if (blk) ++spill_reads_;
+        return blk;
+      });
+    }
+  }
   ready_.store(true);
   log::info("worker: model loaded, ready");
 
@@ -242,20 +270,51 @@ void Worker::run() {
 }
 
 void Worker::admit(const std::vector<std::shared_ptr<Request>>& incoming) {
-  std::vector<std::vector<int>> prompts;
-  prompts.reserve(incoming.size());
-  for (const auto& r : incoming) prompts.push_back(r->prompt_ids);
-
-  log::debug("worker: admitting {} request(s) (batch {} -> {})", incoming.size(), reqs_.size(),
-             reqs_.size() + incoming.size());
-  PrefillResult pr = prefill(*model_, prompts, kPrefillStepSize, /*pad_id=*/0, kv_quant_);
-
-  if (!cache_) {
-    cache_ = std::make_unique<BatchKVCache>(std::move(pr.cache));
-  } else {
-    cache_->merge(pr.cache);
+  // Split on the prefix cache: matched requests prefill only their suffix
+  // (one by one — their cached lengths are heterogeneous), the rest share the
+  // batched cold prefill.
+  std::vector<std::shared_ptr<Request>> cold;
+  std::vector<std::pair<std::shared_ptr<Request>, PrefixCache::Match>> warm;
+  for (const auto& r : incoming) {
+    if (prefix_) {
+      PrefixCache::Match m = prefix_->match(r->prompt_ids);
+      if (m.tokens > 0) {
+        warm.emplace_back(r, std::move(m));
+        continue;
+      }
+    }
+    cold.push_back(r);
   }
-  register_rows(incoming, pr.last_logits);
+
+  log::debug("worker: admitting {} request(s), {} prefix-warm (batch {} -> {})", incoming.size(),
+             warm.size(), reqs_.size(), reqs_.size() + incoming.size());
+
+  auto adopt = [&](BatchKVCache&& fresh) {
+    if (!cache_) {
+      cache_ = std::make_unique<BatchKVCache>(std::move(fresh));
+    } else {
+      cache_->merge(fresh);
+    }
+  };
+
+  if (!cold.empty()) {
+    std::vector<std::vector<int>> prompts;
+    prompts.reserve(cold.size());
+    for (const auto& r : cold) prompts.push_back(r->prompt_ids);
+    PrefillResult pr = prefill(*model_, prompts, kPrefillStepSize, /*pad_id=*/0, kv_quant_);
+    adopt(std::move(pr.cache));
+    register_rows(cold, pr.last_logits);
+  }
+  for (auto& [r, m] : warm) {
+    PrefillResult pr = prefill_with_prefix(*model_, r->prompt_ids, m.blocks, m.tokens,
+                                           kPrefillStepSize, kv_quant_);
+    adopt(std::move(pr.cache));
+    register_rows({r}, pr.last_logits);
+    ++prefix_hits_;
+    prefix_tokens_reused_ += m.tokens;
+    log::debug("worker: prefix hit ({} of {} prompt tokens reused)", m.tokens,
+               r->prompt_ids.size());
+  }
 }
 
 void Worker::register_rows(const std::vector<std::shared_ptr<Request>>& incoming,
@@ -417,7 +476,34 @@ void Worker::decode_step() {
   }
 }
 
+void Worker::harvest_finished() {
+  if (!prefix_ || !cache_) return;
+  if (std::none_of(finished_.begin(), finished_.end(), [](char f) { return f != 0; })) return;
+
+  const std::vector<int> lp = cache_->left_padding_host();
+  const int n_layers = model_->config().n_layers;
+  for (int b = 0; b < static_cast<int>(finished_.size()); ++b) {
+    if (!finished_[b] || reqs_[b]->is_multimodal()) continue;
+    // Pool only the PROMPT's span of the row — prefill-produced K/V. The
+    // decode-produced K/V of generated tokens differs from a recompute by fp16
+    // accumulation order (the decode-vs-recompute gap) and demonstrably flips
+    // later greedy choices, breaking the warm==cold gate. Multi-turn reuse
+    // still converges: the next turn's prompt contains this turn's generated
+    // text, so its (seeded) prefill recomputes that span once and pools it.
+    const int len =
+        std::min(cache_->idx() - lp[b], static_cast<int>(reqs_[b]->prompt_ids.size()));
+    if (len < prefix_cfg_.block_size) continue;  // nothing pool-able
+    prefix_->harvest(history_[b], len, n_layers, [&](int layer) {
+      return cache_->fetch_row_components(layer, b, lp[b], len);
+    });
+  }
+  prefix_pool_bytes_.store(static_cast<long long>(prefix_->pool_bytes()));
+  prefix_pool_blocks_.store(static_cast<long>(prefix_->pool_blocks()));
+}
+
 void Worker::evict_finished() {
+  harvest_finished();  // seal finished rows' K/V before filter() drops them
+
   using ms = std::chrono::duration<double, std::milli>;
   using sec = std::chrono::duration<double>;
   using us = std::chrono::duration<double, std::micro>;
@@ -494,6 +580,13 @@ WorkerMetrics Worker::metrics() const {
   }
   const long long gen_us = gen_us_sum_.load();
   if (gen_us > 0) m.avg_tokens_per_second = m.completion_tokens_total * 1e6 / gen_us;
+
+  m.prefix_hits = prefix_hits_.load();
+  m.prefix_tokens_reused = prefix_tokens_reused_.load();
+  m.prefix_pool_bytes = prefix_pool_bytes_.load();
+  m.prefix_pool_blocks = prefix_pool_blocks_.load();
+  m.spill_writes = spill_writes_.load();
+  m.spill_reads = spill_reads_.load();
   return m;
 }
 

@@ -12,6 +12,25 @@ export interface EngineOptions {
   kvBits?: 0 | 4 | 8;
   /** Quantization group size (default 64; must divide the model's head_dim). */
   kvGroupSize?: number;
+  /**
+   * Prefix cache (engine-wide, default off): finished prompts' KV is pooled
+   * in fixed-size token blocks, and a later prompt sharing a token prefix
+   * (system prompt, multi-turn history) skips that part of prefill — same
+   * greedy tokens, much lower time-to-first-token. Vision-language and hybrid
+   * (Qwen3.5) models fail engine creation rather than silently ignoring it.
+   */
+  prefixCache?: boolean;
+  /** Prefix-pool block size in tokens (default 256; power of two, 16..4096). */
+  kvBlockSize?: number;
+  /** Prefix-pool RAM budget in bytes (default 1 GiB; negative = unbounded). */
+  kvPoolBytes?: number;
+  /**
+   * SSD spill directory: RAM-evicted prefix blocks persist here and survive
+   * engine restarts. Unset = no spill. Requires prefixCache.
+   */
+  kvSpillDir?: string;
+  /** Spill-directory disk budget in bytes (0/unset = unbounded). */
+  kvSpillBytes?: number;
 }
 
 export interface SamplingOptions {

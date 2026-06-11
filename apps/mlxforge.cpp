@@ -73,12 +73,18 @@ void print_help() {
       "      --max-waiting <N>  max queued requests (default 256)\n"
       "      --kv-budget <B>    KV cache budget in bytes, 0 = unbounded (default 0)\n"
       "      --kv-bits <N>      KV cache quantization: 0 = fp16, 8 or 4 (default 0)\n"
+      "      --prefix-cache <0|1>  reuse pooled KV across shared prompt prefixes (default 0)\n"
+      "      --kv-block <N>     prefix-pool block size in tokens (default 256)\n"
+      "      --kv-pool <B>      prefix-pool RAM budget in bytes, 0 = unbounded (default 1 GiB)\n"
+      "      --kv-spill-dir <D> SSD spill dir for evicted prefix blocks (default off)\n"
+      "      --kv-spill-bytes <B>  spill-dir disk budget in bytes, 0 = unbounded (default 0)\n"
       "  -h, --help             show this help and exit\n"
       "\n"
       "The model may be given via -m or the config file's \"model\" key.\n"
       "Config precedence (low to high): defaults < config file < env vars < CLI flags.\n"
       "Env vars: MLXFORGE_HOST, MLXFORGE_PORT, MLXFORGE_MAX_CTX, MLXFORGE_MAX_WAITING, "
-      "MLXFORGE_KV_BUDGET, MLXFORGE_KV_BITS.");
+      "MLXFORGE_KV_BUDGET, MLXFORGE_KV_BITS, MLXFORGE_PREFIX_CACHE, MLXFORGE_KV_BLOCK, "
+      "MLXFORGE_KV_POOL, MLXFORGE_KV_SPILL_DIR, MLXFORGE_KV_SPILL_BYTES.");
   std::fflush(stdout);
 }
 
@@ -131,6 +137,11 @@ int main(int argc, char** argv) {
     ec.model_spec = sc.model_dir;
     ec.max_waiting = sc.max_waiting;
     ec.kv_bits = sc.kv_bits;
+    ec.prefix_cache = sc.prefix_cache;
+    ec.kv_block_size = sc.kv_block;
+    ec.kv_pool_bytes = sc.kv_pool_bytes;
+    ec.kv_spill_dir = sc.kv_spill_dir;
+    ec.kv_spill_bytes = sc.kv_spill_bytes;
     engine = std::make_unique<mlxforge::Engine>(std::move(ec));
   } catch (const std::exception& e) {
     mlxforge::log::error("model error: {}", e.what());
@@ -167,8 +178,9 @@ int main(int argc, char** argv) {
   std::signal(SIGTERM, on_signal);
 
   // Info log: server has started, print bind details and config bounds.
-  mlxforge::log::info("mlxforge serving on http://{}:{} (max_ctx={} max_waiting={} kv_bits={})",
-                      sc.host, sc.port, sc.max_ctx, sc.max_waiting, sc.kv_bits);
+  mlxforge::log::info(
+      "mlxforge serving on http://{}:{} (max_ctx={} max_waiting={} kv_bits={} prefix_cache={})",
+      sc.host, sc.port, sc.max_ctx, sc.max_waiting, sc.kv_bits, sc.prefix_cache);
 
   // Run the server's request loop (blocks until stop() is called).
   server.listen(sc.host, sc.port);

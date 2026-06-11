@@ -164,6 +164,25 @@ reference/.venv/bin/python reference/dump_ref.py
   affect kernel accumulation order. Engine-wide setting, default off;
   vision/hybrid models are rejected at engine creation (no silent fp16
   fallback).
+- **The prefix cache harvests PROMPT K/V only — never decode-produced K/V.**
+  Decode-with-cache K/V differs from a recompute by fp16 accumulation order
+  (the decode-vs-recompute gap below) and demonstrably flips later greedy
+  choices; prefill-produced K/V is the proven exact-stable class, so pooling
+  only it keeps the feature's gate (warm == cold, token-exact) sound.
+  Multi-turn reuse still converges — the next turn's prompt contains the prior
+  answer as text and pools after its own (seeded) prefill. The pool
+  (`cache/block_pool`) stores immutable blocks keyed by a salted chain hash;
+  matched blocks seed a batch-1 cache via `BatchKVCache::from_prefix`, written
+  through the standard `update_kv_components` writer so buffer layout matches a
+  cold prefill (strides are load-bearing, see kv-quant above). Harvest
+  materializes copies (`mx::contiguous` + eval) — a lazy slice would pin the
+  whole batch buffer. The SSD tier (`cache/block_store`) is byte-only across
+  threads (worker does all array<->bytes conversion); its writer keeps the
+  queue front visible to `get()`/`contains()` until the file lands, and its
+  serialize order (per layer, K then V components) is gated by the exact-token
+  spill test — an order mismatch produced silent garbage. Engine-wide opt-in;
+  vision/hybrid models and spill-without-prefix-cache are rejected at engine
+  creation. Multimodal rows are never harvested or matched.
 - **Qwen3-VL interleaved M-RoPE can't use `fast::rope`** (it takes a 1D offset,
   not 3D `(t,h,w)` positions). `Qwen3VLModel` hand-rolls a half-split rotation
   with a per-frequency t/h/w selector; text tokens have `t==h==w` so it reduces to

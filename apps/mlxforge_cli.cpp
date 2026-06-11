@@ -15,6 +15,11 @@
 //   mlxforge-cli bench <model> [max_tokens] [runs]
 //     - Repeatable throughput benchmark over a fixed prompt: one discarded warmup run, then `runs`
 //       timed runs (defaults: max_tokens=128, runs=3) reporting time-to-first-token and decode tok/s.
+//   mlxforge-cli bench-prefix <model> [prefix_tokens] [runs]
+//     - Prefix-cache benchmark (defaults: prefix_tokens=2048, runs=3): builds an Engine with the
+//       prefix cache on, then measures TTFT for one COLD request and `runs` WARM requests that share
+//       a prefix_tokens-long prompt prefix (distinct tails). Reports the cold/warm speedup and the
+//       engine's reuse metrics; warm decode tok/s shows reuse leaves throughput unchanged.
 //   mlxforge-cli embed <model> <text> [--last|--mean] [--eos] [--instruct "..."] [--no-normalize]
 //     - Embeds text and prints the (by default unit-normalized) vector. With no flags the model
 //       self-selects its convention (a Qwen3-Embedding checkpoint uses last-token pooling + a
@@ -44,6 +49,7 @@
 #include "runtime/engine.h"
 #include "runtime/multimodal_stream.h"
 #include "runtime/single_stream.h"
+#include "scheduler/request.h"
 #include "tokenizer/tokenizer.h"
 #include "vision/image_decode.h"
 
@@ -322,6 +328,95 @@ int run_bench(const std::string& spec, int max_tokens, int runs) {
   return 0;
 }
 
+// Prefix-cache benchmark: build a real Engine (the exact library path, prefix
+// cache on) and measure time-to-first-token for prompts sharing a long prefix —
+// the shared-system-prompt scenario the cache exists for. One discarded warmup
+// absorbs Metal kernel compilation; the COLD run then prefills the shared
+// prefix from scratch, and each WARM run reuses its pooled blocks with a unique
+// tail (a distinct "user question"). Greedy, EOS disabled, fixed max_tokens, so
+// runs are comparable; decode tok/s is reported to show reuse does not change
+// steady-state throughput.
+int run_bench_prefix(const std::string& spec, int prefix_tokens, int runs) {
+  mlxforge::EngineConfig cfg;
+  cfg.model_spec = spec;
+  cfg.prefix_cache = true;
+  mlxforge::Engine engine(cfg);
+  while (!engine.ready()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  const mlxforge::Tokenizer& tok = engine.tokenizer();
+
+  // Build a shared prefix of ~prefix_tokens ids by repeating a paragraph.
+  const std::vector<int> para =
+      tok.encode("The ocean covers most of the planet, and its slow currents move heat between "
+                 "the equator and the poles, shaping weather on every continent. ");
+  std::vector<int> prefix;
+  while (static_cast<int>(prefix.size()) < prefix_tokens)
+    prefix.insert(prefix.end(), para.begin(), para.end());
+  prefix.resize(prefix_tokens);
+
+  const int kMaxTokens = 32;
+  // Submit a prompt through the scheduler (the continuous-batching path the
+  // server and bindings use) and return {ttft_ms, decode tok/s}.
+  auto timed_run = [&](std::vector<int> ids) {
+    auto req = std::make_shared<mlxforge::Request>();
+    req->prompt_ids = std::move(ids);
+    req->params.temperature = 0.0f;
+    req->max_tokens = kMaxTokens;  // eos_ids stays empty: fixed-length runs
+    const auto t0 = std::chrono::steady_clock::now();
+    engine.scheduler().submit(req);
+    double ttft_ms = 0.0;
+    auto t_first = t0;
+    int produced = 0, tk = 0;
+    while (req->tokens.pop(tk)) {
+      if (produced++ == 0) {
+        t_first = std::chrono::steady_clock::now();
+        ttft_ms = std::chrono::duration<double, std::milli>(t_first - t0).count();
+      }
+    }
+    const double decode_s =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t_first).count();
+    const double tps = (produced > 1 && decode_s > 0) ? (produced - 1) / decode_s : 0.0;
+    return std::make_pair(ttft_ms, tps);
+  };
+  auto with_tail = [&](int i) {
+    std::vector<int> ids = prefix;
+    const std::vector<int> tail =
+        tok.encode("Question " + std::to_string(i) + ": summarize the key point briefly.");
+    ids.insert(ids.end(), tail.begin(), tail.end());
+    return ids;
+  };
+
+  mlxforge::log::info("bench-prefix: prefix={} tokens, max_tokens={}, warmup=1, runs={}",
+                      prefix.size(), kMaxTokens, runs);
+
+  // Warmup (discarded): an UNRELATED prompt — it absorbs Metal kernel
+  // compilation but shares no prefix, so the cold run below stays cold.
+  timed_run(tok.encode("A completely unrelated warmup prompt about gardening tools."));
+  const auto [cold_ttft, cold_tps] = timed_run(with_tail(0));
+  std::printf("  cold:      ttft %8.1f ms   decode %.1f tok/s\n", cold_ttft, cold_tps);
+  std::fflush(stdout);
+
+  double warm_sum = 0.0, warm_min = 1e300, warm_max = 0.0, tps_sum = 0.0;
+  for (int i = 1; i <= runs; ++i) {
+    const auto [ttft, tps] = timed_run(with_tail(i));
+    warm_sum += ttft;
+    tps_sum += tps;
+    warm_min = std::min(warm_min, ttft);
+    warm_max = std::max(warm_max, ttft);
+    std::printf("  warm %d/%d:  ttft %8.1f ms   decode %.1f tok/s\n", i, runs, ttft, tps);
+    std::fflush(stdout);
+  }
+
+  const mlxforge::WorkerMetrics m = engine.metrics();
+  const double warm_mean = warm_sum / runs;
+  std::printf("\nttft       cold %.1f ms   warm mean %.1f ms (min %.1f, max %.1f)   speedup %.1fx\n",
+              cold_ttft, warm_mean, warm_min, warm_max,
+              warm_mean > 0 ? cold_ttft / warm_mean : 0.0);
+  std::printf("decode     cold %.1f tok/s   warm mean %.1f tok/s\n", cold_tps, tps_sum / runs);
+  std::printf("reuse      hits %ld   tokens reused %lld   pool %ld blocks / %lld bytes\n",
+              m.prefix_hits, m.prefix_tokens_reused, m.prefix_pool_blocks, m.prefix_pool_bytes);
+  return 0;
+}
+
 // Embedding smoke harness: build a real Engine (so this exercises the exact
 // library path — detection of embedding defaults, instruction wrap, EOS append,
 // pooling, normalize) and print the resulting vector to stdout. This is the
@@ -422,6 +517,16 @@ int main(int argc, char** argv) {
     const int max_tokens = argc >= 4 ? std::stoi(argv[3]) : 128;
     const int runs = argc >= 5 ? std::stoi(argv[4]) : 3;
     return run_bench(argv[2], max_tokens, runs);
+  }
+  if (cmd == "bench-prefix") {
+    // Prefix-cache benchmark: cold vs warm TTFT over a shared prompt prefix.
+    if (argc < 3) {
+      std::fprintf(stderr, "usage: mlxforge-cli bench-prefix <model_dir> [prefix_tokens] [runs]\n");
+      return 2;
+    }
+    const int prefix_tokens = argc >= 4 ? std::stoi(argv[3]) : 2048;
+    const int runs = argc >= 5 ? std::stoi(argv[4]) : 3;
+    return run_bench_prefix(argv[2], prefix_tokens, runs);
   }
   if (cmd == "embed") {
     // Embed text and print the vector. Flags override the model's detected

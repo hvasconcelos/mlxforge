@@ -204,6 +204,52 @@ The per-token budget figure adjusts accordingly: a K-or-V head row is
 `head_dim × bits/8` packed bytes plus a fp16 scale and bias per group (D=64/g=64:
 68 B at 8-bit, 36 B at 4-bit, vs 128 B fp16).
 
+## Prefix cache (block-pool KV storage, optional SSD tier)
+
+`--prefix-cache 1` (engine option `prefix_cache`; default off) reuses KV across
+requests that share a token prefix — the shared-system-prompt and multi-turn
+shapes. On a 2048-token shared prefix the warm TTFT drops ~20× (see
+`mlxforge-cli bench-prefix`); decode throughput is unchanged.
+
+The design is **gather-on-admit, not paged attention**: MLX has no paged SDPA
+kernel and mlx-lm has no paged reference to gate one against, so the decode
+batch stays the contiguous left-padded `BatchKVCache`. The *pages* live in a
+pool instead:
+
+- **BlockPool** (`cache/block_pool`): immutable `kv_block_size`-token blocks
+  (default 256; all layers, dense or quantized component vectors), keyed by a
+  salted **chain hash** of the token-id prefix — a key identifies the entire
+  prefix up to the block's end. LRU-evicted under `--kv-pool` bytes.
+- **PrefixCache** (`cache/prefix_cache`): longest-chain match (clamped to
+  `prompt_len - 1`: the last prompt token is always recomputed so admission
+  still yields next-token logits) + harvest policy. On admission, matched
+  blocks seed a batch-1 cache (`BatchKVCache::from_prefix`, written through
+  the standard block-grow writer so buffer layout matches a cold prefill) and
+  only the suffix is prefilled (`prefill_with_prefix`); the row then merges
+  into the decode batch like any single-row admission.
+- **Harvest is prompt-only.** When a row finishes, only its *prompt* span is
+  sealed into the pool. Decode-produced K/V differs from a recompute by fp16
+  accumulation order (the decode-vs-recompute gap) and demonstrably flips
+  later greedy choices; prefill-produced K/V is the proven exact-stable class,
+  so warm == cold stays token-exact. Multi-turn reuse still converges: the
+  next turn's prompt contains the prior answer as text, so its (seeded)
+  prefill recomputes that span once and pools it. Multimodal rows are never
+  harvested (a token-id hash cannot identify image content / 3D positions).
+- **SSD tier** (`cache/block_store`, `--kv-spill-dir`): RAM-evicted blocks are
+  serialized on the worker thread and written by a byte-only IO thread (one
+  0600 file per block, salted-hash name, tmp+rename); a pool miss revives the
+  file synchronously. The directory is rescanned at startup, so the cache
+  survives restarts; the salt (model fingerprint + storage config + block
+  size) is verified on load, so a block can never be revived for a different
+  model or quantization setting.
+
+Engine-wide, like `kv_bits` (the pool stores one storage layout); hybrid
+(Qwen3.5) and vision-language models reject the option at engine creation. The
+gate is **warm == cold**: reuse may change speed, never tokens — no new
+mlx-lm fixtures are needed because the cold path is already golden-gated and
+prefix reuse is an engine-internal equivalence property
+(`tests/scheduler/prefix_reuse_test.cpp`, `tests/scheduler/prefix_spill_test.cpp`).
+
 ## Module map
 
 Source lives under `src/`, grouped by responsibility. Tests mirror the module
@@ -221,6 +267,9 @@ path under `tests/`.
 | `cache/batch_kv_cache` | Batched, left-padded KV cache: `update_and_fetch`, `filter` (evict), `merge` (admit), `pad_dummies` (bucketing). |
 | `cache/kv_quant` | Quantized-KV shared types (`KVQuantConfig`, triplets) + the block-grow component writer both caches use. |
 | `cache/kv_budget` | KV memory projection / admission gate (fp16 and quantized accounting). |
+| `cache/block_pool` | Prefix-cache pages: immutable KV blocks keyed by a salted chain hash, LRU under a byte budget. |
+| `cache/prefix_cache` | Longest-prefix block matching + prompt-only harvest over the pool. |
+| `cache/block_store` | SSD spill tier: byte-only writer thread, salted/versioned block files, restart rescan. |
 | `model/sdpa` | Cache-aware SDPA dispatch: dense fast kernel vs the hand-rolled quantized path (mlx-lm port). |
 | `sample/sampler` | greedy / temperature / top-k / top-p, all as MLX graph ops. |
 | `scheduler/request` | The `Request` struct and the bounded, blocking `TokenQueue`. |

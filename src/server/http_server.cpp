@@ -421,6 +421,13 @@ void HttpServer::setup_routes() {
           {"avg_ttft_ms", m.avg_ttft_ms},
           {"avg_request_ms", m.avg_request_ms},
           {"avg_tokens_per_second", m.avg_tokens_per_second}}},
+        {"prefix_cache",
+         {{"hits", m.prefix_hits},
+          {"tokens_reused", m.prefix_tokens_reused},
+          {"pool_bytes", m.prefix_pool_bytes},
+          {"pool_blocks", m.prefix_pool_blocks},
+          {"spill_writes", m.spill_writes},
+          {"spill_reads", m.spill_reads}}},
     };
     res.set_content(body.dump(), "application/json");
   });
