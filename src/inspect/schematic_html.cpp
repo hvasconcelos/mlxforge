@@ -396,34 +396,57 @@ function panel(title, pairs){
     return g;
   }
 
-  // Attention sub-assembly of one decoder block (full softmax attention).
+  // Attention sub-assembly of one decoder block (full softmax attention):
+  // q/k/v project IN PARALLEL from the same normed input, the attention
+  // computation runs on their outputs, and only then does o_proj map the
+  // concatenated heads back to the residual stream.
   function attnRows(container){
     const attn = byPrefix("self_attn.");
-    if (attn.length){
-      container.appendChild(row(attn.map(m => projBox(m, "var(--cyan)"))));
-      container.appendChild(el("div", "rownote",
-        `${A2.n_heads} heads × ${A2.head_dim}` +
-        (A2.gqa_ratio > 1 ? ` · GQA ${A2.gqa_ratio}:1 (${A2.n_kv_heads} kv heads)` : "") +
-        (A2.qk_norm ? " · qk-norm" : "")));
+    if (!attn.length) return;
+    const qkv = attn.filter(m => !m.name.endsWith("o_proj"));
+    const o = attn.find(m => m.name.endsWith("o_proj"));
+    container.appendChild(row(qkv.map(m => projBox(m, "var(--cyan)"))));
+    container.appendChild(el("div", "rownote", "in parallel, from the same input"));
+    container.appendChild(conn("k,v → kv cache"));
+    container.appendChild(node("scaled dot-product attention",
+      `softmax(q·kᵀ/√${A2.head_dim})·v · ${A2.n_heads} heads × ${A2.head_dim}` +
+      (A2.gqa_ratio > 1 ? ` · GQA ${A2.gqa_ratio}:1` : "") +
+      (A2.qk_norm ? " · qk-norm" : ""), "var(--cyan)"));
+    if (o){
+      container.appendChild(conn("concat heads"));
+      container.appendChild(row([projBox(o, "var(--cyan)")]));
+    }
+  }
+  // Dense MLP sub-assembly: gate and up project IN PARALLEL, their outputs
+  // combine elementwise, then down projects back to the residual stream.
+  function denseMlpRows(container, mods, color, widthNote){
+    const gateUp = mods.filter(m => !m.name.endsWith("down_proj"));
+    const down = mods.find(m => m.name.endsWith("down_proj"));
+    container.appendChild(row(gateUp.map(m => projBox(m, color))));
+    container.appendChild(el("div", "rownote", "in parallel, from the same input"));
+    container.appendChild(conn());
+    container.appendChild(node("silu(gate) ⊙ up", "elementwise gate · " + widthNote, color));
+    if (down){
+      container.appendChild(conn());
+      container.appendChild(row([projBox(down, color)]));
     }
   }
   // MLP / MoE sub-assembly.
   function mlpRows(container){
     const sw = byPrefix("mlp.switch_mlp."), router = first(mms, "mlp.gate");
     if (sw.length){
-      const items = [];
-      if (router) items.push(projBox({...router, name:"router", note:"top-" + A2.moe.top_k}, "var(--amber)"));
-      sw.forEach(m => items.push(projBox(m, "var(--amber)")));
-      container.appendChild(row(items));
+      if (router)
+        container.appendChild(row([projBox({...router, name:"router", note:"scores all experts"}, "var(--amber)")]));
+      container.appendChild(conn("top-" + A2.moe.top_k + " select"));
       container.appendChild(expertsGrid(A2.moe.experts, A2.moe.top_k));
       container.appendChild(el("div", "rownote",
-        `${A2.moe.experts} experts · ${A2.moe.top_k} active per token · width ${fmtI(A2.moe.moe_intermediate)}`));
+        `${A2.moe.top_k} of ${A2.moe.experts} experts run per token`));
+      container.appendChild(conn());
+      denseMlpRows(container, sw, "var(--amber)", "width " + fmtI(A2.moe.moe_intermediate));
     } else {
       const mlp = byPrefix("mlp.").filter(m => !m.name.includes("switch_mlp"));
-      if (mlp.length){
-        container.appendChild(row(mlp.map(m => projBox(m, "var(--green)"))));
-        container.appendChild(el("div", "rownote", "SwiGLU · width " + fmtI(A2.intermediate_size)));
-      }
+      if (mlp.length)
+        denseMlpRows(container, mlp, "var(--green)", "SwiGLU width " + fmtI(A2.intermediate_size));
     }
   }
   function fullBlock(badge, name){
