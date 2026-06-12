@@ -165,11 +165,17 @@ In `Worker::decode_step()`:
 weight-bandwidth-bound, and MLX's tiled GEMM drops to ~1/3 of GEMV bandwidth
 the moment the batch reaches 2 rows (ml-explore/mlx#3661) — historically a
 ~2.6× per-row decode cliff between B=1 and B=2. `model/skinny_matmul` provides
-custom `fast::metal_kernel` kernels for the B∈[2,16] dense-fp16 decode shape:
-each simdgroup reads a weight row once and keeps the batch's activations as
-register accumulators (a one-column variant for B≤4 at ~GEMV bandwidth, a
-two-column variant for 5–16). Past B=16 the tiled GEMM wins and `linear()`
-falls back. Accumulation is fp32 in a different order than `mx::matmul`, so
+custom `fast::metal_kernel` kernels for the dense-fp16 decode shape, picked by
+(B, weight size): a one-column-per-simdgroup scalar variant for B≤4 (~GEMV
+bandwidth), a two-column scalar variant for B∈[5,16] on the small per-layer
+weights (barrier-free simdgroups tolerate the latency of short back-to-back
+ops best), and a simdgroup-matrix MMA variant for B∈[5,32] on big weights —
+in practice the vocab head — using hardware `simdgroup_half8x8`
+multiply-accumulates over 8-output-column tiles, with the activation chunk
+staged once per threadgroup in threadgroup memory and each weight element
+streamed from device exactly once grid-wide (~134 GB/s at B=8, still ~68 at
+B=32, vs the GEMM's flat ~55). Anywhere else the tiled GEMM wins and
+`linear()` falls back. Accumulation is fp32 in a different order than `mx::matmul`, so
 logits differ at fp16-noise scale; the gate is row-for-row token equality of a
 kernel-on batch against the stock-matmul batch
 (`tests/scheduler/worker_test.cpp`), plus a pure-kernel `allclose` grid

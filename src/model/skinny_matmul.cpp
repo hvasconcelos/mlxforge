@@ -40,8 +40,9 @@ constexpr const char* kSourceOneCol = R"(
 
 // Two output columns per simdgroup: each activation load feeds two weight
 // rows, halving the redundant x traffic that degrades the one-column variant
-// past M ~ 8. Best for M in [5, 16]; the crossover vs the tiled GEMM is past
-// 16 (66 GB/s at M=16 vs the GEMM's flat ~56 on M1 Pro).
+// past M ~ 8. Best for M in [5, 16] on the small per-layer weights, where its
+// barrier-free independent simdgroups ride out the latency of short
+// back-to-back ops better than the MMA tile kernel below.
 constexpr const char* kSourceTwoCol = R"(
     const uint lane = thread_position_in_grid.x;   // 0..31
     const uint pair = thread_position_in_grid.y;   // output column pair
@@ -78,8 +79,82 @@ constexpr const char* kSourceTwoCol = R"(
     }
 )";
 
+// simdgroup-matrix MMA tile kernel for M in [5, 32] on *large* weights (the
+// vocab head): each simdgroup owns an 8-output-column tile across the full D,
+// accumulating y^T = w_tile * x_tile^T in hardware simdgroup_float8x8 ops, so
+// the per-element FMA/issue cost that throttles the scalar kernels past M ~ 4
+// disappears. Memory hierarchy:
+//  - weights stream from device exactly once grid-wide (plain, non-transposed
+//    simdgroup_loads; the transpose lands on x instead);
+//  - the x chunk is staged in threadgroup memory once per threadgroup and the
+//    transposed tile loads hit that on-chip copy, not device/L1 — SG=8
+//    simdgroups (64 output columns) share each staged chunk;
+//  - the staging loop zero-fills rows past M, so no host-side padding of x.
+// Tail tiles clamp o0 to O-8 and overlap-recompute (duplicate stores of
+// identical values are benign); applies() guarantees O >= 8 and CHUNK | D.
+constexpr const char* kSourceMma = R"(
+    const uint lane   = thread_position_in_threadgroup.x;  // 0..31
+    const uint sg     = thread_position_in_threadgroup.y;  // 0..SG-1
+    const uint o_tile = thread_position_in_grid.y;
+    const int  D = w_shape[1];
+    const int  O = w_shape[0];
+    const size_t o0 = (size_t)min((int)(o_tile * 8), O - 8);
+
+    threadgroup half xs[MT * 8 * CHUNK];
+    simdgroup_float8x8 acc[MT];
+    for (int t = 0; t < MT; ++t)
+        acc[t] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+    simdgroup_half8x8 xt, wt[UN];
+    const uint tid = sg * 32 + lane;
+    for (int kc = 0; kc < D; kc += CHUNK) {
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint i = tid; i < (uint)(MT * 8 * CHUNK / 4); i += 32 * SG) {
+            uint m = i / (CHUNK / 4), j = i % (CHUNK / 4);
+            ((threadgroup half4*)xs)[i] = (m < (uint)M)
+                ? ((const device half4*)(x + (size_t)m * D + kc))[j]
+                : half4(0.0h);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (int k = 0; k < CHUNK; k += 8 * UN) {
+            for (int u = 0; u < UN; ++u)
+                simdgroup_load(wt[u], w + o0 * D + kc + k + u * 8, D);
+            for (int t = 0; t < MT; ++t) {
+                for (int u = 0; u < UN; ++u) {
+                    simdgroup_load(xt, (threadgroup half*)xs +
+                                   (size_t)(t * 8) * CHUNK + k + u * 8, CHUNK, 0, true);
+                    simdgroup_multiply_accumulate(acc[t], wt[u], xt, acc[t]);
+                }
+            }
+        }
+    }
+    threadgroup float scratch[SG][64];
+    for (int t = 0; t < MT; ++t) {
+        simdgroup_store(acc[t], scratch[sg], 8);
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+        for (uint i = lane; i < 64; i += 32) {
+            int m = t * 8 + (int)(i % 8);
+            if (m < M) y[(size_t)m * O + o0 + (i / 8)] = (half)scratch[sg][i];
+        }
+        simdgroup_barrier(mem_flags::mem_threadgroup);
+    }
+)";
+
 constexpr int kOneColMaxM = 4;
-constexpr int kMaxM = 16;
+constexpr int kTwoColMaxM = 16;
+constexpr int kMmaMaxM = 32;
+constexpr int kSimdgroupsPerTg = 8;  // SG: o-tiles sharing one staged x chunk
+constexpr int kUnroll = 4;           // UN: weight tiles in flight per k step
+
+// The MMA kernel only beats the alternatives on big single matmuls (the vocab
+// head, where it sustains GEMV-class bandwidth out to M=32). On the small
+// per-layer weights the engine runs as short dependent back-to-back ops, and
+// there the barrier-free scalar kernels (M <= 16) or the stock GEMM (M > 16)
+// win — measured on chained-dependent shapes, not single dispatches.
+constexpr int64_t kMmaMinWeightElems = 32 * 1024 * 1024;  // 64 MB of fp16
+
+bool is_big_weight(const mx::array& w) {
+  return (int64_t)w.shape()[0] * w.shape()[1] >= kMmaMinWeightElems;
+}
 
 }  // namespace
 
@@ -90,7 +165,11 @@ bool skinny_matmul_applies(const mx::array& x, const mx::array& w) {
   if (nd == 3 && x.shape()[1] != 1) return false;  // decode shape only, never prefill
   if (nd != 2 && nd != 3) return false;
   const int m = x.shape()[0];
-  return m >= 2 && m <= kMaxM && x.shape()[nd - 1] == w.shape()[1];
+  if (m < 2 || x.shape()[nd - 1] != w.shape()[1]) return false;
+  if (m <= kTwoColMaxM) return true;
+  // 17..32 pays off only on big weights (and the MMA kernel needs a full
+  // 8-column tile); on small weights the stock GEMM wins — fall back.
+  return m <= kMmaMaxM && w.shape()[0] >= 8 && is_big_weight(w);
 }
 
 mx::array skinny_matmul(const mx::array& x, const mx::array& w) {
@@ -98,16 +177,35 @@ mx::array skinny_matmul(const mx::array& x, const mx::array& w) {
       "mlxforge_gemv_multirow", {"x", "w"}, {"y"}, kSourceOneCol);
   static const auto two_col = mx::fast::metal_kernel(
       "mlxforge_gemv_multirow2", {"x", "w"}, {"y"}, kSourceTwoCol);
+  static const auto mma = mx::fast::metal_kernel(
+      "mlxforge_gemv_mma", {"x", "w"}, {"y"}, kSourceMma);
 
   const int m = x.shape()[0];
   const int o = w.shape()[0];
+  const int d = w.shape()[1];
   mx::array x2 = x.ndim() == 3 ? mx::reshape(x, {m, x.shape()[2]}) : x;
-  const bool narrow = m <= kOneColMaxM;
-  std::vector<mx::array> out = (narrow ? one_col : two_col)(
-      {x2, w}, {mx::Shape{m, o}}, {mx::float16},
-      /*grid=*/{32, narrow ? o : (o + 1) / 2, 1}, /*threadgroup=*/{32, 1, 1},
-      /*template_args=*/{{"M", m}},
-      /*init_value=*/std::nullopt, /*verbose=*/false, {});
+  std::vector<mx::array> out;
+  if (m <= kOneColMaxM) {
+    out = one_col({x2, w}, {mx::Shape{m, o}}, {mx::float16},
+                  /*grid=*/{32, o, 1}, /*threadgroup=*/{32, 1, 1},
+                  /*template_args=*/{{"M", m}},
+                  /*init_value=*/std::nullopt, /*verbose=*/false, {});
+  } else if (o >= 8 && is_big_weight(w)) {
+    const int chunk = d % 256 == 0 ? 256 : 128;
+    int tiles = (o + 7) / 8;
+    tiles = (tiles + kSimdgroupsPerTg - 1) / kSimdgroupsPerTg * kSimdgroupsPerTg;
+    out = mma({x2, w}, {mx::Shape{m, o}}, {mx::float16},
+              /*grid=*/{32, tiles, 1}, /*threadgroup=*/{32, kSimdgroupsPerTg, 1},
+              /*template_args=*/
+              {{"M", m}, {"MT", (m + 7) / 8}, {"CHUNK", chunk}, {"UN", kUnroll},
+               {"SG", kSimdgroupsPerTg}},
+              /*init_value=*/std::nullopt, /*verbose=*/false, {});
+  } else {
+    out = two_col({x2, w}, {mx::Shape{m, o}}, {mx::float16},
+                  /*grid=*/{32, (o + 1) / 2, 1}, /*threadgroup=*/{32, 1, 1},
+                  /*template_args=*/{{"M", m}},
+                  /*init_value=*/std::nullopt, /*verbose=*/false, {});
+  }
   return x.ndim() == 3 ? mx::reshape(out[0], {m, 1, o}) : out[0];
 }
 

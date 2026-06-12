@@ -120,7 +120,7 @@ TEST_CASE("skinny_mm decode kernels reproduce the stock-matmul greedy stream") {
     prompt.insert(prompt.end(), ids.begin(), ids.end());
   }
   const int kMax = 16;
-  const int kBatch = 4;  // decode at B=4 routes every linear through the kernels
+  const int kBatch = 6;  // B > 4 routes decode linears through the MMA tile kernel
 
   // Reuse may only change speed, never tokens: the kernel-on batch must match
   // the kernel-off batch row for row (both greedy on identical prompts).
